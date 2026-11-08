@@ -1,0 +1,80 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/core",
+    "crates/db",
+    "crates/server",
+    "crates/client",
+    "crates/ui",
+    "crates/app",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.95"
+publish = false
+license = "Apache-2.0"
+
+[workspace.dependencies]
+thiserror = "2"
+uuid = { version = "1", features = ["v7"] }
+serde_json = "1"
+sqlx = { version = "0.8", default-features = false, features = [
+    "runtime-tokio",
+    "sqlite",
+    "mysql",
+    "migrate",
+    "macros",
+] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+# Server (Phase 4): REST/JSON API, credential hashing, opaque tokens.
+axum = { version = "0.8.9", features = ["macros", "ws"] }
+argon2 = "0.5.3"
+base64 = "0.22.1"
+serde = { version = "1.0.229", features = ["derive"] }
+sha2 = "0.10.9"
+# Server (Phase 5): OpenAPI document generated from the handlers. Derive-only, so it does not
+# depend on the axum version (served by our own `GET /api/v1/openapi.json` handler).
+utoipa = "5.5.0"
+# Server tests: drive the router in-process with `oneshot`.
+http-body-util = "0.1.5"
+tower = { version = "0.5.3", features = ["util"] }
+# Server tests (Phase 6): a real WebSocket client against a bound listener (`GET /api/v1/events`).
+# 0.29 is the version axum 0.8.9's `ws` feature uses.
+tokio-tungstenite = "0.29.0"
+futures-util = { version = "0.3.34", default-features = false, features = ["sink", "std"] }
+# Logging (Phase 7): `tracing` everywhere, request logging via tower-http's `TraceLayer` (server),
+# subscriber with `RUST_LOG` env-filter (app).
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
+tower-http = { version = "0.6.11", features = ["trace"] }
+# App (Phase 7): CLI, `sultan.toml`, hidden password/PIN prompts, the pairing client.
+clap = { version = "4.6.7", features = ["derive"] }
+toml = "1.1.5"
+rpassword = "7.5.4"
+# HTTP only for now (the server has no TLS yet); Phase 8's client crate reuses it.
+reqwest = { version = "0.12.28", default-features = false, features = ["json"] }
+# Register UI (Phase 8): Slint, pinned exactly; the testing backend must match it to the patch.
+slint = "=1.18.1"
+slint-build = "=1.18.1"
+i-slint-backend-testing = "=1.18.1"
+# Register UI: local time for the header clock and session start times.
+chrono = { version = "0.4.45", default-features = false, features = ["clock", "std"] }
+# Phase 9: branch-local dates in document numbers (`core::doc_number`). The IANA database is
+# compiled in, so `core` stays pure (no system tz files).
+chrono-tz = "0.10.4"
+# Register UI screenshots (`crates/ui/examples/screenshots.rs`); already in the tree via Slint.
+png = "0.18.1"
+
+# argon2id is deliberately slow; unoptimized it makes every login test take seconds.
+[profile.dev.package.argon2]
+opt-level = 3
+[profile.dev.package.blake2]
+opt-level = 3
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+pedantic = { level = "warn", priority = -1 }

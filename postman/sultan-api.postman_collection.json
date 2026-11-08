@@ -1,0 +1,1746 @@
+{
+  "info": {
+    "name": "Sultan POS API (2.1 Organization & access)",
+    "description": "Main flows of /api/v1, matching GET /api/v1/openapi.json (docs/plan.md §1, docs/spec/2.1-organization-access.md). Run against the dev server: see postman/README.md.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "01 Password login (owner)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "// Client-generated UUIDv7 IDs (docs/plan.md §1) and unique codes, fresh for every run.",
+              "function uuidv7() {",
+              "    const hex = (n) => Array.from({ length: n }, () => Math.floor(Math.random() * 16).toString(16)).join('');",
+              "    const ts = Date.now().toString(16).padStart(12, '0');",
+              "    const variant = (8 + Math.floor(Math.random() * 4)).toString(16);",
+              "    return `${ts.slice(0, 8)}-${ts.slice(8, 12)}-7${hex(3)}-${variant}${hex(3)}-${hex(12)}`;",
+              "}",
+              "['branchId', 'registerId', 'cashierId', 'roleId', 'spareId', 'openKey', 'closeKey'].forEach((k) => pm.collectionVariables.set(k, uuidv7()));",
+              "const suffix = Date.now().toString(36).slice(-6).toUpperCase();",
+              "pm.collectionVariables.set('branchCode', 'B' + suffix);",
+              "pm.collectionVariables.set('cashierUsername', 'cashier-' + suffix.toLowerCase());",
+              "",
+              "pm.test('200 with a session token', () => {",
+              "    pm.response.to.have.status(200);",
+              "    const body = pm.response.json();",
+              "    pm.expect(body.token).to.be.a('string').with.lengthOf(43);",
+              "    pm.expect(body.register_id).to.eql(null);",
+              "    pm.collectionVariables.set('ownerToken', body.token);",
+              "    pm.collectionVariables.set('ownerId', body.user_id);",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/auth/password",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "auth",
+            "password"
+          ]
+        },
+        "description": "Back-office login (spec 2.1 §4). Also generates the client-side UUIDv7 IDs used below.",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"username\": \"{{ownerUsername}}\",\n  \"password\": \"{{ownerPassword}}\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "02 OpenAPI document",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('lists the master-data routes', () => {",
+              "    pm.response.to.have.status(200);",
+              "    const paths = pm.response.json().paths;",
+              "    ['/api/v1/branches/{id}', '/api/v1/registers/{id}/pairing-code', '/api/v1/users/{id}', '/api/v1/audit']",
+              "        .forEach((p) => pm.expect(paths).to.have.property(p));",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/openapi.json",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "openapi.json"
+          ]
+        },
+        "description": ""
+      }
+    },
+    {
+      "name": "03 Create branch (PUT, client UUIDv7)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('201 Created', () => {",
+              "    pm.response.to.have.status(201);",
+              "    const b = pm.response.json();",
+              "    pm.expect(b.id).to.eql(pm.collectionVariables.get('branchId'));",
+              "    pm.expect(b.code).to.eql(pm.collectionVariables.get('branchCode'));",
+              "    pm.expect(b.timezone).to.eql('Asia/Makassar');",
+              "    pm.expect(b.archived).to.eql(false);",
+              "    pm.collectionVariables.set('branchBody', JSON.stringify(b));",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "PUT",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{ownerToken}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/branches/{{branchId}}",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "branches",
+            "{{branchId}}"
+          ]
+        },
+        "description": "",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"code\": \"{{branchCode}}\",\n  \"name\": \"Toko Postman\",\n  \"address\": \"Jl. Uji 1\",\n  \"timezone\": \"Asia/Makassar\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "04 Replay branch PUT (idempotent)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200 with the same body', () => {",
+              "    pm.response.to.have.status(200);",
+              "    pm.expect(pm.response.json()).to.eql(JSON.parse(pm.collectionVariables.get('branchBody')));",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "PUT",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{ownerToken}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/branches/{{branchId}}",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "branches",
+            "{{branchId}}"
+          ]
+        },
+        "description": "",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"code\": \"{{branchCode}}\",\n  \"name\": \"Toko Postman\",\n  \"address\": \"Jl. Uji 1\",\n  \"timezone\": \"Asia/Makassar\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "05 Invalid branch time zone is rejected",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('422 invalid_field timezone', () => {",
+              "    pm.response.to.have.status(422);",
+              "    const p = pm.response.json();",
+              "    pm.expect(p.code).to.eql('invalid_field');",
+              "    pm.expect(p.field).to.eql('timezone');",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "PUT",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{ownerToken}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/branches/{{spareId}}",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "branches",
+            "{{spareId}}"
+          ]
+        },
+        "description": "Phase 9: `timezone` must be an IANA zone (e.g. Asia/Jakarta); document numbers use the branch-local date.",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"code\": \"TZ{{branchCode}}\",\n  \"name\": \"Toko Zona\",\n  \"timezone\": \"WIB\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "06 Create register",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('201 Created at the new branch', () => {",
+              "    pm.response.to.have.status(201);",
+              "    pm.expect(pm.response.json().branch_id).to.eql(pm.collectionVariables.get('branchId'));",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "PUT",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{ownerToken}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/registers/{{registerId}}",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "registers",
+            "{{registerId}}"
+          ]
+        },
+        "description": "",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"branch_id\": \"{{branchId}}\",\n  \"code\": \"R1\",\n  \"name\": \"Kasir 1\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "07 Issue pairing code",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('201 with a one-time code valid for 10 minutes', () => {",
+              "    pm.response.to.have.status(201);",
+              "    const body = pm.response.json();",
+              "    pm.expect(body.code).to.match(/^[A-Z2-9]{4}-[A-Z2-9]{4}$/);",
+              "    pm.expect(body.expires_at - Date.now()).to.be.within(9 * 60 * 1000, 11 * 60 * 1000);",
+              "    pm.collectionVariables.set('pairingCode', body.code);",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{ownerToken}}"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/registers/{{registerId}}/pairing-code",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "registers",
+            "{{registerId}}",
+            "pairing-code"
+          ]
+        },
+        "description": ""
+      }
+    },
+    {
+      "name": "08 Pair the register",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('201 with a device token', () => {",
+              "    pm.response.to.have.status(201);",
+              "    const body = pm.response.json();",
+              "    pm.expect(body.register_id).to.eql(pm.collectionVariables.get('registerId'));",
+              "    pm.expect(body.branch_id).to.eql(pm.collectionVariables.get('branchId'));",
+              "    pm.collectionVariables.set('deviceToken', body.device_token);",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/registers/pair",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "registers",
+            "pair"
+          ]
+        },
+        "description": "",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"code\": \"{{pairingCode}}\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "09 Reused pairing code is rejected",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "function expectProblem(status, code) {",
+              "    pm.response.to.have.status(status);",
+              "    pm.expect(pm.response.headers.get('Content-Type')).to.include('application/problem+json');",
+              "    pm.expect(pm.response.json().code).to.eql(code);",
+              "}",
+              "",
+              "pm.test('400 invalid_pairing_code', () => expectProblem(400, 'invalid_pairing_code'));"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/registers/pair",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "registers",
+            "pair"
+          ]
+        },
+        "description": "",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"code\": \"{{pairingCode}}\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "10 Create cashier user",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('201, hashes never returned', () => {",
+              "    pm.response.to.have.status(201);",
+              "    const u = pm.response.json();",
+              "    pm.expect(u.has_pin).to.eql(true);",
+              "    pm.expect(u).to.not.have.property('pin_hash');",
+              "    pm.expect(u.assignments).to.eql([{ role_id: pm.collectionVariables.get('cashierRoleId'), branch_id: pm.collectionVariables.get('branchId') }]);",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "PUT",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{ownerToken}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/users/{{cashierId}}",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "users",
+            "{{cashierId}}"
+          ]
+        },
+        "description": "",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"username\": \"{{cashierUsername}}\",\n  \"display_name\": \"Kasir Postman\",\n  \"pin\": \"{{cashierPin}}\",\n  \"assignments\": [\n    {\n      \"role_id\": \"{{cashierRoleId}}\",\n      \"branch_id\": \"{{branchId}}\"\n    }\n  ]\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "11 Lock screen users (device token)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('lists the cashier', () => {",
+              "    pm.response.to.have.status(200);",
+              "    const ids = pm.response.json().map((u) => u.id);",
+              "    pm.expect(ids).to.include(pm.collectionVariables.get('cashierId'));",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "X-Register-Token",
+            "value": "{{deviceToken}}"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/registers/me/users",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "registers",
+            "me",
+            "users"
+          ]
+        },
+        "description": ""
+      }
+    },
+    {
+      "name": "12 PIN login at the register",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200, session bound to the register', () => {",
+              "    pm.response.to.have.status(200);",
+              "    const body = pm.response.json();",
+              "    pm.expect(body.register_id).to.eql(pm.collectionVariables.get('registerId'));",
+              "    pm.expect(body.branch_id).to.eql(pm.collectionVariables.get('branchId'));",
+              "    pm.collectionVariables.set('cashierToken', body.token);",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "X-Register-Token",
+            "value": "{{deviceToken}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/auth/pin",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "auth",
+            "pin"
+          ]
+        },
+        "description": "",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"user_id\": \"{{cashierId}}\",\n  \"pin\": \"{{cashierPin}}\",\n  \"branch_id\": \"ignored-by-the-server\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "13 List users (owner)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200, includes the cashier, no hashes', () => {",
+              "    pm.response.to.have.status(200);",
+              "    const users = pm.response.json();",
+              "    pm.expect(users.map((u) => u.id)).to.include(pm.collectionVariables.get('cashierId'));",
+              "    pm.expect(JSON.stringify(users)).to.not.include('argon2');",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{ownerToken}}"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/users",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "users"
+          ]
+        },
+        "description": ""
+      }
+    },
+    {
+      "name": "14 Cashier cannot list users",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "function expectProblem(status, code) {",
+              "    pm.response.to.have.status(status);",
+              "    pm.expect(pm.response.headers.get('Content-Type')).to.include('application/problem+json');",
+              "    pm.expect(pm.response.json().code).to.eql(code);",
+              "}",
+              "",
+              "pm.test('403 permission_denied (user.manage)', () => {",
+              "    expectProblem(403, 'permission_denied');",
+              "    pm.expect(pm.response.json().permission).to.eql('user.manage');",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{cashierToken}}"
+          },
+          {
+            "key": "X-Register-Token",
+            "value": "{{deviceToken}}"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/users",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "users"
+          ]
+        },
+        "description": ""
+      }
+    },
+    {
+      "name": "15 Cashier cannot create a branch",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "function expectProblem(status, code) {",
+              "    pm.response.to.have.status(status);",
+              "    pm.expect(pm.response.headers.get('Content-Type')).to.include('application/problem+json');",
+              "    pm.expect(pm.response.json().code).to.eql(code);",
+              "}",
+              "",
+              "pm.test('403 permission_denied (org.manage)', () => {",
+              "    expectProblem(403, 'permission_denied');",
+              "    pm.expect(pm.response.json().permission).to.eql('org.manage');",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "PUT",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{cashierToken}}"
+          },
+          {
+            "key": "X-Register-Token",
+            "value": "{{deviceToken}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/branches/{{spareId}}",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "branches",
+            "{{spareId}}"
+          ]
+        },
+        "description": "",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"code\": \"NOPE1\",\n  \"name\": \"Nope\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "16 Last Owner cannot be archived",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "function expectProblem(status, code) {",
+              "    pm.response.to.have.status(status);",
+              "    pm.expect(pm.response.headers.get('Content-Type')).to.include('application/problem+json');",
+              "    pm.expect(pm.response.json().code).to.eql(code);",
+              "}",
+              "",
+              "pm.test('409 last_owner', () => expectProblem(409, 'last_owner'));"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "DELETE",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{ownerToken}}"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/users/{{ownerId}}",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "users",
+            "{{ownerId}}"
+          ]
+        },
+        "description": ""
+      }
+    },
+    {
+      "name": "17 Permission catalog",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('the fixed catalog', () => {",
+              "    pm.response.to.have.status(200);",
+              "    const discount = pm.response.json().find((p) => p.key === 'sale.discount');",
+              "    pm.expect(discount).to.eql({ key: 'sale.discount', limit_kind: 'pct', overridable: true });",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{cashierToken}}"
+          },
+          {
+            "key": "X-Register-Token",
+            "value": "{{deviceToken}}"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/permissions",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "permissions"
+          ]
+        },
+        "description": ""
+      }
+    },
+    {
+      "name": "18 Audit: branch writes by the owner",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('the branch create is logged once (the replay was not)', () => {",
+              "    pm.response.to.have.status(200);",
+              "    const items = pm.response.json().items.filter((e) => e.target === 'branch:' + pm.collectionVariables.get('branchId'));",
+              "    pm.expect(items).to.have.lengthOf(1);",
+              "    pm.expect(items[0].before).to.eql(null);",
+              "    pm.expect(items[0].after.code).to.eql(pm.collectionVariables.get('branchCode'));",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{ownerToken}}"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/audit?action=branch.save&user_id={{ownerId}}",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "audit"
+          ],
+          "query": [
+            {
+              "key": "action",
+              "value": "branch.save"
+            },
+            {
+              "key": "user_id",
+              "value": "{{ownerId}}"
+            }
+          ]
+        },
+        "description": ""
+      }
+    },
+    {
+      "name": "19 Audit: register history",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('save, pairing code and pairing, newest first', () => {",
+              "    pm.response.to.have.status(200);",
+              "    const actions = pm.response.json().items.map((e) => e.action);",
+              "    pm.expect(actions).to.eql(['register.pair', 'register.pairing_code', 'register.save']);",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{ownerToken}}"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/audit?target=register:{{registerId}}",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "audit"
+          ],
+          "query": [
+            {
+              "key": "target",
+              "value": "register:{{registerId}}"
+            }
+          ]
+        },
+        "description": ""
+      }
+    },
+    {
+      "name": "20 Open cashier session (Idempotency-Key)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('201, numbered, blind: no expected cash for a cashier', () => {",
+              "    pm.response.to.have.status(201);",
+              "    const s = pm.response.json();",
+              "    pm.expect(s.status).to.eql('open');",
+              "    pm.expect(s.opening_cash).to.eql(500000);",
+              "    pm.expect(s.register_id).to.eql(pm.collectionVariables.get('registerId'));",
+              "    pm.expect(s).to.not.have.property('expected_cash');",
+              "    const re = new RegExp('^' + pm.collectionVariables.get('branchCode') + '-[A-Za-z0-9]+-S-\\\\d{6}-\\\\d{2,}$');",
+              "    pm.expect(s.number).to.match(re);",
+              "    pm.collectionVariables.set('sessionNumber', s.number);",
+              "    pm.collectionVariables.set('sessionId', s.id);",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{cashierToken}}"
+          },
+          {
+            "key": "X-Register-Token",
+            "value": "{{deviceToken}}"
+          },
+          {
+            "key": "Idempotency-Key",
+            "value": "{{openKey}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/cashier-sessions",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "cashier-sessions"
+          ]
+        },
+        "description": "Spec 2.1 §5. Needs a PIN session at the register.",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"opening_cash\": 500000\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "21 Retried open replays the first response",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('same 201 and session, not 409', () => {",
+              "    pm.response.to.have.status(201);",
+              "    pm.expect(pm.response.json().id).to.eql(pm.collectionVariables.get('sessionId'));",
+              "    pm.expect(pm.response.headers.get('Idempotency-Replayed')).to.eql('true');",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{cashierToken}}"
+          },
+          {
+            "key": "X-Register-Token",
+            "value": "{{deviceToken}}"
+          },
+          {
+            "key": "Idempotency-Key",
+            "value": "{{openKey}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/cashier-sessions",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "cashier-sessions"
+          ]
+        },
+        "description": "Spec 2.1 §9 case 17: same Idempotency-Key and body → the stored response.",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"opening_cash\": 500000\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "22 Second open session is rejected",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('409 session_already_open', () => {",
+              "    pm.response.to.have.status(409);",
+              "    pm.expect(pm.response.json().code).to.eql('session_already_open');",
+              "    pm.expect(pm.response.json().conflict).to.eql('register');",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{cashierToken}}"
+          },
+          {
+            "key": "X-Register-Token",
+            "value": "{{deviceToken}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/cashier-sessions",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "cashier-sessions"
+          ]
+        },
+        "description": "",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"opening_cash\": 0\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "23 Current session at the register",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200, the open session, still blind', () => {",
+              "    pm.response.to.have.status(200);",
+              "    pm.expect(pm.response.json().id).to.eql(pm.collectionVariables.get('sessionId'));",
+              "    pm.expect(pm.response.json()).to.not.have.property('expected_cash');",
+              "    pm.expect(pm.response.json().number).to.eql(pm.collectionVariables.get('sessionNumber'));",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{cashierToken}}"
+          },
+          {
+            "key": "X-Register-Token",
+            "value": "{{deviceToken}}"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/cashier-sessions/current",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "cashier-sessions",
+            "current"
+          ]
+        },
+        "description": ""
+      }
+    },
+    {
+      "name": "24 Discount above the cashier limit needs an override",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('403 needs_override with the cashier limit', () => {",
+              "    pm.response.to.have.status(403);",
+              "    const p = pm.response.json();",
+              "    pm.expect(p.code).to.eql('needs_override');",
+              "    pm.expect(p.permission).to.eql('sale.discount');",
+              "    pm.expect(p.limit).to.eql(1000);",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{cashierToken}}"
+          },
+          {
+            "key": "X-Register-Token",
+            "value": "{{deviceToken}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/demo/override-protected",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "demo",
+            "override-protected"
+          ]
+        },
+        "description": "Demo endpoint that only runs the X-Override guard (spec 2.1 §6) until sales exist.",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"action\": \"sale.discount\",\n  \"value\": 1500,\n  \"context_ref\": \"cart-postman\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "25 Manager approves the override with their PIN",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('201 with a single-use token', () => {",
+              "    pm.response.to.have.status(201);",
+              "    const o = pm.response.json();",
+              "    pm.expect(o.token).to.be.a('string').with.lengthOf(43);",
+              "    pm.expect(o.approver_id).to.eql(pm.collectionVariables.get('ownerId'));",
+              "    pm.expect(o.requester_id).to.eql(pm.collectionVariables.get('cashierId'));",
+              "    pm.collectionVariables.set('overrideToken', o.token);",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{cashierToken}}"
+          },
+          {
+            "key": "X-Register-Token",
+            "value": "{{deviceToken}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/overrides",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "overrides"
+          ]
+        },
+        "description": "Spec 2.1 §6: the approver holds the permission at this branch and is not the requester.",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"action\": \"sale.discount\",\n  \"value\": 1500,\n  \"context_ref\": \"cart-postman\",\n  \"approver_id\": \"{{ownerId}}\",\n  \"approver_pin\": \"{{ownerPin}}\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "26 Use the override (X-Override)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200, approved by the manager', () => {",
+              "    pm.response.to.have.status(200);",
+              "    pm.expect(pm.response.json().approved_by).to.eql(pm.collectionVariables.get('ownerId'));",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{cashierToken}}"
+          },
+          {
+            "key": "X-Register-Token",
+            "value": "{{deviceToken}}"
+          },
+          {
+            "key": "X-Override",
+            "value": "{{overrideToken}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/demo/override-protected",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "demo",
+            "override-protected"
+          ]
+        },
+        "description": "",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"action\": \"sale.discount\",\n  \"value\": 1500,\n  \"context_ref\": \"cart-postman\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "27 Reused override token is rejected",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('403 invalid_override', () => {",
+              "    pm.response.to.have.status(403);",
+              "    pm.expect(pm.response.json().code).to.eql('invalid_override');",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{cashierToken}}"
+          },
+          {
+            "key": "X-Register-Token",
+            "value": "{{deviceToken}}"
+          },
+          {
+            "key": "X-Override",
+            "value": "{{overrideToken}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/demo/override-protected",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "demo",
+            "override-protected"
+          ]
+        },
+        "description": "Spec 2.1 §9 case 15: single use.",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"action\": \"sale.discount\",\n  \"value\": 1500,\n  \"context_ref\": \"cart-postman\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "28 Blind close returns the close report",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200, report with expected cash and over/short', () => {",
+              "    pm.response.to.have.status(200);",
+              "    const r = pm.response.json();",
+              "    pm.expect(r.expected_cash).to.eql(500000);",
+              "    pm.expect(r.counted_cash).to.eql(495000);",
+              "    pm.expect(r.over_short).to.eql(-5000);",
+              "    pm.expect(r.forced).to.eql(false);",
+              "    pm.expect(r.counts).to.eql([{ denomination: 100000, quantity: 4 }, { denomination: 50000, quantity: 1 }, { denomination: 5000, quantity: 9 }]);",
+              "    pm.expect(r.session.status).to.eql('closed');",
+              "    pm.expect(r.session.number).to.eql(pm.collectionVariables.get('sessionNumber'));",
+              "    pm.expect(r.branch_code).to.eql(pm.collectionVariables.get('branchCode'));",
+              "    pm.expect(r.timezone).to.eql('Asia/Makassar');",
+              "    pm.expect(r.cashier_name).to.be.a('string').and.not.empty;",
+              "    pm.collectionVariables.set('closeReport', JSON.stringify(r));",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{cashierToken}}"
+          },
+          {
+            "key": "X-Register-Token",
+            "value": "{{deviceToken}}"
+          },
+          {
+            "key": "Idempotency-Key",
+            "value": "{{closeKey}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/cashier-sessions/{{sessionId}}/close",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "cashier-sessions",
+            "{{sessionId}}",
+            "close"
+          ]
+        },
+        "description": "Spec 2.1 §5: the cashier counts first; only the report shows expected cash. Cash sales do not exist yet, so expected = opening cash.",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"counted_cash\": 495000,\n  \"counts\": [\n    {\n      \"denomination\": 100000,\n      \"quantity\": 4\n    },\n    {\n      \"denomination\": 50000,\n      \"quantity\": 1\n    },\n    {\n      \"denomination\": 5000,\n      \"quantity\": 9\n    }\n  ]\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "29 Closed session cannot be closed again",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('409 session_closed', () => {",
+              "    pm.response.to.have.status(409);",
+              "    pm.expect(pm.response.json().code).to.eql('session_closed');",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{cashierToken}}"
+          },
+          {
+            "key": "X-Register-Token",
+            "value": "{{deviceToken}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/cashier-sessions/{{sessionId}}/close",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "cashier-sessions",
+            "{{sessionId}}",
+            "close"
+          ]
+        },
+        "description": "",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"counted_cash\": 0\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "30 Past session with its stored close report",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200, the close report as it was returned', () => {",
+              "    pm.response.to.have.status(200);",
+              "    const d = pm.response.json();",
+              "    const report = JSON.parse(pm.collectionVariables.get('closeReport'));",
+              "    pm.expect(d.close_report).to.eql(report);",
+              "    pm.expect(d.session).to.eql(report.session);",
+              "    pm.expect(d.session.expected_cash).to.eql(500000);",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{cashierToken}}"
+          },
+          {
+            "key": "X-Register-Token",
+            "value": "{{deviceToken}}"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/cashier-sessions/{{sessionId}}",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "cashier-sessions",
+            "{{sessionId}}"
+          ]
+        },
+        "description": "Phase 9: GET /cashier-sessions/{id}. The session's own cashier may read it; others need report.sales at its branch. The stored report is exactly the close response, so a later reprint uses this endpoint."
+      }
+    },
+    {
+      "name": "31 Owner lists the register's closed sessions (paged)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200, newest first, one per page', () => {",
+              "    pm.response.to.have.status(200);",
+              "    const page = pm.response.json();",
+              "    pm.expect(page.items.length).to.eql(1);",
+              "    pm.expect(page.items[0].id).to.eql(pm.collectionVariables.get('sessionId'));",
+              "    pm.expect(page.items[0].number).to.eql(pm.collectionVariables.get('sessionNumber'));",
+              "    pm.expect(page.next_before_id).to.eql(pm.collectionVariables.get('sessionId'));",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{ownerToken}}"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/cashier-sessions?register_id={{registerId}}&status=closed&limit=1",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "cashier-sessions"
+          ],
+          "query": [
+            {
+              "key": "register_id",
+              "value": "{{registerId}}"
+            },
+            {
+              "key": "status",
+              "value": "closed"
+            },
+            {
+              "key": "limit",
+              "value": "1"
+            }
+          ]
+        },
+        "description": "Phase 9: GET /cashier-sessions with filters and the audit-style cursor (limit, before_id → next_before_id)."
+      }
+    },
+    {
+      "name": "32 Next page is empty",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200, last page', () => {",
+              "    pm.response.to.have.status(200);",
+              "    pm.expect(pm.response.json()).to.eql({ items: [], next_before_id: null });",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{ownerToken}}"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/cashier-sessions?register_id={{registerId}}&status=closed&limit=1&before_id={{sessionId}}",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "cashier-sessions"
+          ],
+          "query": [
+            {
+              "key": "register_id",
+              "value": "{{registerId}}"
+            },
+            {
+              "key": "status",
+              "value": "closed"
+            },
+            {
+              "key": "limit",
+              "value": "1"
+            },
+            {
+              "key": "before_id",
+              "value": "{{sessionId}}"
+            }
+          ]
+        },
+        "description": ""
+      }
+    },
+    {
+      "name": "33 Unknown status filter is rejected",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('422 invalid_field status', () => {",
+              "    pm.response.to.have.status(422);",
+              "    pm.expect(pm.response.json().field).to.eql('status');",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{ownerToken}}"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/cashier-sessions?status=paused",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "cashier-sessions"
+          ],
+          "query": [
+            {
+              "key": "status",
+              "value": "paused"
+            }
+          ]
+        },
+        "description": ""
+      }
+    },
+    {
+      "name": "34 Cashier logout",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('204 No Content', () => pm.response.to.have.status(204));"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{cashierToken}}"
+          },
+          {
+            "key": "X-Register-Token",
+            "value": "{{deviceToken}}"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/auth/logout",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "auth",
+            "logout"
+          ]
+        },
+        "description": ""
+      }
+    }
+  ],
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://127.0.0.1:8080/api/v1"
+    },
+    {
+      "key": "ownerUsername",
+      "value": "owner"
+    },
+    {
+      "key": "ownerPassword",
+      "value": "owner-pass-1"
+    },
+    {
+      "key": "cashierPin",
+      "value": "2468"
+    },
+    {
+      "key": "cashierRoleId",
+      "value": "00000000-0000-7000-8000-000000000003"
+    },
+    {
+      "key": "ownerPin",
+      "value": "1234"
+    }
+  ]
+}

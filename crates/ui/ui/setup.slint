@@ -1,0 +1,842 @@
+// The first-run setup wizard (`crates/ui/src/setup.rs` decides everything; `setup_app.rs` sets
+// these properties and receives the callbacks). Four app types: single app, HQ server, branch
+// server (shown, not available yet: it needs HQ sync) and terminal.
+//
+// Keyboard: text fields take their keys (Tab moves between them, Enter goes to the next page).
+// Esc goes back from anywhere. On pages without fields one FocusScope hands the keys to Rust
+// (arrows / 1-4 / Enter on the first page, Enter on the last).
+
+import { LineEdit } from "std-widgets.slint";
+import { Theme } from "theme.slint";
+import { Note, Card, KeyChip } from "widgets.slint";
+
+// What the fields start with (Rust keeps the typed values; secrets are never sent back).
+export struct SetupForm {
+    sqlite-path: string,
+    mysql-url: string,
+    listen: string,
+    company: string,
+    branch-code: string,
+    branch-name: string,
+    location: string,
+    owner-username: string,
+    owner-name: string,
+    server: string,
+    manager: string,
+    register-code: string,
+    register-name: string,
+    pairing-code: string,
+}
+
+export global SetupStrings {
+    public pure function field(id: string) -> string {
+        if (id == "sqlite_path") {
+            return @tr("Database file");
+        }
+        if (id == "mysql_url") {
+            return @tr("MySQL URL");
+        }
+        if (id == "listen") {
+            return @tr("Listen address");
+        }
+        if (id == "company") {
+            return @tr("Company name");
+        }
+        if (id == "branch_code") {
+            return @tr("Branch code");
+        }
+        if (id == "branch_name") {
+            return @tr("Branch name");
+        }
+        if (id == "location") {
+            return @tr("Stock location");
+        }
+        if (id == "owner_username") {
+            return @tr("Owner username");
+        }
+        if (id == "owner_name") {
+            return @tr("Name on the lock screen");
+        }
+        if (id == "password") {
+            return @tr("Password");
+        }
+        if (id == "password2") {
+            return @tr("Password again");
+        }
+        if (id == "pin") {
+            return @tr("PIN");
+        }
+        if (id == "pin2") {
+            return @tr("PIN again");
+        }
+        if (id == "server") {
+            return @tr("Server address");
+        }
+        if (id == "manager") {
+            return @tr("Manager username");
+        }
+        if (id == "manager_password") {
+            return @tr("Manager password");
+        }
+        if (id == "register_code") {
+            return @tr("Register code");
+        }
+        if (id == "register_name") {
+            return @tr("Register name");
+        }
+        if (id == "pairing_code") {
+            return @tr("Pairing code");
+        }
+        return id;
+    }
+
+    // Codes from `crates/ui/src/setup.rs` and `crates/app/src/setup.rs`.
+    public pure function message(code: string, arg: string) -> string {
+        if (code == "") {
+            return "";
+        }
+        if (code == "required") {
+            return @tr("Please fill in: {}.", SetupStrings.field(arg));
+        }
+        if (code == "branch_needs_sync") {
+            return @tr("A branch server needs HQ sync, which is coming soon. Use a single app or an HQ server for now.");
+        }
+        if (code == "code_format") {
+            return @tr("A code has 1 to 10 letters or digits, e.g. JKT01 or R2.");
+        }
+        if (code == "password_short") {
+            return @tr("A password has at least 8 characters.");
+        }
+        if (code == "password_mismatch") {
+            return @tr("The two passwords are not the same.");
+        }
+        if (code == "pin_format") {
+            return @tr("A PIN has 4 to 6 digits.");
+        }
+        if (code == "pin_mismatch") {
+            return @tr("The two PINs are not the same.");
+        }
+        if (code == "mysql_url") {
+            return @tr("Type a URL like mysql://user:password@host/sultan.");
+        }
+        if (code == "listen_format") {
+            return @tr("Type an address with a port, e.g. 0.0.0.0:8080.");
+        }
+        if (code == "db_ok") {
+            return @tr("The database works and is empty.");
+        }
+        if (code == "db_initialised") {
+            return @tr("This database is already set up (company {}). Pick another one.", arg);
+        }
+        if (code == "already_initialised") {
+            return @tr("This database is already set up (company {}). Pick another one.", arg);
+        }
+        if (code == "db") {
+            return @tr("Cannot use the database: {}", arg);
+        }
+        if (code == "file") {
+            return @tr("Cannot save the settings: {}", arg);
+        }
+        if (code == "invalid") {
+            return @tr("Please check: {}", arg);
+        }
+        if (code == "network") {
+            return @tr("Cannot reach the server. Check the address and the network.");
+        }
+        if (code == "not_sultan") {
+            return @tr("Something answered at this address, but it is not a Sultan server.");
+        }
+        if (code == "invalid_credentials") {
+            return @tr("Wrong username or password.");
+        }
+        if (code == "locked_out") {
+            return @tr("Too many wrong tries. Wait a moment and try again.");
+        }
+        if (code == "permission_denied") {
+            return @tr("This user is not allowed to register terminals. Ask the owner.");
+        }
+        if (code == "read_only_replica") {
+            return @tr("This is a branch server. Register terminals at the HQ server.");
+        }
+        if (code == "invalid_pairing_code") {
+            return @tr("The pairing code is unknown, already used or expired.");
+        }
+        if (code == "conflict") {
+            return @tr("This register code is already used at the branch. Pick another one.");
+        }
+        if (code == "session_ended") {
+            return @tr("The login ended. Log in again.");
+        }
+        if (code == "no_branch") {
+            return @tr("This user cannot see any branch.");
+        }
+        return @tr("Something went wrong ({}).", arg);
+    }
+
+    public pure function chip(code: string) -> string {
+        if (code == "next") {
+            return @tr("Next");
+        }
+        if (code == "back") {
+            return @tr("Back");
+        }
+        if (code == "test") {
+            return @tr("Test connection");
+        }
+        if (code == "set_up") {
+            return @tr("Set up");
+        }
+        if (code == "connect") {
+            return @tr("Connect");
+        }
+        if (code == "log_in") {
+            return @tr("Log in");
+        }
+        if (code == "register") {
+            return @tr("Register");
+        }
+        if (code == "pair") {
+            return @tr("Pair");
+        }
+        if (code == "use_code") {
+            return @tr("I have a pairing code");
+        }
+        if (code == "use_login") {
+            return @tr("Use a manager login");
+        }
+        if (code == "open_register") {
+            return @tr("Open the register");
+        }
+        if (code == "finish") {
+            return @tr("Finish");
+        }
+        return code;
+    }
+}
+
+component Heading inherits VerticalLayout {
+    in property <string> title;
+    in property <string> subtitle;
+    spacing: 6px;
+    Text {
+        text: root.title;
+        color: Theme.text;
+        font-size: 24px;
+        font-weight: 700;
+    }
+    Text {
+        text: root.subtitle;
+        color: Theme.muted;
+        font-size: 15px;
+        wrap: word-wrap;
+    }
+}
+
+component Input inherits VerticalLayout {
+    in property <string> id;
+    in property <string> value;
+    in property <bool> secret;
+    in property <bool> first;
+    in property <string> placeholder;
+    callback changed(string, string);
+    callback submit();
+    spacing: 4px;
+    Text {
+        text: SetupStrings.field(root.id);
+        color: Theme.muted;
+        font-size: 13px;
+    }
+    edit := LineEdit {
+        text: root.value;
+        placeholder-text: root.placeholder;
+        input-type: root.secret ? InputType.password : InputType.text;
+        edited(t) => {
+            root.changed(root.id, t);
+        }
+        accepted => {
+            root.submit();
+        }
+    }
+    init => {
+        if (root.first) {
+            edit.focus();
+        }
+    }
+}
+
+// One choice of a small list (time zone, database kind, branch).
+component Choice inherits Rectangle {
+    in property <string> label;
+    in property <bool> selected;
+    callback clicked;
+    accessible-role: button;
+    accessible-label: root.label;
+    accessible-action-default => { root.clicked(); }
+    height: 40px;
+    border-radius: 10px;
+    border-width: root.selected ? 2px : 1px;
+    border-color: root.selected ? Theme.accent : Theme.border;
+    background: root.selected ? Theme.accent-soft : touch.has-hover ? Theme.raised : Theme.panel;
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => {
+            root.clicked();
+        }
+    }
+    HorizontalLayout {
+        padding-left: 14px;
+        padding-right: 14px;
+        Text {
+            text: root.label;
+            color: Theme.text;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+    }
+}
+
+component TypeCard inherits Rectangle {
+    in property <string> number;
+    in property <string> title;
+    in property <string> description;
+    in property <bool> selected;
+    in property <bool> enabled: true;
+    callback clicked;
+    accessible-role: button;
+    accessible-label: root.title;
+    accessible-action-default => { root.clicked(); }
+    border-radius: 16px;
+    border-width: root.selected ? 2px : 1px;
+    border-color: root.selected ? Theme.accent : Theme.border;
+    background: !root.enabled ? Theme.bg : root.selected || touch.has-hover ? Theme.raised : Theme.panel;
+    opacity: root.enabled ? 1 : 0.55;
+    touch := TouchArea {
+        mouse-cursor: root.enabled ? pointer : default;
+        clicked => {
+            root.clicked();
+        }
+    }
+    VerticalLayout {
+        padding: 18px;
+        spacing: 8px;
+        HorizontalLayout {
+            spacing: 10px;
+            Rectangle {
+                width: 28px;
+                height: 28px;
+                border-radius: 7px;
+                background: Theme.accent-soft;
+                Text {
+                    text: root.number;
+                    color: Theme.accent;
+                    font-weight: 700;
+                }
+            }
+            Text {
+                text: root.title;
+                color: Theme.text;
+                font-size: 18px;
+                font-weight: 700;
+                vertical-alignment: center;
+            }
+            Rectangle {
+                horizontal-stretch: 1;
+            }
+            if !root.enabled: Text {
+                text: @tr("Coming soon");
+                color: Theme.warn;
+                font-size: 13px;
+                vertical-alignment: center;
+            }
+        }
+        Text {
+            text: root.description;
+            color: Theme.muted;
+            wrap: word-wrap;
+        }
+    }
+}
+
+export component SetupWindow inherits Window {
+    title: @tr("Sultan POS · Setup");
+    preferred-width: 1024px;
+    preferred-height: 760px;
+    min-width: 800px;
+    min-height: 640px;
+    background: Theme.bg;
+    default-font-size: 15px;
+    forward-focus: keys;
+
+    in property <string> page: "welcome";
+    in property <int> cursor;
+    in property <bool> busy;
+    in property <Note> note;
+    in property <SetupForm> form;
+    // 0 = SQLite, 1 = MySQL.
+    in property <int> db-kind;
+    in property <int> timezone;
+    in property <[string]> branches;
+    in property <int> branch;
+    // The chosen app type: single, hq, terminal.
+    in property <string> app-type;
+    // The last page: company / register code, branch code / register name, database / server.
+    in property <string> summary-a;
+    in property <string> summary-b;
+    in property <string> summary-c;
+    out property <bool> has-focus: keys.has-focus;
+
+    callback key(string, bool, bool) -> bool;
+    callback action(string);
+    callback field(string, string);
+    callback pick(string, int);
+    callback pump();
+
+    public pure function message(note: Note) -> string {
+        return SetupStrings.message(note.code, note.arg);
+    }
+    public pure function chip-label(code: string) -> string {
+        return SetupStrings.chip(code);
+    }
+
+    property <string> next-label: root.page == "owner" ? "set_up" : root.page == "server" ? "connect" : root.page == "manager" ? "log_in" : root.page == "terminal" ? "register" : root.page == "code" ? "pair" : root.page == "done" ? (root.app-type == "hq" ? "finish" : "open_register") : "next";
+
+    keys := FocusScope {
+        capture-key-pressed(e) => {
+            if (e.text == Key.Escape && root.key(e.text, false, false)) {
+                return accept;
+            }
+            reject
+        }
+        key-pressed(e) => {
+            if (root.key(e.text, e.modifiers.control, e.modifiers.shift)) {
+                return accept;
+            }
+            reject
+        }
+
+        VerticalLayout {
+            // Header.
+            Rectangle {
+                height: 60px;
+                background: Theme.panel;
+                HorizontalLayout {
+                    padding-left: 20px;
+                    padding-right: 20px;
+                    spacing: 14px;
+                    VerticalLayout {
+                        alignment: center;
+                        Rectangle {
+                            width: 34px;
+                            height: 34px;
+                            border-radius: 9px;
+                            background: Theme.accent;
+                            Text {
+                                text: "S";
+                                color: white;
+                                font-size: 18px;
+                                font-weight: 800;
+                            }
+                        }
+                    }
+                    Text {
+                        text: @tr("Sultan setup");
+                        color: Theme.text;
+                        font-size: 18px;
+                        font-weight: 700;
+                        vertical-alignment: center;
+                    }
+                    Rectangle {
+                        horizontal-stretch: 1;
+                    }
+                    Text {
+                        text: root.busy ? @tr("Working…") : "";
+                        color: Theme.warn;
+                        font-size: 13px;
+                        vertical-alignment: center;
+                    }
+                }
+            }
+
+            Rectangle {
+                vertical-stretch: 1;
+                Card {
+                    width: min(760px, parent.width - 48px);
+                    height: parent.height - 48px;
+                    VerticalLayout {
+                        padding: 28px;
+                        spacing: 16px;
+
+                        if root.page == "welcome": VerticalLayout {
+                            spacing: 16px;
+                            init => {
+                                keys.focus();
+                            }
+                            Heading {
+                                title: @tr("Welcome to Sultan");
+                                subtitle: @tr("How will this computer be used? Pick with the arrow keys or 1 to 4, then press Enter.");
+                            }
+                            GridLayout {
+                                spacing: 14px;
+                                Row {
+                                    TypeCard {
+                                        number: "1";
+                                        title: @tr("Single app");
+                                        description: @tr("One shop on one computer: the server and the register run together.");
+                                        selected: root.cursor == 0;
+                                        clicked => { root.pick("type", 0); }
+                                    }
+                                    TypeCard {
+                                        number: "2";
+                                        title: @tr("HQ server");
+                                        description: @tr("Head office: keeps the master data. Terminals on the network connect to it.");
+                                        selected: root.cursor == 1;
+                                        clicked => { root.pick("type", 1); }
+                                    }
+                                }
+                                Row {
+                                    TypeCard {
+                                        number: "3";
+                                        title: @tr("Branch server");
+                                        description: @tr("A shop server with a copy of the HQ data. Needs HQ sync.");
+                                        enabled: false;
+                                        selected: root.cursor == 2;
+                                        clicked => { root.pick("type", 2); }
+                                    }
+                                    TypeCard {
+                                        number: "4";
+                                        title: @tr("Terminal");
+                                        description: @tr("A register that connects to a server on the shop network.");
+                                        selected: root.cursor == 3;
+                                        clicked => { root.pick("type", 3); }
+                                    }
+                                }
+                            }
+                        }
+
+                        if root.page == "database": VerticalLayout {
+                            spacing: 14px;
+                            Heading {
+                                title: @tr("Database");
+                                subtitle: @tr("Where the HQ server keeps its data. A MySQL database must already exist.");
+                            }
+                            HorizontalLayout {
+                                spacing: 10px;
+                                Choice {
+                                    label: @tr("SQLite file");
+                                    selected: root.db-kind == 0;
+                                    clicked => { root.pick("db", 0); }
+                                }
+                                Choice {
+                                    label: @tr("MySQL server");
+                                    selected: root.db-kind == 1;
+                                    clicked => { root.pick("db", 1); }
+                                }
+                            }
+                            if root.db-kind == 0: Input {
+                                id: "sqlite_path";
+                                first: true;
+                                value: root.form.sqlite-path;
+                                changed(id, v) => { root.field(id, v); }
+                                submit => { root.action("next"); }
+                            }
+                            if root.db-kind == 1: Input {
+                                id: "mysql_url";
+                                first: true;
+                                placeholder: "mysql://user:password@host/sultan";
+                                value: root.form.mysql-url;
+                                changed(id, v) => { root.field(id, v); }
+                                submit => { root.action("next"); }
+                            }
+                        }
+
+                        if root.page == "network": VerticalLayout {
+                            spacing: 14px;
+                            Heading {
+                                title: @tr("Network");
+                                subtitle: @tr("Terminals connect to this address. 0.0.0.0 listens on every network; the server has no TLS yet, so keep it on the shop network.");
+                            }
+                            Input {
+                                id: "listen";
+                                first: true;
+                                value: root.form.listen;
+                                changed(id, v) => { root.field(id, v); }
+                                submit => { root.action("next"); }
+                            }
+                        }
+
+                        if root.page == "shop": VerticalLayout {
+                            spacing: 12px;
+                            Heading {
+                                title: @tr("Your shop");
+                                subtitle: @tr("The company and its first branch. The branch code appears in document numbers.");
+                            }
+                            Input {
+                                id: "company";
+                                first: true;
+                                value: root.form.company;
+                                changed(id, v) => { root.field(id, v); }
+                                submit => { root.action("next"); }
+                            }
+                            HorizontalLayout {
+                                spacing: 12px;
+                                Input {
+                                    id: "branch_code";
+                                    placeholder: "JKT01";
+                                    value: root.form.branch-code;
+                                    changed(id, v) => { root.field(id, v); }
+                                    submit => { root.action("next"); }
+                                }
+                                Input {
+                                    id: "branch_name";
+                                    placeholder: @tr("Same as the code");
+                                    value: root.form.branch-name;
+                                    changed(id, v) => { root.field(id, v); }
+                                    submit => { root.action("next"); }
+                                }
+                            }
+                            Input {
+                                id: "location";
+                                value: root.form.location;
+                                changed(id, v) => { root.field(id, v); }
+                                submit => { root.action("next"); }
+                            }
+                            Text {
+                                text: @tr("Time zone");
+                                color: Theme.muted;
+                                font-size: 13px;
+                            }
+                            HorizontalLayout {
+                                spacing: 10px;
+                                Choice {
+                                    label: @tr("WIB (Jakarta)");
+                                    selected: root.timezone == 0;
+                                    clicked => { root.pick("timezone", 0); }
+                                }
+                                Choice {
+                                    label: @tr("WITA (Makassar)");
+                                    selected: root.timezone == 1;
+                                    clicked => { root.pick("timezone", 1); }
+                                }
+                                Choice {
+                                    label: @tr("WIT (Jayapura)");
+                                    selected: root.timezone == 2;
+                                    clicked => { root.pick("timezone", 2); }
+                                }
+                            }
+                        }
+
+                        if root.page == "owner": VerticalLayout {
+                            spacing: 12px;
+                            Heading {
+                                title: @tr("Owner account");
+                                subtitle: @tr("The owner logs in to back office with the password and to the register with the PIN.");
+                            }
+                            HorizontalLayout {
+                                spacing: 12px;
+                                Input {
+                                    id: "owner_username";
+                                    first: true;
+                                    value: root.form.owner-username;
+                                    changed(id, v) => { root.field(id, v); }
+                                    submit => { root.action("next"); }
+                                }
+                                Input {
+                                    id: "owner_name";
+                                    value: root.form.owner-name;
+                                    changed(id, v) => { root.field(id, v); }
+                                    submit => { root.action("next"); }
+                                }
+                            }
+                            HorizontalLayout {
+                                spacing: 12px;
+                                Input {
+                                    id: "password";
+                                    secret: true;
+                                    changed(id, v) => { root.field(id, v); }
+                                    submit => { root.action("next"); }
+                                }
+                                Input {
+                                    id: "password2";
+                                    secret: true;
+                                    changed(id, v) => { root.field(id, v); }
+                                    submit => { root.action("next"); }
+                                }
+                            }
+                            HorizontalLayout {
+                                spacing: 12px;
+                                Input {
+                                    id: "pin";
+                                    secret: true;
+                                    changed(id, v) => { root.field(id, v); }
+                                    submit => { root.action("next"); }
+                                }
+                                Input {
+                                    id: "pin2";
+                                    secret: true;
+                                    changed(id, v) => { root.field(id, v); }
+                                    submit => { root.action("next"); }
+                                }
+                            }
+                        }
+
+                        if root.page == "server": VerticalLayout {
+                            spacing: 14px;
+                            Heading {
+                                title: @tr("Connect to the server");
+                                subtitle: @tr("Type the address of the single app or HQ server, e.g. 192.168.1.10 or 192.168.1.10:8080.");
+                            }
+                            Input {
+                                id: "server";
+                                first: true;
+                                placeholder: "192.168.1.10:8080";
+                                value: root.form.server;
+                                changed(id, v) => { root.field(id, v); }
+                                submit => { root.action("next"); }
+                            }
+                        }
+
+                        if root.page == "manager": VerticalLayout {
+                            spacing: 14px;
+                            Heading {
+                                title: @tr("Manager login");
+                                subtitle: @tr("A manager with back-office rights registers this terminal. The login is used once and not stored.");
+                            }
+                            Input {
+                                id: "manager";
+                                first: true;
+                                value: root.form.manager;
+                                changed(id, v) => { root.field(id, v); }
+                                submit => { root.action("next"); }
+                            }
+                            Input {
+                                id: "manager_password";
+                                secret: true;
+                                changed(id, v) => { root.field(id, v); }
+                                submit => { root.action("next"); }
+                            }
+                        }
+
+                        if root.page == "terminal": VerticalLayout {
+                            spacing: 12px;
+                            Heading {
+                                title: @tr("This terminal");
+                                subtitle: @tr("Pick the branch and name this register, e.g. R2 and Kasir 2.");
+                            }
+                            for b[i] in root.branches: Choice {
+                                label: b;
+                                selected: i == root.branch;
+                                clicked => { root.pick("branch", i); }
+                            }
+                            HorizontalLayout {
+                                spacing: 12px;
+                                Input {
+                                    id: "register_code";
+                                    first: true;
+                                    placeholder: "R2";
+                                    value: root.form.register-code;
+                                    changed(id, v) => { root.field(id, v); }
+                                    submit => { root.action("next"); }
+                                }
+                                Input {
+                                    id: "register_name";
+                                    placeholder: "Kasir 2";
+                                    value: root.form.register-name;
+                                    changed(id, v) => { root.field(id, v); }
+                                    submit => { root.action("next"); }
+                                }
+                            }
+                        }
+
+                        if root.page == "code": VerticalLayout {
+                            spacing: 14px;
+                            Heading {
+                                title: @tr("Pairing code");
+                                subtitle: @tr("Type the one-time code issued in back office (valid for 10 minutes).");
+                            }
+                            Input {
+                                id: "pairing_code";
+                                first: true;
+                                placeholder: "K7Q2-M9XP";
+                                value: root.form.pairing-code;
+                                changed(id, v) => { root.field(id, v); }
+                                submit => { root.action("next"); }
+                            }
+                        }
+
+                        if root.page == "done": VerticalLayout {
+                            spacing: 12px;
+                            init => {
+                                keys.focus();
+                            }
+                            Heading {
+                                title: @tr("All set");
+                                subtitle: root.app-type == "single" ? @tr("The shop {} (branch {}) is ready. The register opens next; log in with the owner PIN.", root.summary-a, root.summary-b) : root.app-type == "hq" ? @tr("The HQ server for {} (branch {}) is set up.", root.summary-a, root.summary-b) : @tr("This computer is now register {} ({}) at {}.", root.summary-a, root.summary-b, root.summary-c);
+                            }
+                            if root.app-type == "hq": VerticalLayout {
+                                spacing: 8px;
+                                Text {
+                                    text: @tr("Start the server with this command, then register terminals:");
+                                    color: Theme.muted;
+                                    wrap: word-wrap;
+                                }
+                                Rectangle {
+                                    height: 44px;
+                                    border-radius: 10px;
+                                    background: Theme.raised;
+                                    Text {
+                                        text: "sultan serve";
+                                        color: Theme.text;
+                                        font-size: 17px;
+                                        font-weight: 600;
+                                    }
+                                }
+                            }
+                        }
+
+                        Rectangle {
+                            vertical-stretch: 1;
+                        }
+
+                        Text {
+                            text: SetupStrings.message(root.note.code, root.note.arg);
+                            color: Theme.tone-color(root.note.tone);
+                            wrap: word-wrap;
+                        }
+
+                        HorizontalLayout {
+                            spacing: 10px;
+                            if root.page != "welcome" && root.page != "done": KeyChip {
+                                keys: "Esc";
+                                label: SetupStrings.chip("back");
+                                clicked => { root.action("back"); }
+                            }
+                            Rectangle {
+                                horizontal-stretch: 1;
+                            }
+                            if root.page == "database": KeyChip {
+                                keys: "";
+                                label: SetupStrings.chip("test");
+                                clicked => { root.action("test"); }
+                            }
+                            if root.page == "manager": KeyChip {
+                                keys: "";
+                                label: SetupStrings.chip("use_code");
+                                clicked => { root.action("use_code"); }
+                            }
+                            if root.page == "code": KeyChip {
+                                keys: "";
+                                label: SetupStrings.chip("use_login");
+                                clicked => { root.action("use_login"); }
+                            }
+                            KeyChip {
+                                keys: "Enter";
+                                label: SetupStrings.chip(root.next-label);
+                                clicked => { root.action("next"); }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

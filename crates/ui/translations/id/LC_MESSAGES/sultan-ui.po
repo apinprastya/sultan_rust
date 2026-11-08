@@ -1,0 +1,530 @@
+# Indonesian translation of the Sultan POS register UI (crates/ui/ui/*.slint, @tr strings).
+# Bundled at build time (build.rs: with_bundled_translations); no gettext needed at run time.
+# Every @tr() string needs an entry here; the test `every_string_is_translated` checks it.
+msgid ""
+msgstr ""
+"Language: id\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=1; plural=0;\n"
+
+msgid "ACTIONS"
+msgstr "AKSI"
+
+msgid "Allowed by your own permissions; no approval needed."
+msgstr "Diizinkan oleh hak akses Anda sendiri; tidak perlu persetujuan."
+
+msgid "Another cashier opened a session on this register."
+msgstr "Kasir lain sudah membuka sesi di kasir ini."
+
+msgid "A PIN has 4 to 6 digits."
+msgstr "PIN terdiri dari 4 sampai 6 angka."
+
+msgid "Approval cancelled."
+msgstr "Persetujuan dibatalkan."
+
+msgid "Approve"
+msgstr "Setujui"
+
+msgid "Approved by {}. The action was carried out."
+msgstr "Disetujui oleh {}. Aksi sudah dijalankan."
+
+msgid "Back"
+msgstr "Kembali"
+
+msgid "Back to lock"
+msgstr "Kembali ke layar kunci"
+
+msgid "Balanced"
+msgstr "Pas"
+
+msgid "Bank transfer"
+msgstr "Transfer bank"
+
+msgid "Cancel"
+msgstr "Batal"
+
+msgid "Cannot reach the server. Check the network and try again."
+msgstr "Server tidak dapat dihubungi. Periksa jaringan lalu coba lagi."
+
+msgid "Card"
+msgstr "Kartu"
+
+msgid "Cart discount"
+msgstr "Diskon keranjang"
+
+msgid "Cash"
+msgstr "Tunai"
+
+msgid "Cash in"
+msgstr "Kas masuk"
+
+msgid "Cash out"
+msgstr "Kas keluar"
+
+msgid "Cash refunds"
+msgstr "Retur tunai"
+
+msgid "Cash sales"
+msgstr "Penjualan tunai"
+
+msgid "Close session"
+msgstr "Tutup sesi"
+
+msgid "Close the session with {} counted?"
+msgstr "Tutup sesi dengan hasil hitung {}?"
+
+msgid "coin"
+msgstr "koin"
+
+msgid "Counted cash"
+msgstr "Uang dihitung"
+
+msgid "Count the cash in the drawer and type the opening amount. Enter opens the session."
+msgstr "Hitung uang di laci lalu ketik modal awal. Enter untuk membuka sesi."
+
+msgid "Count the drawer"
+msgstr "Hitung laci"
+
+msgid "Done"
+msgstr "Selesai"
+
+msgid "Edit count"
+msgstr "Ubah hitungan"
+
+msgid "Enter PIN"
+msgstr "Masukkan PIN"
+
+msgid "Expected cash"
+msgstr "Uang seharusnya"
+
+msgid "Force-closed by a manager."
+msgstr "Ditutup paksa oleh manajer."
+
+msgid "{} has had a cashier session open here since {}. Only they can close it: they count and close first, then you open your own session."
+msgstr "{} masih membuka sesi kasir di sini sejak {}. Hanya dia yang dapat menutupnya: dia menghitung dan menutup dulu, lalu Anda membuka sesi sendiri."
+
+msgid "Hello, {}"
+msgstr "Halo, {}"
+
+msgid "Line discount"
+msgstr "Diskon item"
+
+msgid "Lock"
+msgstr "Kunci"
+
+msgid "Log in"
+msgstr "Masuk"
+
+msgid "MANAGER (↑ ↓)"
+msgstr "MANAJER (↑ ↓)"
+
+msgid "Manager approval needed"
+msgstr "Perlu persetujuan manajer"
+
+msgid "No sales in this session."
+msgstr "Tidak ada penjualan di sesi ini."
+
+msgid "No users with a PIN at this branch yet. Add them in back office, then press F5."
+msgstr "Belum ada pengguna dengan PIN di cabang ini. Tambahkan di back office, lalu tekan F5."
+
+msgid "Opening cash"
+msgstr "Modal awal"
+
+msgid "Open session"
+msgstr "Buka sesi"
+
+msgid "Open your cashier session"
+msgstr "Buka sesi kasir Anda"
+
+msgid "Optional: count notes and coins (↑ ↓ to move, digits to type). They add up automatically."
+msgstr "Opsional: hitung uang kertas dan koin (↑ ↓ untuk pindah, ketik angka). Jumlahnya dihitung otomatis."
+
+msgid "Over"
+msgstr "Lebih"
+
+msgid "Pick a manager first."
+msgstr "Pilih manajer dulu."
+
+msgid "Pick your name with the arrow keys or a tap, then type your PIN."
+msgstr "Pilih nama Anda dengan tombol panah atau sentuh, lalu ketik PIN."
+
+msgid "Refresh"
+msgstr "Muat ulang"
+
+msgid "Refund without receipt"
+msgstr "Retur tanpa struk"
+
+msgid "Selling arrives in a later version."
+msgstr "Fitur penjualan hadir di versi berikutnya."
+
+msgid "Session closed"
+msgstr "Sesi ditutup"
+
+msgid "Session {}"
+msgstr "Sesi {}"
+
+msgid "Session opened. Have a good shift!"
+msgstr "Sesi dibuka. Selamat bertugas!"
+
+msgid "Session open since"
+msgstr "Sesi dibuka sejak"
+
+msgid "Short"
+msgstr "Kurang"
+
+msgid "Something went wrong ({})."
+msgstr "Terjadi kesalahan ({})."
+
+msgid "Sultan POS · Register"
+msgstr "Sultan POS · Kasir"
+
+msgid "Sum of the notes and coins"
+msgstr "Jumlah uang kertas dan koin"
+
+msgid "TENDERS"
+msgstr "PEMBAYARAN"
+
+msgid "Test override"
+msgstr "Uji persetujuan"
+
+msgid "That amount is not valid."
+msgstr "Jumlah tersebut tidak valid."
+
+msgid "The approval expired or was already used. Approve again."
+msgstr "Persetujuan sudah kedaluwarsa atau sudah dipakai. Setujui lagi."
+
+msgid "There is no open session on this register."
+msgstr "Tidak ada sesi terbuka di kasir ini."
+
+msgid "This cannot be undone. The report shows the expected cash after closing."
+msgstr "Ini tidak dapat dibatalkan. Laporan menampilkan uang seharusnya setelah sesi ditutup."
+
+msgid "This manager's limit ({}) is too low."
+msgstr "Batas manajer ini ({}) terlalu rendah."
+
+msgid "This register is in use"
+msgstr "Kasir ini sedang dipakai"
+
+msgid "This register is not paired (or was unpaired). Pair it again in back office."
+msgstr "Kasir ini belum dipasangkan (atau sudah dilepas). Pasangkan lagi di back office."
+
+msgid "This session was already closed (perhaps by a manager)."
+msgstr "Sesi ini sudah ditutup (mungkin oleh manajer)."
+
+msgid "Too many wrong PINs. Try again in {}."
+msgstr "Terlalu banyak PIN salah. Coba lagi dalam {}."
+
+msgid "Transactions"
+msgstr "Transaksi"
+
+msgid "Type the total, or count per denomination"
+msgstr "Ketik totalnya, atau hitung per pecahan"
+
+msgid "Who is at the register?"
+msgstr "Siapa yang bertugas?"
+
+msgid "Working…"
+msgstr "Memproses…"
+
+msgid "Wrong PIN. Try again."
+msgstr "PIN salah. Coba lagi."
+
+msgid "Yes, close"
+msgstr "Ya, tutup"
+
+msgid "You already have an open session on another register. Close it there first."
+msgstr "Anda masih punya sesi terbuka di kasir lain. Tutup dulu di sana."
+
+msgid "You are not allowed to do this."
+msgstr "Anda tidak berhak melakukan ini."
+
+msgid "You cannot approve your own request. Ask another manager."
+msgstr "Anda tidak dapat menyetujui permintaan sendiri. Minta manajer lain."
+
+msgid "Your limit is {}. A manager picks their name and types their PIN."
+msgstr "Batas Anda {}. Manajer memilih namanya lalu mengetik PIN."
+
+msgid "Your login ended. Please log in again."
+msgstr "Login Anda berakhir. Silakan masuk lagi."
+
+msgid "Your session stays open while the register is locked."
+msgstr "Sesi Anda tetap terbuka selama kasir dikunci."
+
+# Setup wizard (ui/setup.slint).
+msgid "Database file"
+msgstr "File database"
+
+msgid "MySQL URL"
+msgstr "URL MySQL"
+
+msgid "Listen address"
+msgstr "Alamat server"
+
+msgid "Company name"
+msgstr "Nama perusahaan"
+
+msgid "Branch code"
+msgstr "Kode cabang"
+
+msgid "Branch name"
+msgstr "Nama cabang"
+
+msgid "Stock location"
+msgstr "Lokasi stok"
+
+msgid "Owner username"
+msgstr "Username pemilik"
+
+msgid "Name on the lock screen"
+msgstr "Nama di layar kunci"
+
+msgid "Password"
+msgstr "Kata sandi"
+
+msgid "Password again"
+msgstr "Ulangi kata sandi"
+
+msgid "PIN"
+msgstr "PIN"
+
+msgid "PIN again"
+msgstr "Ulangi PIN"
+
+msgid "Server address"
+msgstr "Alamat server"
+
+msgid "Manager username"
+msgstr "Username manajer"
+
+msgid "Manager password"
+msgstr "Kata sandi manajer"
+
+msgid "Register code"
+msgstr "Kode kasir"
+
+msgid "Register name"
+msgstr "Nama kasir"
+
+msgid "Pairing code"
+msgstr "Kode pairing"
+
+msgid "Please fill in: {}."
+msgstr "Mohon isi: {}."
+
+msgid "A branch server needs HQ sync, which is coming soon. Use a single app or an HQ server for now."
+msgstr "Server cabang butuh sinkronisasi dengan HQ, yang segera hadir. Untuk sekarang pakai aplikasi tunggal atau server HQ."
+
+msgid "A code has 1 to 10 letters or digits, e.g. JKT01 or R2."
+msgstr "Kode terdiri dari 1 sampai 10 huruf atau angka, misalnya JKT01 atau R2."
+
+msgid "A password has at least 8 characters."
+msgstr "Kata sandi minimal 8 karakter."
+
+msgid "The two passwords are not the same."
+msgstr "Kedua kata sandi tidak sama."
+
+msgid "The two PINs are not the same."
+msgstr "Kedua PIN tidak sama."
+
+msgid "Type a URL like mysql://user:password@host/sultan."
+msgstr "Ketik URL seperti mysql://user:password@host/sultan."
+
+msgid "Type an address with a port, e.g. 0.0.0.0:8080."
+msgstr "Ketik alamat beserta port, misalnya 0.0.0.0:8080."
+
+msgid "The database works and is empty."
+msgstr "Database bisa dipakai dan masih kosong."
+
+msgid "This database is already set up (company {}). Pick another one."
+msgstr "Database ini sudah disiapkan (perusahaan {}). Pilih database lain."
+
+msgid "Cannot use the database: {}"
+msgstr "Database tidak bisa dipakai: {}"
+
+msgid "Cannot save the settings: {}"
+msgstr "Pengaturan tidak bisa disimpan: {}"
+
+msgid "Please check: {}"
+msgstr "Mohon periksa: {}"
+
+msgid "Cannot reach the server. Check the address and the network."
+msgstr "Server tidak terjangkau. Periksa alamat dan jaringan."
+
+msgid "Something answered at this address, but it is not a Sultan server."
+msgstr "Ada yang menjawab di alamat ini, tetapi itu bukan server Sultan."
+
+msgid "Wrong username or password."
+msgstr "Username atau kata sandi salah."
+
+msgid "Too many wrong tries. Wait a moment and try again."
+msgstr "Terlalu banyak percobaan salah. Tunggu sebentar lalu coba lagi."
+
+msgid "This user is not allowed to register terminals. Ask the owner."
+msgstr "Pengguna ini tidak boleh mendaftarkan terminal. Hubungi pemilik."
+
+msgid "This is a branch server. Register terminals at the HQ server."
+msgstr "Ini server cabang. Daftarkan terminal di server HQ."
+
+msgid "The pairing code is unknown, already used or expired."
+msgstr "Kode pairing tidak dikenal, sudah dipakai, atau kedaluwarsa."
+
+msgid "This register code is already used at the branch. Pick another one."
+msgstr "Kode kasir ini sudah dipakai di cabang tersebut. Pilih kode lain."
+
+msgid "The login ended. Log in again."
+msgstr "Login berakhir. Silakan login lagi."
+
+msgid "This user cannot see any branch."
+msgstr "Pengguna ini tidak bisa melihat cabang mana pun."
+
+msgid "Next"
+msgstr "Lanjut"
+
+msgid "Test connection"
+msgstr "Tes koneksi"
+
+msgid "Set up"
+msgstr "Siapkan"
+
+msgid "Connect"
+msgstr "Hubungkan"
+
+msgid "Register"
+msgstr "Daftarkan"
+
+msgid "Pair"
+msgstr "Pasangkan"
+
+msgid "I have a pairing code"
+msgstr "Saya punya kode pairing"
+
+msgid "Use a manager login"
+msgstr "Pakai login manajer"
+
+msgid "Open the register"
+msgstr "Buka kasir"
+
+msgid "Finish"
+msgstr "Selesai"
+
+msgid "Coming soon"
+msgstr "Segera hadir"
+
+msgid "Sultan POS · Setup"
+msgstr "Sultan POS · Penyiapan"
+
+msgid "Sultan setup"
+msgstr "Penyiapan Sultan"
+
+msgid "Welcome to Sultan"
+msgstr "Selamat datang di Sultan"
+
+msgid "How will this computer be used? Pick with the arrow keys or 1 to 4, then press Enter."
+msgstr "Komputer ini akan dipakai untuk apa? Pilih dengan tombol panah atau 1 sampai 4, lalu tekan Enter."
+
+msgid "Single app"
+msgstr "Aplikasi tunggal"
+
+msgid "One shop on one computer: the server and the register run together."
+msgstr "Satu toko di satu komputer: server dan kasir berjalan bersama."
+
+msgid "HQ server"
+msgstr "Server HQ"
+
+msgid "Head office: keeps the master data. Terminals on the network connect to it."
+msgstr "Kantor pusat: menyimpan data master. Terminal di jaringan terhubung ke sini."
+
+msgid "Branch server"
+msgstr "Server cabang"
+
+msgid "A shop server with a copy of the HQ data. Needs HQ sync."
+msgstr "Server toko dengan salinan data HQ. Butuh sinkronisasi HQ."
+
+msgid "Terminal"
+msgstr "Terminal"
+
+msgid "A register that connects to a server on the shop network."
+msgstr "Kasir yang terhubung ke server di jaringan toko."
+
+msgid "Database"
+msgstr "Database"
+
+msgid "Where the HQ server keeps its data. A MySQL database must already exist."
+msgstr "Tempat server HQ menyimpan datanya. Database MySQL harus sudah ada."
+
+msgid "SQLite file"
+msgstr "File SQLite"
+
+msgid "MySQL server"
+msgstr "Server MySQL"
+
+msgid "Network"
+msgstr "Jaringan"
+
+msgid "Terminals connect to this address. 0.0.0.0 listens on every network; the server has no TLS yet, so keep it on the shop network."
+msgstr "Terminal terhubung ke alamat ini. 0.0.0.0 mendengarkan di semua jaringan; server belum memakai TLS, jadi gunakan hanya di jaringan toko."
+
+msgid "Your shop"
+msgstr "Toko Anda"
+
+msgid "The company and its first branch. The branch code appears in document numbers."
+msgstr "Perusahaan dan cabang pertamanya. Kode cabang muncul di nomor dokumen."
+
+msgid "Same as the code"
+msgstr "Sama dengan kode"
+
+msgid "Time zone"
+msgstr "Zona waktu"
+
+msgid "WIB (Jakarta)"
+msgstr "WIB (Jakarta)"
+
+msgid "WITA (Makassar)"
+msgstr "WITA (Makassar)"
+
+msgid "WIT (Jayapura)"
+msgstr "WIT (Jayapura)"
+
+msgid "Owner account"
+msgstr "Akun pemilik"
+
+msgid "The owner logs in to back office with the password and to the register with the PIN."
+msgstr "Pemilik login ke back office dengan kata sandi dan ke kasir dengan PIN."
+
+msgid "Connect to the server"
+msgstr "Hubungkan ke server"
+
+msgid "Type the address of the single app or HQ server, e.g. 192.168.1.10 or 192.168.1.10:8080."
+msgstr "Ketik alamat aplikasi tunggal atau server HQ, misalnya 192.168.1.10 atau 192.168.1.10:8080."
+
+msgid "Manager login"
+msgstr "Login manajer"
+
+msgid "A manager with back-office rights registers this terminal. The login is used once and not stored."
+msgstr "Manajer dengan hak back office mendaftarkan terminal ini. Login hanya dipakai sekali dan tidak disimpan."
+
+msgid "This terminal"
+msgstr "Terminal ini"
+
+msgid "Pick the branch and name this register, e.g. R2 and Kasir 2."
+msgstr "Pilih cabang dan beri nama kasir ini, misalnya R2 dan Kasir 2."
+
+msgid "Type the one-time code issued in back office (valid for 10 minutes)."
+msgstr "Ketik kode sekali pakai dari back office (berlaku 10 menit)."
+
+msgid "All set"
+msgstr "Semua siap"
+
+msgid "The shop {} (branch {}) is ready. The register opens next; log in with the owner PIN."
+msgstr "Toko {} (cabang {}) sudah siap. Kasir akan terbuka; login dengan PIN pemilik."
+
+msgid "The HQ server for {} (branch {}) is set up."
+msgstr "Server HQ untuk {} (cabang {}) sudah disiapkan."
+
+msgid "This computer is now register {} ({}) at {}."
+msgstr "Komputer ini sekarang kasir {} ({}) di {}."
+
+msgid "Start the server with this command, then register terminals:"
+msgstr "Jalankan server dengan perintah ini, lalu daftarkan terminal:"

@@ -1,0 +1,20 @@
+[package]
+name = "sultan-core"
+description = "Sultan POS pure domain logic (no IO)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license.workspace = true
+
+[lib]
+name = "sultan_core"
+
+[dependencies]
+chrono.workspace = true
+chrono-tz.workspace = true
+thiserror.workspace = true
+uuid.workspace = true
+
+[lints]
+workspace = true

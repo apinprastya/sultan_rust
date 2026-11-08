@@ -1,0 +1,30 @@
+[package]
+name = "sultan-client"
+description = "Sultan POS register client: the Service trait, its HTTP implementation and a fake for UI tests."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license.workspace = true
+
+[lib]
+name = "sultan_client"
+
+[dependencies]
+futures-util.workspace = true
+reqwest.workspace = true
+serde.workspace = true
+# Session numbers in the fake (`core::doc_number`, Phase 9); pure, no IO.
+sultan-core = { path = "../core" }
+serde_json.workspace = true
+thiserror.workspace = true
+tokio-tungstenite.workspace = true
+
+[dev-dependencies]
+sultan-db = { path = "../db" }
+sultan-server = { path = "../server" }
+axum.workspace = true
+tokio = { workspace = true, features = ["net", "time"] }
+
+[lints]
+workspace = true

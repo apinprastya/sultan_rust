@@ -1,0 +1,208 @@
+// Theme tokens (the `sultan-spike` palette: calm, dark, one blue accent) and every user-facing
+// string. Rust only sends message / label codes; this file turns them into text with @tr(), so
+// Indonesian and English live in one place (`translations/id/LC_MESSAGES/sultan-ui.po`).
+
+export global Theme {
+    out property <color> bg: #0e1116;
+    out property <color> panel: #161a22;
+    out property <color> raised: #1e2330;
+    out property <color> border: #2a3040;
+    out property <color> key: #2a3142;
+    out property <color> key-hover: #343c50;
+    out property <color> text: #e8eaf0;
+    out property <color> muted: #8a93a8;
+    out property <color> accent: #5b8cff;
+    out property <color> accent-soft: #5b8cff2e;
+    out property <color> success: #34d399;
+    out property <color> success-soft: #34d39924;
+    out property <color> warn: #fbbf24;
+    out property <color> danger: #f87171;
+    out property <color> danger-soft: #f8717124;
+    out property <color> scrim: #000000b0;
+
+    // -1 bad, 0 neutral, 1 good
+    public pure function tone-color(tone: int) -> color {
+        if (tone > 0) {
+            return root.success;
+        }
+        if (tone < 0) {
+            return root.danger;
+        }
+        return root.muted;
+    }
+}
+
+export global Strings {
+    // Messages (codes from `crates/ui/src/controller.rs`).
+    public pure function message(code: string, arg: string) -> string {
+        if (code == "") {
+            return "";
+        }
+        if (code == "wrong_pin") {
+            return @tr("Wrong PIN. Try again.");
+        }
+        if (code == "locked_out") {
+            return @tr("Too many wrong PINs. Try again in {}.", arg);
+        }
+        if (code == "pin_too_short") {
+            return @tr("A PIN has 4 to 6 digits.");
+        }
+        if (code == "network") {
+            return @tr("Cannot reach the server. Check the network and try again.");
+        }
+        if (code == "device_unpaired") {
+            return @tr("This register is not paired (or was unpaired). Pair it again in back office.");
+        }
+        if (code == "session_ended") {
+            return @tr("Your login ended. Please log in again.");
+        }
+        if (code == "permission_denied") {
+            return @tr("You are not allowed to do this.");
+        }
+        if (code == "self_approval") {
+            return @tr("You cannot approve your own request. Ask another manager.");
+        }
+        if (code == "override_limit_exceeded") {
+            return @tr("This manager's limit ({}) is too low.", arg);
+        }
+        if (code == "invalid_override") {
+            return @tr("The approval expired or was already used. Approve again.");
+        }
+        if (code == "pick_manager") {
+            return @tr("Pick a manager first.");
+        }
+        if (code == "already_open_user") {
+            return @tr("You already have an open session on another register. Close it there first.");
+        }
+        if (code == "already_open_register") {
+            return @tr("Another cashier opened a session on this register.");
+        }
+        if (code == "session_closed") {
+            return @tr("This session was already closed (perhaps by a manager).");
+        }
+        if (code == "no_open_session") {
+            return @tr("There is no open session on this register.");
+        }
+        if (code == "invalid_amount") {
+            return @tr("That amount is not valid.");
+        }
+        if (code == "session_opened") {
+            return @tr("Session opened. Have a good shift!");
+        }
+        if (code == "override_ok") {
+            return @tr("Approved by {}. The action was carried out.", arg);
+        }
+        if (code == "override_not_needed") {
+            return @tr("Allowed by your own permissions; no approval needed.");
+        }
+        if (code == "override_cancelled") {
+            return @tr("Approval cancelled.");
+        }
+        return @tr("Something went wrong ({}).", arg);
+    }
+
+    // Key-chip labels.
+    public pure function chip(code: string) -> string {
+        if (code == "approve") {
+            return @tr("Approve");
+        }
+        if (code == "cancel") {
+            return @tr("Cancel");
+        }
+        if (code == "log_in") {
+            return @tr("Log in");
+        }
+        if (code == "back") {
+            return @tr("Back");
+        }
+        if (code == "enter_pin") {
+            return @tr("Enter PIN");
+        }
+        if (code == "refresh") {
+            return @tr("Refresh");
+        }
+        if (code == "back_to_lock") {
+            return @tr("Back to lock");
+        }
+        if (code == "open_session") {
+            return @tr("Open session");
+        }
+        if (code == "lock") {
+            return @tr("Lock");
+        }
+        if (code == "test_override") {
+            return @tr("Test override");
+        }
+        if (code == "close_session") {
+            return @tr("Close session");
+        }
+        if (code == "confirm_close") {
+            return @tr("Yes, close");
+        }
+        if (code == "edit_count") {
+            return @tr("Edit count");
+        }
+        if (code == "done") {
+            return @tr("Done");
+        }
+        return code;
+    }
+
+    // Permission keys that can need a manager override (spec 2.1 §3).
+    public pure function action(code: string) -> string {
+        if (code == "sale.discount") {
+            return @tr("Line discount");
+        }
+        if (code == "sale.cart_discount") {
+            return @tr("Cart discount");
+        }
+        if (code == "refund.no_receipt") {
+            return @tr("Refund without receipt");
+        }
+        if (code == "cash.out") {
+            return @tr("Cash out");
+        }
+        return code;
+    }
+
+    // Close-report rows and tenders.
+    public pure function label(code: string) -> string {
+        if (code == "opening_cash") {
+            return @tr("Opening cash");
+        }
+        if (code == "cash_sales") {
+            return @tr("Cash sales");
+        }
+        if (code == "cash_refunds") {
+            return @tr("Cash refunds");
+        }
+        if (code == "cash_in") {
+            return @tr("Cash in");
+        }
+        if (code == "cash_out") {
+            return @tr("Cash out");
+        }
+        if (code == "expected_cash") {
+            return @tr("Expected cash");
+        }
+        if (code == "counted_cash") {
+            return @tr("Counted cash");
+        }
+        if (code == "transactions") {
+            return @tr("Transactions");
+        }
+        if (code == "cash") {
+            return @tr("Cash");
+        }
+        if (code == "card") {
+            return @tr("Card");
+        }
+        if (code == "qris") {
+            return "QRIS";
+        }
+        if (code == "transfer") {
+            return @tr("Bank transfer");
+        }
+        return code;
+    }
+}

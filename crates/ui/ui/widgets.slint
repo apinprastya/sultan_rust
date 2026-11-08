@@ -1,0 +1,168 @@
+// Shared pieces: card, key chip (as in `sultan-spike`), message line, avatar tile, PIN dots and
+// the on-screen keypad. The keypad sends the same key texts as the keyboard, so clicks and keys
+// share one path in Rust.
+
+import { Theme, Strings } from "theme.slint";
+
+export struct Note {
+    code: string,
+    arg: string,
+    tone: int,
+}
+
+export struct Chip {
+    keys: string,
+    label: string,
+    id: string,
+}
+
+export component Card inherits Rectangle {
+    background: Theme.panel;
+    border-radius: 16px;
+    border-width: 1px;
+    border-color: Theme.border;
+}
+
+export component KeyChip inherits Rectangle {
+    in property <string> keys;
+    in property <string> label;
+    in property <bool> large;
+    callback clicked;
+    accessible-role: button;
+    accessible-label: root.label;
+    accessible-action-default => { root.clicked(); }
+    height: root.large ? 56px : 40px;
+    border-radius: 10px;
+    border-width: 1px;
+    border-color: Theme.border;
+    background: touch.pressed ? Theme.accent-soft : touch.has-hover ? Theme.raised : Theme.panel;
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => {
+            root.clicked();
+        }
+    }
+    HorizontalLayout {
+        padding-left: 10px;
+        padding-right: 16px;
+        spacing: 12px;
+        VerticalLayout {
+            alignment: center;
+            Rectangle {
+                height: 26px;
+                min-width: 48px;
+                border-radius: 6px;
+                background: Theme.accent-soft;
+                HorizontalLayout {
+                    padding-left: 8px;
+                    padding-right: 8px;
+                    Text {
+                        text: root.keys;
+                        color: Theme.accent;
+                        font-size: 13px;
+                        font-weight: 700;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+                }
+            }
+        }
+        Text {
+            text: root.label;
+            color: Theme.text;
+            font-size: root.large ? 17px : 14px;
+            font-weight: root.large ? 600 : 400;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+    }
+}
+
+// One line of feedback; empty when there is nothing to say.
+export component NoteLine inherits Text {
+    in property <Note> note;
+    text: Strings.message(root.note.code, root.note.arg);
+    color: Theme.tone-color(root.note.tone);
+    font-size: 15px;
+    wrap: word-wrap;
+    horizontal-alignment: center;
+}
+
+export component Avatar inherits Rectangle {
+    in property <string> initials;
+    in property <length> size: 64px;
+    width: root.size;
+    height: root.size;
+    border-radius: root.size / 2;
+    background: Theme.accent;
+    Text {
+        text: root.initials;
+        color: white;
+        font-size: root.size * 0.38;
+        font-weight: 700;
+    }
+}
+
+export component PinDots inherits HorizontalLayout {
+    in property <int> length;
+    alignment: center;
+    spacing: 14px;
+    for i in 6: Rectangle {
+        width: 18px;
+        height: 18px;
+        border-radius: 9px;
+        border-width: 2px;
+        border-color: i < root.length ? Theme.accent : Theme.border;
+        background: i < root.length ? Theme.accent : transparent;
+    }
+}
+
+component PadButton inherits Rectangle {
+    in property <string> label;
+    in property <bool> primary;
+    callback clicked;
+    accessible-role: button;
+    accessible-label: root.label;
+    accessible-action-default => { root.clicked(); }
+    height: 64px;
+    border-radius: 12px;
+    background: root.primary ? (touch.pressed ? #2b4fd6 : Theme.accent) : (touch.pressed ? Theme.accent-soft : touch.has-hover ? Theme.key-hover : Theme.key);
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => {
+            root.clicked();
+        }
+    }
+    Text {
+        text: root.label;
+        color: root.primary ? white : Theme.text;
+        font-size: 24px;
+        font-weight: 600;
+    }
+}
+
+// 1-9, Backspace, 0, Enter. Large touch targets (64 px high).
+export component Keypad inherits GridLayout {
+    callback key(string);
+    spacing: 10px;
+    Row {
+        PadButton { label: "1"; clicked => { root.key("1"); } }
+        PadButton { label: "2"; clicked => { root.key("2"); } }
+        PadButton { label: "3"; clicked => { root.key("3"); } }
+    }
+    Row {
+        PadButton { label: "4"; clicked => { root.key("4"); } }
+        PadButton { label: "5"; clicked => { root.key("5"); } }
+        PadButton { label: "6"; clicked => { root.key("6"); } }
+    }
+    Row {
+        PadButton { label: "7"; clicked => { root.key("7"); } }
+        PadButton { label: "8"; clicked => { root.key("8"); } }
+        PadButton { label: "9"; clicked => { root.key("9"); } }
+    }
+    Row {
+        PadButton { label: "⌫"; clicked => { root.key(Key.Backspace); } }
+        PadButton { label: "0"; clicked => { root.key("0"); } }
+        PadButton { label: "OK"; primary: true; clicked => { root.key(Key.Return); } }
+    }
+}

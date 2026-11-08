@@ -1,0 +1,7 @@
+/target
+*.db
+*.db-shm
+*.db-wal
+/lcov.info
+sultan.toml
+register.token

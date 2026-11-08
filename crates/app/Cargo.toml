@@ -1,0 +1,42 @@
+[package]
+name = "sultan-app"
+description = "Sultan POS single binary: standalone / hq / branch / register."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license.workspace = true
+
+[lib]
+name = "sultan_app"
+
+[[bin]]
+name = "sultan"
+path = "src/main.rs"
+
+[dependencies]
+axum.workspace = true
+clap.workspace = true
+reqwest.workspace = true
+rpassword.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sultan-core = { path = "../core" }
+sultan-db = { path = "../db" }
+sultan-server = { path = "../server" }
+sultan-client = { path = "../client" }
+sultan-ui = { path = "../ui" }
+thiserror.workspace = true
+tokio = { workspace = true, features = ["net", "signal"] }
+toml.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+[dev-dependencies]
+# End-to-end test of the register UI against `sultan serve` (headless window).
+i-slint-backend-testing.workspace = true
+slint.workspace = true
+uuid.workspace = true
+
+[lints]
+workspace = true

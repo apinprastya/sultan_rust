@@ -1,0 +1,40 @@
+[package]
+name = "sultan-server"
+description = "Sultan POS REST API server (axum) with WebSocket event notifications."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license.workspace = true
+
+[lib]
+name = "sultan_server"
+
+[dependencies]
+argon2.workspace = true
+axum.workspace = true
+base64.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+sultan-core = { path = "../core" }
+sultan-db = { path = "../db" }
+tokio = { workspace = true, features = ["sync", "time"] }
+tower-http.workspace = true
+tracing.workspace = true
+utoipa.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+http-body-util.workspace = true
+sqlx.workspace = true
+# `examples/dev_server.rs` listens on a TCP port.
+tokio = { workspace = true, features = ["net", "signal"] }
+tower.workspace = true
+tokio-tungstenite.workspace = true
+futures-util.workspace = true
+# Request-logging test: capture the formatted log lines.
+tracing-subscriber.workspace = true
+
+[lints]
+workspace = true

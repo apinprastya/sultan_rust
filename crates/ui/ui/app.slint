@@ -1,0 +1,1001 @@
+// The register window (plan Phase 8, spec 2.1 §4–§6). Mostly declarative: Rust
+// (`crates/ui/src/app.rs`) sets the view properties and receives keys, actions and picks.
+//
+// Keyboard: one FocusScope holds the focus for the whole window and hands every key to Rust
+// (`key`), which decides per screen and per dialog what it means. There are no text fields, so no
+// widget swallows keys (the reason `sultan-spike` needed `capture-key-pressed`), and the override
+// dialog cannot leak keys to the page below: Rust routes them to the dialog while it is open.
+// Clicks on tiles, keypads and key chips call the same paths.
+
+import { Theme, Strings } from "theme.slint";
+import { Note, Chip, Card, KeyChip, NoteLine, Avatar, PinDots, Keypad } from "widgets.slint";
+
+export { Note, Chip, Theme, Strings }
+// The first-run setup wizard, a window of its own.
+export { SetupWindow, SetupForm, SetupStrings } from "setup.slint";
+
+export struct UserTile {
+    name: string,
+    initials: string,
+}
+
+export struct LockView {
+    cursor: int,
+    pad-open: bool,
+    pad-name: string,
+    pad-initials: string,
+    pin-length: int,
+    note: Note,
+}
+
+export struct OpenView {
+    amount: string,
+    blocked: bool,
+    blocked-name: string,
+    blocked-since: string,
+    blocked-number: string,
+    note: Note,
+}
+
+export struct HomeView {
+    number: string,
+    since: string,
+    opening: string,
+    note: Note,
+}
+
+export struct DenomRow {
+    label: string,
+    qty: string,
+    subtotal: string,
+    coin: bool,
+}
+
+export struct CloseView {
+    cursor: int,
+    total: string,
+    total-locked: bool,
+    confirm: bool,
+    note: Note,
+}
+
+export struct ReportLine {
+    label: string,
+    value: string,
+    tone: int,
+    strong: bool,
+}
+
+export struct ReportView {
+    number: string,
+    over-short: string,
+    tone: int,
+    forced: bool,
+    has-tenders: bool,
+}
+
+export struct OverrideView {
+    open: bool,
+    action: string,
+    value: string,
+    limit: string,
+    cursor: int,
+    pin-length: int,
+    note: Note,
+}
+
+component Title inherits Text {
+    color: Theme.text;
+    font-size: 26px;
+    font-weight: 700;
+}
+
+component Subtitle inherits Text {
+    color: Theme.muted;
+    font-size: 15px;
+    wrap: word-wrap;
+}
+
+component Header inherits Rectangle {
+    in property <string> branch;
+    in property <string> register;
+    in property <string> user;
+    in property <string> clock;
+    in property <bool> busy;
+    height: 60px;
+    background: Theme.panel;
+    Rectangle {
+        y: parent.height - 1px;
+        height: 1px;
+        background: Theme.border;
+    }
+    HorizontalLayout {
+        padding-left: 20px;
+        padding-right: 20px;
+        spacing: 14px;
+        VerticalLayout {
+            alignment: center;
+            Rectangle {
+                width: 34px;
+                height: 34px;
+                border-radius: 9px;
+                background: Theme.accent;
+                Text {
+                    text: "S";
+                    color: white;
+                    font-size: 18px;
+                    font-weight: 800;
+                }
+            }
+        }
+        Text {
+            text: "Sultan";
+            color: Theme.text;
+            font-size: 18px;
+            font-weight: 700;
+            vertical-alignment: center;
+        }
+        Text {
+            text: root.branch;
+            color: Theme.muted;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+        Rectangle {
+            horizontal-stretch: 1;
+        }
+        Text {
+            text: root.busy ? @tr("Working…") : "";
+            color: Theme.warn;
+            font-size: 13px;
+            vertical-alignment: center;
+        }
+        Text {
+            text: root.register;
+            color: Theme.muted;
+            vertical-alignment: center;
+        }
+        if root.user != "": VerticalLayout {
+            alignment: center;
+            Rectangle {
+                height: 30px;
+                border-radius: 15px;
+                background: Theme.raised;
+                HorizontalLayout {
+                    padding-left: 12px;
+                    padding-right: 12px;
+                    Text {
+                        text: root.user;
+                        color: Theme.text;
+                        font-weight: 600;
+                        vertical-alignment: center;
+                    }
+                }
+            }
+        }
+        Text {
+            text: root.clock;
+            color: Theme.text;
+            font-size: 16px;
+            font-weight: 600;
+            vertical-alignment: center;
+        }
+    }
+}
+
+component Tile inherits Rectangle {
+    in property <UserTile> user;
+    in property <bool> selected;
+    callback clicked;
+    accessible-role: button;
+    accessible-label: root.user.name;
+    accessible-action-default => { root.clicked(); }
+    border-radius: 16px;
+    border-width: root.selected ? 2px : 1px;
+    border-color: root.selected ? Theme.accent : Theme.border;
+    background: root.selected ? Theme.raised : touch.has-hover ? Theme.raised : Theme.panel;
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => {
+            root.clicked();
+        }
+    }
+    VerticalLayout {
+        alignment: center;
+        spacing: 12px;
+        padding: 12px;
+        HorizontalLayout {
+            alignment: center;
+            Avatar {
+                initials: root.user.initials;
+            }
+        }
+        Text {
+            text: root.user.name;
+            color: Theme.text;
+            font-size: 17px;
+            font-weight: 600;
+            horizontal-alignment: center;
+            overflow: elide;
+        }
+    }
+}
+
+component LockPage inherits Rectangle {
+    in property <[UserTile]> users;
+    in property <int> columns;
+    in property <LockView> view;
+    callback pick(int);
+    callback key(string);
+    property <length> gap: 16px;
+    VerticalLayout {
+        padding: 32px;
+        spacing: 18px;
+        Title {
+            text: @tr("Who is at the register?");
+        }
+        Subtitle {
+            text: @tr("Pick your name with the arrow keys or a tap, then type your PIN.");
+        }
+        grid := Flickable {
+            vertical-stretch: 1;
+            property <length> tile-w: min(220px, (self.width - (root.columns - 1) * root.gap) / root.columns);
+            property <length> tile-h: 150px;
+            content-height: Math.ceil(root.users.length / root.columns) * (self.tile-h + root.gap);
+            for u[i] in root.users: Tile {
+                x: Math.mod(i, root.columns) * (grid.tile-w + root.gap);
+                y: Math.floor(i / root.columns) * (grid.tile-h + root.gap);
+                width: grid.tile-w;
+                height: grid.tile-h;
+                user: u;
+                selected: i == root.view.cursor;
+                clicked => {
+                    root.pick(i);
+                }
+            }
+        }
+        if root.users.length == 0: Subtitle {
+            text: @tr("No users with a PIN at this branch yet. Add them in back office, then press F5.");
+        }
+        if !root.view.pad-open: NoteLine {
+            note: root.view.note;
+        }
+    }
+
+    // The PIN pad, over the tiles.
+    if root.view.pad-open: Rectangle {
+        background: Theme.scrim;
+        TouchArea { }
+        Card {
+            width: 400px;
+            height: 600px;
+            background: Theme.raised;
+            VerticalLayout {
+                padding: 28px;
+                spacing: 16px;
+                HorizontalLayout {
+                    alignment: center;
+                    Avatar {
+                        initials: root.view.pad-initials;
+                        size: 56px;
+                    }
+                }
+                Text {
+                    text: root.view.pad-name;
+                    color: Theme.text;
+                    font-size: 22px;
+                    font-weight: 700;
+                    horizontal-alignment: center;
+                }
+                PinDots {
+                    length: root.view.pin-length;
+                }
+                Rectangle {
+                    min-height: 44px;
+                    NoteLine {
+                        width: 100%;
+                        note: root.view.note;
+                    }
+                }
+                Keypad {
+                    key(k) => {
+                        root.key(k);
+                    }
+                }
+            }
+        }
+    }
+}
+
+component OpenPage inherits Rectangle {
+    in property <OpenView> view;
+    callback key(string);
+    callback action(string);
+    Card {
+        width: 560px;
+        height: root.view.blocked ? 300px : 640px;
+        VerticalLayout {
+            padding: 32px;
+            spacing: 16px;
+            if !root.view.blocked: Title {
+                text: @tr("Open your cashier session");
+            }
+            if !root.view.blocked: Subtitle {
+                text: @tr("Count the cash in the drawer and type the opening amount. Enter opens the session.");
+            }
+            if !root.view.blocked: Rectangle {
+                height: 84px;
+                border-radius: 12px;
+                background: Theme.bg;
+                border-width: 2px;
+                border-color: Theme.accent;
+                Text {
+                    text: root.view.amount;
+                    color: Theme.text;
+                    font-size: 42px;
+                    font-weight: 700;
+                }
+            }
+            if !root.view.blocked: NoteLine {
+                note: root.view.note;
+            }
+            if !root.view.blocked: Keypad {
+                key(k) => {
+                    root.key(k);
+                }
+            }
+            if root.view.blocked: Title {
+                text: @tr("This register is in use");
+            }
+            if root.view.blocked: Subtitle {
+                text: @tr("{} has had a cashier session open here since {}. Only they can close it: they count and close first, then you open your own session.", root.view.blocked-name, root.view.blocked-since);
+            }
+            if root.view.blocked && root.view.blocked-number != "": Subtitle {
+                text: @tr("Session {}", root.view.blocked-number);
+            }
+            if root.view.blocked: NoteLine {
+                note: root.view.note;
+            }
+        }
+    }
+}
+
+component Stat inherits Rectangle {
+    in property <string> label;
+    in property <string> value;
+    border-radius: 12px;
+    background: Theme.raised;
+    min-height: 92px;
+    VerticalLayout {
+        padding: 16px;
+        spacing: 6px;
+        Text {
+            text: root.label;
+            color: Theme.muted;
+            font-size: 13px;
+        }
+        Text {
+            text: root.value;
+            color: Theme.text;
+            font-size: 28px;
+            font-weight: 700;
+        }
+    }
+}
+
+component HomePage inherits Rectangle {
+    in property <string> user;
+    in property <HomeView> view;
+    in property <[Chip]> chips;
+    callback action(string);
+    HorizontalLayout {
+        padding: 32px;
+        spacing: 24px;
+        VerticalLayout {
+            horizontal-stretch: 1;
+            spacing: 18px;
+            Title {
+                text: @tr("Hello, {}", root.user);
+                font-size: 32px;
+            }
+            if root.view.number != "": Subtitle {
+                text: @tr("Session {}", root.view.number);
+            }
+            HorizontalLayout {
+                spacing: 16px;
+                Stat {
+                    label: @tr("Session open since");
+                    value: root.view.since;
+                }
+                Stat {
+                    label: @tr("Opening cash");
+                    value: root.view.opening;
+                }
+            }
+            Card {
+                vertical-stretch: 1;
+                VerticalLayout {
+                    padding: 24px;
+                    alignment: center;
+                    spacing: 8px;
+                    Text {
+                        text: @tr("Selling arrives in a later version.");
+                        color: Theme.text;
+                        font-size: 18px;
+                        horizontal-alignment: center;
+                    }
+                    Subtitle {
+                        text: @tr("Your session stays open while the register is locked.");
+                        horizontal-alignment: center;
+                    }
+                }
+            }
+            NoteLine {
+                note: root.view.note;
+                horizontal-alignment: left;
+            }
+        }
+        VerticalLayout {
+            width: 300px;
+            spacing: 12px;
+            Text {
+                text: @tr("ACTIONS");
+                color: Theme.muted;
+                font-size: 12px;
+                font-weight: 700;
+            }
+            for c in root.chips: KeyChip {
+                keys: c.keys;
+                label: Strings.chip(c.label);
+                large: true;
+                clicked => {
+                    root.action(c.id);
+                }
+            }
+            Rectangle {
+                vertical-stretch: 1;
+            }
+        }
+    }
+}
+
+component DenomLine inherits Rectangle {
+    in property <DenomRow> item;
+    in property <bool> selected;
+    in property <bool> enabled;
+    callback clicked;
+    accessible-role: button;
+    accessible-label: root.item.label;
+    accessible-action-default => { root.clicked(); }
+    height: 38px;
+    border-radius: 8px;
+    background: root.selected && root.enabled ? Theme.accent-soft : transparent;
+    TouchArea {
+        clicked => {
+            root.clicked();
+        }
+    }
+    HorizontalLayout {
+        padding-left: 12px;
+        padding-right: 12px;
+        spacing: 12px;
+        Text {
+            text: root.item.label;
+            color: Theme.text;
+            font-weight: 600;
+            vertical-alignment: center;
+            horizontal-stretch: 1;
+        }
+        Text {
+            text: root.item.coin ? @tr("coin") : "";
+            color: Theme.muted;
+            font-size: 12px;
+            vertical-alignment: center;
+            width: 60px;
+        }
+        Rectangle {
+            width: 90px;
+            border-radius: 6px;
+            background: Theme.bg;
+            border-width: root.selected && root.enabled ? 2px : 1px;
+            border-color: root.selected && root.enabled ? Theme.accent : Theme.border;
+            Text {
+                text: root.item.qty == "" ? "0" : root.item.qty;
+                color: root.item.qty == "" ? Theme.muted : Theme.text;
+                font-size: 16px;
+                horizontal-alignment: right;
+                width: parent.width - 16px;
+            }
+        }
+        Text {
+            text: root.item.subtotal;
+            color: Theme.text;
+            width: 140px;
+            horizontal-alignment: right;
+            vertical-alignment: center;
+        }
+    }
+}
+
+component ClosePage inherits Rectangle {
+    in property <[DenomRow]> denoms;
+    in property <CloseView> view;
+    callback key(string);
+    callback pick(int);
+    HorizontalLayout {
+        padding: 24px;
+        spacing: 24px;
+        Card {
+            horizontal-stretch: 1;
+            VerticalLayout {
+                padding: 16px;
+                spacing: 2px;
+                Title {
+                    text: @tr("Count the drawer");
+                    font-size: 22px;
+                }
+                Subtitle {
+                    text: @tr("Optional: count notes and coins (↑ ↓ to move, digits to type). They add up automatically.");
+                }
+                Rectangle {
+                    height: 8px;
+                }
+                for d[i] in root.denoms: DenomLine {
+                    item: d;
+                    selected: root.view.cursor == i + 1;
+                    enabled: !root.view.confirm;
+                    clicked => {
+                        root.pick(i + 1);
+                    }
+                }
+                Rectangle {
+                    vertical-stretch: 1;
+                }
+            }
+        }
+        VerticalLayout {
+            width: 400px;
+            spacing: 14px;
+            Card {
+                height: 150px;
+                border-width: root.view.cursor == 0 && !root.view.confirm ? 2px : 1px;
+                border-color: root.view.cursor == 0 && !root.view.confirm ? Theme.accent : Theme.border;
+                accessible-role: button;
+                accessible-label: @tr("Counted cash");
+                TouchArea {
+                    clicked => {
+                        root.pick(0);
+                    }
+                }
+                VerticalLayout {
+                    padding: 20px;
+                    spacing: 6px;
+                    Text {
+                        text: @tr("Counted cash");
+                        color: Theme.muted;
+                        font-size: 13px;
+                    }
+                    Text {
+                        text: root.view.total;
+                        color: Theme.text;
+                        font-size: 38px;
+                        font-weight: 800;
+                    }
+                    Text {
+                        text: root.view.total-locked ? @tr("Sum of the notes and coins") : @tr("Type the total, or count per denomination");
+                        color: Theme.muted;
+                        font-size: 13px;
+                    }
+                }
+            }
+            if root.view.confirm: Card {
+                background: Theme.raised;
+                border-color: Theme.warn;
+                VerticalLayout {
+                    padding: 18px;
+                    spacing: 8px;
+                    Text {
+                        text: @tr("Close the session with {} counted?", root.view.total);
+                        color: Theme.text;
+                        font-size: 17px;
+                        font-weight: 700;
+                        wrap: word-wrap;
+                    }
+                    Subtitle {
+                        text: @tr("This cannot be undone. The report shows the expected cash after closing.");
+                    }
+                }
+            }
+            if !root.view.confirm: Keypad {
+                key(k) => {
+                    root.key(k);
+                }
+            }
+            NoteLine {
+                note: root.view.note;
+            }
+            Rectangle {
+                vertical-stretch: 1;
+            }
+        }
+    }
+}
+
+component ReportRow inherits HorizontalLayout {
+    in property <ReportLine> line;
+    spacing: 12px;
+    Text {
+        text: Strings.label(root.line.label);
+        color: root.line.strong ? Theme.text : Theme.muted;
+        font-weight: root.line.strong ? 700 : 400;
+        horizontal-stretch: 1;
+    }
+    Text {
+        text: root.line.value;
+        color: root.line.tone == 0 ? Theme.text : Theme.tone-color(root.line.tone);
+        font-weight: root.line.strong ? 700 : 400;
+        horizontal-alignment: right;
+    }
+}
+
+component ReportPage inherits Rectangle {
+    in property <[ReportLine]> lines;
+    in property <[ReportLine]> tenders;
+    in property <ReportView> view;
+    callback action(string);
+    Card {
+        width: 620px;
+        height: min(root.height - 32px, 660px);
+        VerticalLayout {
+            padding: 28px;
+            spacing: 10px;
+            Title {
+                text: @tr("Session closed");
+            }
+            if root.view.number != "": Subtitle {
+                text: @tr("Session {}", root.view.number);
+            }
+            if root.view.forced: Subtitle {
+                text: @tr("Force-closed by a manager.");
+            }
+            Rectangle {
+                height: 72px;
+                border-radius: 12px;
+                background: root.view.tone > 0 ? Theme.success-soft : root.view.tone < 0 ? Theme.danger-soft : Theme.raised;
+                HorizontalLayout {
+                    padding-left: 18px;
+                    padding-right: 18px;
+                    Text {
+                        text: root.view.tone > 0 ? @tr("Over") : root.view.tone < 0 ? @tr("Short") : @tr("Balanced");
+                        color: Theme.tone-color(root.view.tone);
+                        font-size: 18px;
+                        font-weight: 700;
+                        vertical-alignment: center;
+                        horizontal-stretch: 1;
+                    }
+                    Text {
+                        text: root.view.over-short;
+                        color: root.view.tone == 0 ? Theme.text : Theme.tone-color(root.view.tone);
+                        font-size: 30px;
+                        font-weight: 800;
+                        vertical-alignment: center;
+                    }
+                }
+            }
+            for l in root.lines: ReportRow {
+                line: l;
+            }
+            Rectangle {
+                height: 1px;
+                background: Theme.border;
+            }
+            Text {
+                text: @tr("TENDERS");
+                color: Theme.muted;
+                font-size: 12px;
+                font-weight: 700;
+            }
+            if !root.view.has-tenders: Subtitle {
+                text: @tr("No sales in this session.");
+            }
+            for t in root.tenders: ReportRow {
+                line: t;
+            }
+            Rectangle {
+                vertical-stretch: 1;
+            }
+        }
+    }
+}
+
+component ManagerRow inherits Rectangle {
+    in property <UserTile> user;
+    in property <bool> selected;
+    callback clicked;
+    accessible-role: button;
+    accessible-label: root.user.name;
+    accessible-action-default => { root.clicked(); }
+    height: 56px;
+    border-radius: 10px;
+    background: root.selected ? Theme.accent-soft : touch.has-hover ? Theme.border : transparent;
+    border-width: root.selected ? 2px : 0px;
+    border-color: Theme.accent;
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => {
+            root.clicked();
+        }
+    }
+    HorizontalLayout {
+        padding-left: 10px;
+        spacing: 12px;
+        VerticalLayout {
+            alignment: center;
+            Avatar {
+                initials: root.user.initials;
+                size: 36px;
+            }
+        }
+        Text {
+            text: root.user.name;
+            color: Theme.text;
+            font-size: 16px;
+            vertical-alignment: center;
+        }
+    }
+}
+
+component OverrideDialog inherits Rectangle {
+    in property <OverrideView> view;
+    in property <[UserTile]> managers;
+    callback key(string);
+    callback pick(int);
+    callback action(string);
+    background: Theme.scrim;
+    TouchArea { }
+    Card {
+        width: 760px;
+        height: 620px;
+        background: Theme.raised;
+        VerticalLayout {
+            padding: 26px;
+            spacing: 14px;
+            Title {
+                text: @tr("Manager approval needed");
+                font-size: 22px;
+            }
+            Text {
+                text: Strings.action(root.view.action) + " " + root.view.value;
+                color: Theme.warn;
+                font-size: 20px;
+                font-weight: 700;
+            }
+            if root.view.limit != "": Subtitle {
+                text: @tr("Your limit is {}. A manager picks their name and types their PIN.", root.view.limit);
+            }
+            HorizontalLayout {
+                spacing: 24px;
+                vertical-stretch: 1;
+                VerticalLayout {
+                    horizontal-stretch: 1;
+                    spacing: 6px;
+                    Text {
+                        text: @tr("MANAGER (↑ ↓)");
+                        color: Theme.muted;
+                        font-size: 12px;
+                        font-weight: 700;
+                    }
+                    Flickable {
+                        vertical-stretch: 1;
+                        content-height: root.managers.length * 60px;
+                        for m[i] in root.managers: ManagerRow {
+                            y: i * 60px;
+                            width: parent.width;
+                            user: m;
+                            selected: i == root.view.cursor;
+                            clicked => {
+                                root.pick(i);
+                            }
+                        }
+                    }
+                }
+                VerticalLayout {
+                    width: 300px;
+                    spacing: 14px;
+                    PinDots {
+                        length: root.view.pin-length;
+                    }
+                    Keypad {
+                        key(k) => {
+                            root.key(k);
+                        }
+                    }
+                }
+            }
+            NoteLine {
+                note: root.view.note;
+            }
+            HorizontalLayout {
+                spacing: 12px;
+                alignment: end;
+                KeyChip {
+                    keys: "Esc";
+                    label: Strings.chip("cancel");
+                    clicked => {
+                        root.action("back");
+                    }
+                }
+                KeyChip {
+                    keys: "Enter";
+                    label: Strings.chip("approve");
+                    clicked => {
+                        root.action("confirm");
+                    }
+                }
+            }
+        }
+    }
+}
+
+export component MainWindow inherits Window {
+    title: @tr("Sultan POS · Register");
+    preferred-width: 1366px;
+    preferred-height: 768px;
+    min-width: 1024px;
+    min-height: 700px;
+    background: Theme.bg;
+    default-font-size: 15px;
+    forward-focus: keys;
+
+    in property <string> screen: "lock";
+    in property <string> branch-label;
+    in property <string> register-label;
+    in property <string> user-name;
+    in property <string> clock;
+    in property <bool> busy;
+    in property <[Chip]> chips;
+    // The session home's actions (fixed; `chips` change while the dialog is open).
+    in property <[Chip]> actions;
+    in property <[UserTile]> users;
+    in property <int> columns: 4;
+    in property <LockView> lock;
+    in property <OpenView> open;
+    in property <HomeView> home;
+    in property <[DenomRow]> denoms;
+    in property <CloseView> closing;
+    in property <[ReportLine]> report-lines;
+    in property <[ReportLine]> report-tenders;
+    in property <ReportView> report;
+    in property <[UserTile]> managers;
+    in property <OverrideView> approval;
+    out property <bool> has-focus: keys.has-focus;
+
+    // A key (Slint key text and modifiers); true = handled.
+    callback key(string, bool, bool) -> bool;
+    // A chip or button (`crates/ui/src/controller.rs` `Action` IDs).
+    callback action(string);
+    // A click on a list item: kind (`user`, `approver`, `row`) and index.
+    callback pick(string, int);
+    // Results of background calls are waiting (posted from other threads).
+    callback pump();
+
+    // The texts as shown, in the current language (used by the headless tests).
+    public pure function message(note: Note) -> string {
+        return Strings.message(note.code, note.arg);
+    }
+    public pure function chip-label(code: string) -> string {
+        return Strings.chip(code);
+    }
+
+    keys := FocusScope {
+        key-pressed(e) => {
+            if (root.key(e.text, e.modifiers.control, e.modifiers.shift)) {
+                return accept;
+            }
+            reject
+        }
+
+        VerticalLayout {
+            Header {
+                branch: root.branch-label;
+                register: root.register-label;
+                user: root.user-name;
+                clock: root.clock;
+                busy: root.busy;
+            }
+
+            Rectangle {
+                vertical-stretch: 1;
+                if root.screen == "lock": LockPage {
+                    users: root.users;
+                    columns: root.columns;
+                    view: root.lock;
+                    pick(i) => {
+                        root.pick("user", i);
+                    }
+                    key(k) => {
+                        root.key(k, false, false);
+                    }
+                }
+                if root.screen == "open": OpenPage {
+                    view: root.open;
+                    key(k) => {
+                        root.key(k, false, false);
+                    }
+                    action(a) => {
+                        root.action(a);
+                    }
+                }
+                if root.screen == "home": HomePage {
+                    user: root.user-name;
+                    view: root.home;
+                    chips: root.actions;
+                    action(a) => {
+                        root.action(a);
+                    }
+                }
+                if root.screen == "close": ClosePage {
+                    denoms: root.denoms;
+                    view: root.closing;
+                    key(k) => {
+                        root.key(k, false, false);
+                    }
+                    pick(i) => {
+                        root.pick("row", i);
+                    }
+                }
+                if root.screen == "report": ReportPage {
+                    lines: root.report-lines;
+                    tenders: root.report-tenders;
+                    view: root.report;
+                    action(a) => {
+                        root.action(a);
+                    }
+                }
+            }
+
+            // Key hints for the current screen or dialog; each chip is also a button.
+            Rectangle {
+                height: 60px;
+                background: Theme.panel;
+                Rectangle {
+                    y: 0;
+                    height: 1px;
+                    background: Theme.border;
+                }
+                // The home page shows its actions as large buttons; the dialog has its own.
+                if !root.approval.open && root.screen != "home": HorizontalLayout {
+                    padding-left: 20px;
+                    padding-right: 20px;
+                    padding-top: 10px;
+                    padding-bottom: 10px;
+                    spacing: 10px;
+                    alignment: start;
+                    for c in root.chips: KeyChip {
+                        keys: c.keys;
+                        label: Strings.chip(c.label);
+                        clicked => {
+                            root.action(c.id);
+                        }
+                    }
+                }
+            }
+        }
+
+        if root.approval.open: OverrideDialog {
+            width: 100%;
+            height: 100%;
+            view: root.approval;
+            managers: root.managers;
+            key(k) => {
+                root.key(k, false, false);
+            }
+            pick(i) => {
+                root.pick("approver", i);
+            }
+            action(a) => {
+                root.action(a);
+            }
+        }
+    }
+}
