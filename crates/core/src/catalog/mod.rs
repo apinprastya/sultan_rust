@@ -333,4 +333,45 @@ mod tests {
             assert_eq!(kind.to_string(), name);
         }
     }
+
+    #[test]
+    fn fields_of_errors() {
+        let s = String::from;
+        let cases = [
+            (
+                CatalogError::DuplicateSku { sku: s("S") },
+                Some("variants.sku"),
+            ),
+            (
+                CatalogError::DuplicateBarcode { code: s("B") },
+                Some("barcodes.code"),
+            ),
+            (
+                CatalogError::InvalidCode {
+                    kind: CodeKind::Plu,
+                    value: s("x"),
+                },
+                Some("variants.plu"),
+            ),
+            (
+                CatalogError::InvalidDefaultUnit {
+                    which: "sale",
+                    reason: "x",
+                },
+                Some("default_sale_unit_id"),
+            ),
+            (
+                CatalogError::InvalidDefaultUnit {
+                    which: "purchase",
+                    reason: "x",
+                },
+                Some("default_purchase_unit_id"),
+            ),
+            (CatalogError::FrozenAfterUse { field: "type" }, Some("type")),
+            (CatalogError::NotFound, None),
+        ];
+        for (error, field) in cases {
+            assert_eq!(error.field(), field, "{error:?}");
+        }
+    }
 }

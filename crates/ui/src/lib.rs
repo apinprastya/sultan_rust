@@ -9,6 +9,9 @@
 //!   time texts.
 //! - [`setup`] and [`setup_app`]: the first-run setup wizard (single app, HQ server, branch
 //!   server (not available yet), terminal), a separate window with its own controller.
+//! - [`backoffice`] and [`backoffice_app`]: the back office (phase C4, spec 2.2): login,
+//!   product list, product form, category and brand editors, a window of its own with its own
+//!   controller, driven through [`sultan_client::BackOffice`].
 //! - `ui/*.slint`: the window, mostly declarative. Every user-facing string is `@tr()` in
 //!   `ui/theme.slint` or `ui/app.slint`; the Indonesian translation is bundled from
 //!   `translations/id/LC_MESSAGES/sultan-ui.po` and picked from the system locale or
@@ -16,6 +19,8 @@
 
 pub mod amount;
 pub mod app;
+pub mod backoffice;
+pub mod backoffice_app;
 pub mod controller;
 pub mod count;
 pub mod input;
@@ -28,5 +33,6 @@ mod generated {
 }
 
 pub use app::{App, Options, Runner, build_app, run};
+pub use backoffice_app::{BackOfficeApp, BackOfficeOptions, build_backoffice, run_backoffice};
 pub use generated::*;
 pub use setup_app::{Setup, build_setup};

@@ -2,7 +2,8 @@
 //! §4–§6, §8.
 //!
 //! - Every request carries the device token as `X-Register-Token` (spec 2.1 §2); calls made in a
-//!   login session add `Authorization: Bearer <session token>`.
+//!   login session add `Authorization: Bearer <session token>`. A back-office client
+//!   ([`HttpService::user`], phase C4) has no device token and sends only the bearer token.
 //! - The cashier-session `POST`s send `Idempotency-Key`, so a retry after a lost answer gets the
 //!   original answer instead of `409` (`docs/plan.md` §1, §9 case 17). `POST /overrides` takes no
 //!   key: its answer is a secret the server does not store.
@@ -24,10 +25,14 @@ use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::tungstenite::http::HeaderValue;
 
+use crate::catalog::{
+    Brand, BrandBody, CatalogSettings, Category, CategoryBody, CategoryNode, Generate, ImageInfo,
+    Me, Product, ProductPage, ProductQuery, SearchHit, TaxClass,
+};
 use crate::{
-    Branch, CashierSession, ClientError, CloseReport, CloseRequest, EventSink, LockUser, Login,
-    OverrideGrant, OverrideRequest, Problem, ProtectedAction, ProtectedResult, ServerEvent,
-    Service, SessionDetail, SessionPage, SessionQuery,
+    BackOffice, Branch, CashierSession, ClientError, CloseReport, CloseRequest, EventSink,
+    LockUser, Login, OverrideGrant, OverrideRequest, Problem, ProtectedAction, ProtectedResult,
+    ServerEvent, Service, SessionDetail, SessionPage, SessionQuery,
 };
 
 /// Header carrying the device token (spec 2.1 §2).
@@ -98,6 +103,13 @@ impl HttpService {
         }))
     }
 
+    /// A back-office client for `server`: no device token, only password sessions
+    /// ([`crate::BackOffice`]).
+    #[must_use]
+    pub fn user(server: &str) -> Self {
+        Self::new(server, "")
+    }
+
     /// The API base URL.
     #[must_use]
     pub fn base(&self) -> &str {
@@ -105,11 +117,13 @@ impl HttpService {
     }
 
     fn request(&self, method: Method, path: &str, token: Option<&str>) -> RequestBuilder {
-        let request = self
+        let mut request = self
             .0
             .http
-            .request(method, format!("{}{path}", self.0.base))
-            .header(REGISTER_TOKEN_HEADER, &self.0.device_token);
+            .request(method, format!("{}{path}", self.0.base));
+        if !self.0.device_token.is_empty() {
+            request = request.header(REGISTER_TOKEN_HEADER, &self.0.device_token);
+        }
         match token {
             Some(t) => request.bearer_auth(t),
             None => request,
@@ -263,6 +277,9 @@ impl Service for HttpService {
                 .map_err(|e| ClientError::Unexpected(e.to_string()))?;
             let headers = request.headers_mut();
             for (name, value) in [("authorization", bearer), (REGISTER_TOKEN_HEADER, device)] {
+                if value.is_empty() {
+                    continue;
+                }
                 let value = HeaderValue::from_str(&value)
                     .map_err(|e| ClientError::Unexpected(e.to_string()))?;
                 headers.insert(name, value);
@@ -283,6 +300,209 @@ impl Service for HttpService {
             }
             Ok(())
         })
+    }
+}
+
+#[derive(serde::Deserialize)]
+struct Generated {
+    value: String,
+}
+
+#[derive(serde::Deserialize, serde::Serialize)]
+struct BranchIds {
+    branch_ids: Vec<String>,
+}
+
+fn archived_query(include_archived: bool) -> &'static [(&'static str, &'static str)] {
+    if include_archived {
+        &[("include_archived", "true")]
+    } else {
+        &[]
+    }
+}
+
+impl BackOffice for HttpService {
+    fn password_login(&self, username: &str, password: &str) -> crate::BoxFuture<Login> {
+        let request = self
+            .request(Method::POST, "/auth/password", None)
+            .json(&json!({ "username": username, "password": password }));
+        Box::pin(send(request))
+    }
+
+    fn me(&self, token: &str) -> crate::BoxFuture<Me> {
+        Box::pin(send(self.request(Method::GET, "/auth/me", Some(token))))
+    }
+
+    fn branches(&self, token: &str) -> crate::BoxFuture<Vec<Branch>> {
+        Box::pin(send(self.request(Method::GET, "/branches", Some(token))))
+    }
+
+    fn products(&self, token: &str, query: &ProductQuery) -> crate::BoxFuture<ProductPage> {
+        let request = self
+            .request(Method::GET, "/products", Some(token))
+            .query(query);
+        Box::pin(send(request))
+    }
+
+    fn product(&self, token: &str, id: &str) -> crate::BoxFuture<Product> {
+        let request = self.request(Method::GET, &format!("/products/{id}"), Some(token));
+        Box::pin(send(request))
+    }
+
+    fn put_product(&self, token: &str, id: &str, body: &Product) -> crate::BoxFuture<Product> {
+        let request = self
+            .request(Method::PUT, &format!("/products/{id}"), Some(token))
+            .json(body);
+        Box::pin(send(request))
+    }
+
+    fn set_archived(
+        &self,
+        token: &str,
+        id: &str,
+        archived: bool,
+        key: &str,
+    ) -> crate::BoxFuture<Product> {
+        let action = if archived { "archive" } else { "unarchive" };
+        let request = self
+            .request(
+                Method::POST,
+                &format!("/products/{id}/{action}"),
+                Some(token),
+            )
+            .header(IDEMPOTENCY_HEADER, key);
+        Box::pin(send(request))
+    }
+
+    fn categories(
+        &self,
+        token: &str,
+        include_archived: bool,
+    ) -> crate::BoxFuture<Vec<CategoryNode>> {
+        let request = self
+            .request(Method::GET, "/categories", Some(token))
+            .query(archived_query(include_archived));
+        Box::pin(send(request))
+    }
+
+    fn put_category(
+        &self,
+        token: &str,
+        id: &str,
+        body: &CategoryBody,
+    ) -> crate::BoxFuture<Category> {
+        let request = self
+            .request(Method::PUT, &format!("/categories/{id}"), Some(token))
+            .json(body);
+        Box::pin(send(request))
+    }
+
+    fn brands(&self, token: &str, include_archived: bool) -> crate::BoxFuture<Vec<Brand>> {
+        let request = self
+            .request(Method::GET, "/brands", Some(token))
+            .query(archived_query(include_archived));
+        Box::pin(send(request))
+    }
+
+    fn put_brand(&self, token: &str, id: &str, body: &BrandBody) -> crate::BoxFuture<Brand> {
+        let request = self
+            .request(Method::PUT, &format!("/brands/{id}"), Some(token))
+            .json(body);
+        Box::pin(send(request))
+    }
+
+    fn tax_classes(&self, token: &str) -> crate::BoxFuture<Vec<TaxClass>> {
+        Box::pin(send(self.request(Method::GET, "/tax-classes", Some(token))))
+    }
+
+    fn catalog_settings(&self, token: &str) -> crate::BoxFuture<CatalogSettings> {
+        Box::pin(send(self.request(
+            Method::GET,
+            "/settings/catalog",
+            Some(token),
+        )))
+    }
+
+    fn generate(&self, token: &str, what: Generate, key: &str) -> crate::BoxFuture<String> {
+        let request = self
+            .request(
+                Method::POST,
+                &format!("/catalog/generate/{}", what.path()),
+                Some(token),
+            )
+            .header(IDEMPOTENCY_HEADER, key);
+        Box::pin(async move { send::<Generated>(request).await.map(|g| g.value) })
+    }
+
+    fn branch_blocks(&self, token: &str, id: &str) -> crate::BoxFuture<Vec<String>> {
+        let request = self.request(
+            Method::GET,
+            &format!("/products/{id}/branch-blocks"),
+            Some(token),
+        );
+        Box::pin(async move { send::<BranchIds>(request).await.map(|b| b.branch_ids) })
+    }
+
+    fn put_branch_blocks(
+        &self,
+        token: &str,
+        id: &str,
+        branch_ids: &[String],
+    ) -> crate::BoxFuture<Vec<String>> {
+        let request = self
+            .request(
+                Method::PUT,
+                &format!("/products/{id}/branch-blocks"),
+                Some(token),
+            )
+            .json(&BranchIds {
+                branch_ids: branch_ids.to_vec(),
+            });
+        Box::pin(async move { send::<BranchIds>(request).await.map(|b| b.branch_ids) })
+    }
+
+    fn product_image(&self, token: &str, id: &str) -> crate::BoxFuture<Option<Vec<u8>>> {
+        let request = self.request(Method::GET, &format!("/products/{id}/image"), Some(token));
+        Box::pin(async move {
+            match exchange(request).await {
+                Ok((_, bytes)) => Ok(Some(bytes)),
+                Err(ClientError::Api(p)) if p.code == "not_found" => Ok(None),
+                Err(e) => Err(e),
+            }
+        })
+    }
+
+    fn put_product_image(
+        &self,
+        token: &str,
+        id: &str,
+        bytes: Vec<u8>,
+    ) -> crate::BoxFuture<ImageInfo> {
+        let request = self
+            .request(Method::PUT, &format!("/products/{id}/image"), Some(token))
+            .header("content-type", "application/octet-stream")
+            .body(bytes);
+        Box::pin(send(request))
+    }
+
+    fn delete_product_image(&self, token: &str, id: &str) -> crate::BoxFuture<()> {
+        let request = self.request(
+            Method::DELETE,
+            &format!("/products/{id}/image"),
+            Some(token),
+        );
+        Box::pin(async move { exchange(request).await.map(|_| ()) })
+    }
+
+    fn search(&self, token: &str, q: &str, limit: u32) -> crate::BoxFuture<Vec<SearchHit>> {
+        #[derive(serde::Deserialize)]
+        struct Hits {
+            items: Vec<SearchHit>,
+        }
+        let request = self
+            .request(Method::GET, "/catalog/search", Some(token))
+            .query(&[("q", q.to_owned()), ("limit", limit.to_string())]);
+        Box::pin(async move { send::<Hits>(request).await.map(|h| h.items) })
     }
 }
 

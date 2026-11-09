@@ -10,6 +10,12 @@
 //! [`FakeService::calls`] so tests can check what the UI sent (for example the `X-Override`
 //! retry). [`FakeService::fail_next`] injects one error; [`FakeService::emit`] pushes an event to
 //! the sink given to [`Service::watch_events`].
+//!
+//! The fake also implements [`crate::BackOffice`] with an in-memory catalog ([`backoffice`]):
+//! password users `owner` / `owner-pass-1` (all permissions) and `budi` / `budi-pass-1`
+//! (read-only in the catalog), the core catalog rules and the server's error shapes.
+
+mod backoffice;
 
 use std::collections::HashMap;
 use std::sync::{Mutex, MutexGuard, PoisonError};
@@ -22,6 +28,8 @@ use crate::{
     OverrideGrant, OverrideRequest, Problem, ProtectedAction, ProtectedResult, ServerEvent,
     Service, SessionDetail, SessionPage, SessionQuery, TenderTotal,
 };
+
+pub use backoffice::{BackOfficeUser, EXEMPT_TAX_CLASS, OTHER_BRANCH_ID, STANDARD_TAX_CLASS};
 
 /// Failures before a lockout (spec 2.1 §4).
 pub const MAX_FAILURES: u32 = 5;
@@ -94,6 +102,7 @@ struct State {
     fail_next: Option<ClientError>,
     fail_on: Option<(&'static str, ClientError)>,
     sink: Option<EventSink>,
+    catalog: backoffice::Catalog,
 }
 
 /// The fake service; see the module docs.
@@ -339,7 +348,11 @@ impl Service for FakeService {
         if let Some(e) = failure {
             return ready(Err(e));
         }
-        let Some(user) = s.tokens.remove(token) else {
+        let Some(user) = s
+            .tokens
+            .remove(token)
+            .or_else(|| s.catalog.remove_token(token))
+        else {
             return ready(Err(api(401, "invalid_session")));
         };
         let sink = s.sink.clone();
@@ -644,7 +657,9 @@ impl Service for FakeService {
         if let Some(e) = failure {
             return ready(Err(e));
         }
-        if let Err(e) = s.caller(token) {
+        if let Err(e) = s.caller(token)
+            && !s.catalog.has_token(token)
+        {
             return ready(Err(e));
         }
         s.sink = Some(sink);

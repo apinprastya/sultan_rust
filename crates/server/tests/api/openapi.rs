@@ -20,6 +20,7 @@ async fn openapi_lists_the_routes(h: &Harness) {
     let expected = [
         ("/api/v1/auth/pin", "post"),
         ("/api/v1/auth/password", "post"),
+        ("/api/v1/auth/me", "get"),
         ("/api/v1/auth/logout", "post"),
         ("/api/v1/registers/pair", "post"),
         ("/api/v1/registers/me/users", "get"),
@@ -102,6 +103,7 @@ async fn openapi_lists_the_routes(h: &Harness) {
         "CatalogSettingsDto",
         "GeneratedDto",
         "ProblemItem",
+        "MeResponse",
     ] {
         assert!(components["schemas"].get(schema).is_some(), "{schema}");
     }

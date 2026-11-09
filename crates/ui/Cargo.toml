@@ -1,6 +1,6 @@
 [package]
 name = "sultan-ui"
-description = "Sultan POS register UI (Slint): lock screen, cashier session, blind close, manager override."
+description = "Sultan POS UI (Slint): register, setup wizard and back office."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -14,6 +14,10 @@ name = "sultan_ui"
 chrono.workspace = true
 slint.workspace = true
 sultan-client = { path = "../client" }
+# Back office (C4): the core catalog rules run before a save; the image crate decodes the
+# product thumbnail (already in the tree via Slint, pinned in the workspace).
+sultan-core = { path = "../core" }
+image.workspace = true
 tokio = { workspace = true, features = ["rt"] }
 uuid.workspace = true
 

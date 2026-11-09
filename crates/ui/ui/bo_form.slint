@@ -1,0 +1,1261 @@
+// The product form of the back office (phase C4, spec 2.2 §2–§6). Rust
+// (`crates/ui/src/backoffice/form.rs`) keeps every value as typed and decides everything; this
+// file shows it and reports edits as `edit(kind, row, sub, field, text)`, check boxes as
+// `toggle(…)`, pickers as `choose(…)` and row buttons as `pick(…)`.
+//
+// Text fields show what Rust last sent; when Rust changes a text under the user (a product is
+// loaded or saved, a code is generated) it bumps `form-serial` and the tab content is rebuilt.
+
+import { LineEdit, ComboBox, CheckBox, ScrollView } from "std-widgets.slint";
+import { Theme } from "theme.slint";
+import { Note, Card } from "widgets.slint";
+import { BoStrings, Field, SmallButton, KeyButton, Banner, SectionTitle } from "bo_widgets.slint";
+
+export struct BoGeneral {
+    code: string,
+    code-placeholder: string,
+    name: string,
+    receipt: string,
+    receipt-placeholder: string,
+    type-index: int,
+    type-locked: bool,
+    category-index: int,
+    brand-index: int,
+    tax-index: int,
+    tags: string,
+    open-price: bool,
+    requires-note: bool,
+    sellable: bool,
+    purchasable: bool,
+    code-error: Note,
+    name-error: Note,
+    receipt-error: Note,
+    type-error: Note,
+    tags-error: Note,
+    reference-error: Note,
+}
+
+export struct BoValue {
+    name: string,
+    code: string,
+    can-remove: bool,
+}
+
+export struct BoOption {
+    name: string,
+    values: [BoValue],
+    error: Note,
+}
+
+export struct BoCombo {
+    label: string,
+    on: bool,
+    sku: string,
+    sku-default: string,
+    plu: string,
+    stored: bool,
+    error: Note,
+}
+
+export struct BoUnit {
+    name: string,
+    short-name: string,
+    factor: string,
+    sellable: bool,
+    purchasable: bool,
+    archived: bool,
+    factor-locked: bool,
+    archive-instead: bool,
+    error: Note,
+}
+
+export struct BoBarcode {
+    label: string,
+    code: string,
+    error: Note,
+}
+
+export struct BoComponent {
+    name: string,
+    sku: string,
+    units: [string],
+    unit-index: int,
+    qty: string,
+    error: Note,
+}
+
+export struct BoHit {
+    name: string,
+    sku: string,
+}
+
+export struct BoBranch {
+    label: string,
+    sold: bool,
+}
+
+export struct BoForm {
+    title: string,
+    code: string,
+    is-new: bool,
+    used: bool,
+    archived: bool,
+    dirty: bool,
+    can-edit: bool,
+    saving: bool,
+    tab: int,
+    tab-errors: [bool],
+    notice: Note,
+    changed-elsewhere: bool,
+    has-options: bool,
+    can-add-option: bool,
+    weighed: bool,
+    bundle: bool,
+    options-error: Note,
+    variants-error: Note,
+    base-name: string,
+    base-short: string,
+    kind-index: int,
+    kind-locked: bool,
+    base-error: Note,
+    can-add-unit: bool,
+    units-error: Note,
+    sale-index: int,
+    purchase-index: int,
+    defaults-error: Note,
+    pick-variant: int,
+    pick-unit: int,
+    new-barcode: string,
+    barcodes-error: Note,
+    component-search: string,
+    components-error: Note,
+    image-path: string,
+    has-image: bool,
+}
+
+// A labelled picker.
+component Picker inherits VerticalLayout {
+    in property <string> label;
+    in property <[string]> model;
+    in property <int> index;
+    in property <bool> enabled: true;
+    callback selected(int);
+    spacing: 3px;
+    if root.label != "": Text {
+        text: root.label;
+        color: Theme.muted;
+        font-size: 12px;
+    }
+    ComboBox {
+        model: root.model;
+        current-index: root.index;
+        enabled: root.enabled;
+        accessible-label: root.label;
+        selected(v) => {
+            root.selected(self.current-index);
+        }
+    }
+}
+
+component TabButton inherits Rectangle {
+    in property <string> text;
+    in property <string> keys;
+    in property <bool> selected;
+    in property <bool> has-error;
+    callback clicked;
+    accessible-role: tab;
+    accessible-label: root.text;
+    accessible-action-default => {
+        root.clicked();
+    }
+    height: 38px;
+    min-width: row.preferred-width;
+    border-radius: 8px;
+    background: root.selected ? Theme.raised : touch.has-hover ? Theme.panel : transparent;
+    border-width: root.selected ? 1px : 0px;
+    border-color: Theme.border;
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => {
+            root.clicked();
+        }
+    }
+    row := HorizontalLayout {
+        padding-left: 14px;
+        padding-right: 14px;
+        spacing: 8px;
+        Text {
+            text: root.text;
+            color: root.selected ? Theme.text : Theme.muted;
+            font-weight: root.selected ? 700 : 400;
+            vertical-alignment: center;
+        }
+        if root.has-error: VerticalLayout {
+            alignment: center;
+            Rectangle {
+                width: 8px;
+                height: 8px;
+                border-radius: 4px;
+                background: Theme.danger;
+            }
+        }
+        Text {
+            text: root.keys;
+            color: Theme.muted;
+            font-size: 11px;
+            vertical-alignment: center;
+        }
+    }
+}
+
+component Badge inherits Rectangle {
+    in property <string> text;
+    in property <color> tone: Theme.warn;
+    height: 24px;
+    min-width: t.preferred-width + 16px;
+    border-radius: 12px;
+    background: Theme.raised;
+    border-width: 1px;
+    border-color: root.tone;
+    t := Text {
+        text: root.text;
+        color: root.tone;
+        font-size: 12px;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+}
+
+component GeneralTab inherits HorizontalLayout {
+    in property <BoForm> form;
+    in property <BoGeneral> general;
+    in property <[string]> category-choices;
+    in property <[string]> brand-choices;
+    in property <[string]> tax-choices;
+    in property <[BoBranch]> branches;
+    in property <image> thumbnail;
+    in property <string> focus-target;
+    callback action(string);
+    callback edit(string, int, int, string, string);
+    callback toggle(string, int, string, bool);
+    callback choose(string, int, string, int);
+    spacing: 24px;
+
+    init => {
+        if (root.focus-target == "name") {
+            name.focus-edit();
+        }
+    }
+
+    VerticalLayout {
+        horizontal-stretch: 3;
+        spacing: 10px;
+        alignment: start;
+        HorizontalLayout {
+            spacing: 8px;
+            Field {
+                label: @tr("Code");
+                text: root.general.code;
+                placeholder: root.general.code-placeholder;
+                enabled: root.form.can-edit;
+                error: root.general.code-error;
+                edited(t) => {
+                    root.edit("form", 0, 0, "code", t);
+                }
+            }
+            VerticalLayout {
+                width: 120px;
+                alignment: end;
+                SmallButton {
+                    text: @tr("Generate");
+                    enabled: root.form.can-edit;
+                    clicked => {
+                        root.action("generate-code");
+                    }
+                }
+            }
+        }
+        name := Field {
+            label: @tr("Name");
+            text: root.general.name;
+            enabled: root.form.can-edit;
+            error: root.general.name-error;
+            edited(t) => {
+                root.edit("form", 0, 0, "name", t);
+            }
+        }
+        Field {
+            label: @tr("Receipt name (max. 32)");
+            text: root.general.receipt;
+            placeholder: root.general.receipt-placeholder;
+            enabled: root.form.can-edit;
+            error: root.general.receipt-error;
+            edited(t) => {
+                root.edit("form", 0, 0, "receipt_name", t);
+            }
+        }
+        HorizontalLayout {
+            spacing: 12px;
+            Picker {
+                label: @tr("Type");
+                model: [@tr("Stock"), @tr("Weighed"), @tr("Service"), @tr("Bundle")];
+                index: root.general.type-index;
+                enabled: root.form.can-edit && !root.general.type-locked;
+                selected(i) => {
+                    root.choose("form", 0, "type", i);
+                }
+            }
+            Picker {
+                label: @tr("Tax class");
+                model: root.tax-choices;
+                index: root.general.tax-index;
+                enabled: root.form.can-edit;
+                selected(i) => {
+                    root.choose("form", 0, "tax_class", i);
+                }
+            }
+        }
+        if root.general.type-error.code != "": Text {
+            text: BoStrings.message(root.general.type-error.code, root.general.type-error.arg);
+            color: Theme.danger;
+            font-size: 12px;
+            wrap: word-wrap;
+        }
+        HorizontalLayout {
+            spacing: 12px;
+            Picker {
+                label: @tr("Category");
+                model: root.category-choices;
+                index: root.general.category-index;
+                enabled: root.form.can-edit;
+                selected(i) => {
+                    root.choose("form", 0, "category", i);
+                }
+            }
+            Picker {
+                label: @tr("Brand");
+                model: root.brand-choices;
+                index: root.general.brand-index;
+                enabled: root.form.can-edit;
+                selected(i) => {
+                    root.choose("form", 0, "brand", i);
+                }
+            }
+        }
+        if root.general.reference-error.code != "": Text {
+            text: BoStrings.message(root.general.reference-error.code, root.general.reference-error.arg);
+            color: Theme.danger;
+            font-size: 12px;
+            wrap: word-wrap;
+        }
+        Field {
+            label: @tr("Tags (comma separated)");
+            text: root.general.tags;
+            placeholder: @tr("e.g. promo, new");
+            enabled: root.form.can-edit;
+            error: root.general.tags-error;
+            edited(t) => {
+                root.edit("form", 0, 0, "tags", t);
+            }
+        }
+    }
+
+    VerticalLayout {
+        horizontal-stretch: 2;
+        spacing: 8px;
+        alignment: start;
+        SectionTitle {
+            text: @tr("Selling");
+        }
+        CheckBox {
+            text: @tr("Sellable");
+            checked: root.general.sellable;
+            enabled: root.form.can-edit;
+            toggled => {
+                root.toggle("form", 0, "sellable", self.checked);
+            }
+        }
+        CheckBox {
+            text: @tr("Purchasable");
+            checked: root.general.purchasable;
+            enabled: root.form.can-edit;
+            toggled => {
+                root.toggle("form", 0, "purchasable", self.checked);
+            }
+        }
+        CheckBox {
+            text: @tr("Open price (the cashier types the price)");
+            checked: root.general.open-price;
+            enabled: root.form.can-edit;
+            toggled => {
+                root.toggle("form", 0, "open_price", self.checked);
+            }
+        }
+        CheckBox {
+            text: @tr("Requires a note on the receipt line");
+            checked: root.general.requires-note;
+            enabled: root.form.can-edit;
+            toggled => {
+                root.toggle("form", 0, "requires_note", self.checked);
+            }
+        }
+        SectionTitle {
+            text: @tr("Image");
+        }
+        HorizontalLayout {
+            spacing: 12px;
+            Rectangle {
+                width: 96px;
+                height: 96px;
+                border-radius: 10px;
+                background: Theme.raised;
+                border-width: 1px;
+                border-color: Theme.border;
+                clip: true;
+                Image {
+                    width: parent.width - 8px;
+                    height: parent.height - 8px;
+                    source: root.thumbnail;
+                    image-fit: contain;
+                }
+                if root.thumbnail.width == 0: Text {
+                    text: @tr("No image");
+                    color: Theme.muted;
+                    font-size: 12px;
+                }
+            }
+            VerticalLayout {
+                spacing: 6px;
+                alignment: start;
+                Field {
+                    text: root.form.image-path;
+                    placeholder: @tr("Path of a PNG, JPEG or WebP file");
+                    enabled: root.form.can-edit;
+                    edited(t) => {
+                        root.edit("form", 0, 0, "image_path", t);
+                    }
+                    accepted => {
+                        root.action("pick-image");
+                    }
+                }
+                HorizontalLayout {
+                    spacing: 8px;
+                    alignment: start;
+                    SmallButton {
+                        text: @tr("Use this file");
+                        enabled: root.form.can-edit;
+                        clicked => {
+                            root.action("pick-image");
+                        }
+                    }
+                    SmallButton {
+                        text: @tr("Remove image");
+                        enabled: root.form.can-edit && root.thumbnail.width > 0;
+                        danger: true;
+                        clicked => {
+                            root.action("remove-image");
+                        }
+                    }
+                }
+            }
+        }
+        SectionTitle {
+            text: @tr("Sold at");
+        }
+        for b[i] in root.branches: CheckBox {
+            text: b.label;
+            checked: b.sold;
+            enabled: root.form.can-edit;
+            toggled => {
+                root.toggle("branch", i, "sold", self.checked);
+            }
+        }
+    }
+}
+
+component VariantsTab inherits VerticalLayout {
+    in property <BoForm> form;
+    in property <[BoOption]> options;
+    in property <[BoCombo]> combos;
+    callback action(string);
+    callback edit(string, int, int, string, string);
+    callback toggle(string, int, string, bool);
+    callback pick(string, int, int);
+    spacing: 12px;
+    alignment: start;
+
+    if !root.form.bundle: VerticalLayout {
+        spacing: 8px;
+        HorizontalLayout {
+            spacing: 12px;
+            SectionTitle {
+                text: @tr("Options (at most 3, e.g. Size, Color)");
+                vertical-alignment: center;
+            }
+            Rectangle {
+                horizontal-stretch: 1;
+            }
+            SmallButton {
+                text: @tr("Add option");
+                enabled: root.form.can-edit && root.form.can-add-option;
+                clicked => {
+                    root.action("add-option");
+                }
+            }
+        }
+        Banner {
+            note: root.form.options-error;
+        }
+        HorizontalLayout {
+            spacing: 12px;
+            alignment: start;
+            for o[i] in root.options: Rectangle {
+                width: 400px;
+                border-radius: 10px;
+                border-width: 1px;
+                border-color: o.error.code != "" ? Theme.danger : Theme.border;
+                background: Theme.bg;
+                VerticalLayout {
+                    padding: 10px;
+                    spacing: 6px;
+                    alignment: start;
+                    Field {
+                        label: @tr("Option");
+                        text: o.name;
+                        placeholder: @tr("e.g. Size");
+                        enabled: root.form.can-edit;
+                        edited(t) => {
+                            root.edit("option", i, 0, "name", t);
+                        }
+                    }
+                    for v[j] in o.values: HorizontalLayout {
+                        spacing: 6px;
+                        Field {
+                            horizontal-stretch: 1;
+                            text: v.name;
+                            placeholder: @tr("Value, e.g. Medium");
+                            enabled: root.form.can-edit;
+                            edited(t) => {
+                                root.edit("value", i, j, "name", t);
+                            }
+                        }
+                        Field {
+                            width: 96px;
+                            text: v.code;
+                            placeholder: @tr("Code, e.g. M");
+                            enabled: root.form.can-edit;
+                            edited(t) => {
+                                root.edit("value", i, j, "code", t);
+                            }
+                        }
+                        SmallButton {
+                            text: "×";
+                            enabled: root.form.can-edit && v.can-remove && o.values.length > 1;
+                            clicked => {
+                                root.pick("remove-value", i, j);
+                            }
+                        }
+                    }
+                    if o.error.code != "": Text {
+                        text: BoStrings.message(o.error.code, o.error.arg);
+                        color: Theme.danger;
+                        font-size: 12px;
+                        wrap: word-wrap;
+                    }
+                    HorizontalLayout {
+                        spacing: 8px;
+                        alignment: start;
+                        SmallButton {
+                            text: @tr("Add value");
+                            enabled: root.form.can-edit;
+                            clicked => {
+                                root.pick("add-value", i, 0);
+                            }
+                        }
+                        SmallButton {
+                            text: @tr("Remove option");
+                            danger: true;
+                            enabled: root.form.can-edit && !root.form.used;
+                            clicked => {
+                                root.pick("remove-option", i, 0);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    SectionTitle {
+        text: root.form.has-options ? @tr("Variants: switch off the combinations you do not sell") : @tr("This product has one variant");
+    }
+    Banner {
+        note: root.form.variants-error;
+    }
+    HorizontalLayout {
+        spacing: 10px;
+        height: 22px;
+        Text {
+            width: 60px;
+            text: @tr("Sold");
+            color: Theme.muted;
+            font-size: 12px;
+        }
+        Text {
+            width: 260px;
+            text: @tr("Variant");
+            color: Theme.muted;
+            font-size: 12px;
+        }
+        Text {
+            horizontal-stretch: 1;
+            text: @tr("SKU (empty = default)");
+            color: Theme.muted;
+            font-size: 12px;
+        }
+        if root.form.weighed: Text {
+            width: 120px;
+            text: @tr("PLU (scale)");
+            color: Theme.muted;
+            font-size: 12px;
+        }
+    }
+    for c[i] in root.combos: HorizontalLayout {
+        spacing: 10px;
+        CheckBox {
+            width: 60px;
+            checked: c.on;
+            enabled: root.form.can-edit;
+            accessible-label: c.label;
+            toggled => {
+                root.toggle("combo", i, "on", self.checked);
+            }
+        }
+        VerticalLayout {
+            width: 260px;
+            alignment: center;
+            Text {
+                text: c.label != "" ? c.label : @tr("(single variant)");
+                color: c.on ? Theme.text : Theme.muted;
+                overflow: elide;
+            }
+            if c.stored && !c.on: Text {
+                text: @tr("archived");
+                color: Theme.warn;
+                font-size: 11px;
+            }
+            if !c.stored && c.on: Text {
+                text: @tr("new");
+                color: Theme.success;
+                font-size: 11px;
+            }
+        }
+        Field {
+            horizontal-stretch: 1;
+            text: c.sku;
+            placeholder: c.sku-default;
+            enabled: root.form.can-edit && c.on;
+            error: c.error;
+            edited(t) => {
+                root.edit("combo", i, 0, "sku", t);
+            }
+        }
+        if root.form.weighed: Field {
+            width: 120px;
+            text: c.plu;
+            placeholder: "123";
+            enabled: root.form.can-edit && c.on;
+            edited(t) => {
+                root.edit("combo", i, 0, "plu", t);
+            }
+        }
+    }
+}
+
+component UnitsTab inherits VerticalLayout {
+    in property <BoForm> form;
+    in property <[BoUnit]> units;
+    in property <[string]> unit-choices;
+    in property <[string]> variant-choices;
+    in property <[BoBarcode]> barcodes;
+    in property <[BoComponent]> components;
+    in property <[BoHit]> hits;
+    callback action(string);
+    callback edit(string, int, int, string, string);
+    callback toggle(string, int, string, bool);
+    callback choose(string, int, string, int);
+    callback pick(string, int, int);
+    spacing: 10px;
+    alignment: start;
+
+    SectionTitle {
+        text: @tr("Base unit (stock is counted in it)");
+    }
+    HorizontalLayout {
+        spacing: 12px;
+        Field {
+            label: @tr("Name");
+            text: root.form.base-name;
+            enabled: root.form.can-edit;
+            error: root.form.base-error;
+            edited(t) => {
+                root.edit("unit", 0, 0, "name", t);
+            }
+        }
+        Field {
+            label: @tr("Short name");
+            text: root.form.base-short;
+            enabled: root.form.can-edit;
+            edited(t) => {
+                root.edit("unit", 0, 0, "short_name", t);
+            }
+        }
+        Picker {
+            label: @tr("Quantities");
+            model: [@tr("Whole pieces (pcs, box)"), @tr("Decimals (kg, liter)")];
+            index: root.form.kind-index;
+            enabled: root.form.can-edit && !root.form.kind-locked;
+            selected(i) => {
+                root.choose("form", 0, "base_kind", i);
+            }
+        }
+    }
+
+    HorizontalLayout {
+        spacing: 12px;
+        SectionTitle {
+            text: @tr("Other units (at most 5)");
+            vertical-alignment: center;
+        }
+        Rectangle {
+            horizontal-stretch: 1;
+        }
+        SmallButton {
+            text: @tr("Add unit");
+            enabled: root.form.can-edit && root.form.can-add-unit;
+            clicked => {
+                root.action("add-unit");
+            }
+        }
+    }
+    Banner {
+        note: root.form.units-error;
+    }
+    if root.units.length > 0: HorizontalLayout {
+        spacing: 10px;
+        Text { horizontal-stretch: 2; preferred-width: 0px; text: @tr("Name"); color: Theme.muted; font-size: 12px; }
+        Text { horizontal-stretch: 1; preferred-width: 0px; text: @tr("Factor (× base unit)"); color: Theme.muted; font-size: 12px; }
+        Text { horizontal-stretch: 1; preferred-width: 0px; text: @tr("Short name"); color: Theme.muted; font-size: 12px; }
+        Text { width: 220px; text: ""; }
+    }
+    for u[i] in root.units: HorizontalLayout {
+        spacing: 10px;
+        Field {
+            horizontal-stretch: 2;
+            preferred-width: 0px;
+            text: u.name;
+            placeholder: @tr("e.g. box");
+            enabled: root.form.can-edit && !u.archived;
+            edited(t) => {
+                root.edit("unit", i + 1, 0, "name", t);
+            }
+        }
+        Field {
+            horizontal-stretch: 1;
+            preferred-width: 0px;
+            text: u.factor;
+            placeholder: @tr("× base, e.g. 24");
+            enabled: root.form.can-edit && !u.factor-locked && !u.archived;
+            error: u.error;
+            edited(t) => {
+                root.edit("unit", i + 1, 0, "factor", t);
+            }
+        }
+        Field {
+            horizontal-stretch: 1;
+            preferred-width: 0px;
+            text: u.short-name;
+            placeholder: @tr("Short");
+            enabled: root.form.can-edit && !u.archived;
+            edited(t) => {
+                root.edit("unit", i + 1, 0, "short_name", t);
+            }
+        }
+        HorizontalLayout {
+        width: 220px;
+        spacing: 10px;
+        CheckBox {
+            text: @tr("Sell");
+            checked: u.sellable;
+            enabled: root.form.can-edit && !u.archived;
+            toggled => {
+                root.toggle("unit", i + 1, "sellable", self.checked);
+            }
+        }
+        CheckBox {
+            text: @tr("Buy");
+            checked: u.purchasable;
+            enabled: root.form.can-edit && !u.archived;
+            toggled => {
+                root.toggle("unit", i + 1, "purchasable", self.checked);
+            }
+        }
+        VerticalLayout {
+            alignment: center;
+            SmallButton {
+                text: u.archive-instead ? (u.archived ? @tr("Unarchive") : @tr("Archive")) : @tr("Remove");
+                danger: true;
+                enabled: root.form.can-edit;
+                clicked => {
+                    root.pick("remove-unit", i + 1, 0);
+                }
+            }
+        }
+        }
+    }
+    HorizontalLayout {
+        spacing: 12px;
+        Picker {
+            label: @tr("Default sale unit");
+            model: root.unit-choices;
+            index: root.form.sale-index;
+            enabled: root.form.can-edit;
+            selected(i) => {
+                root.choose("form", 0, "default_sale", i);
+            }
+        }
+        Picker {
+            label: @tr("Default purchase unit");
+            model: root.unit-choices;
+            index: root.form.purchase-index;
+            enabled: root.form.can-edit;
+            selected(i) => {
+                root.choose("form", 0, "default_purchase", i);
+            }
+        }
+    }
+    if root.form.defaults-error.code != "": Text {
+        text: BoStrings.message(root.form.defaults-error.code, root.form.defaults-error.arg);
+        color: Theme.danger;
+        font-size: 12px;
+    }
+
+    SectionTitle {
+        text: @tr("Barcodes");
+    }
+    HorizontalLayout {
+        spacing: 10px;
+        Picker {
+            horizontal-stretch: 2;
+            label: @tr("Variant");
+            model: root.variant-choices;
+            index: root.form.pick-variant;
+            selected(i) => {
+                root.choose("form", 0, "pick_variant", i);
+            }
+        }
+        Picker {
+            horizontal-stretch: 1;
+            label: @tr("Unit");
+            model: root.unit-choices;
+            index: root.form.pick-unit;
+            selected(i) => {
+                root.choose("form", 0, "pick_unit", i);
+            }
+        }
+        Field {
+            horizontal-stretch: 2;
+            label: @tr("Barcode");
+            text: root.form.new-barcode;
+            placeholder: @tr("Scan or type");
+            enabled: root.form.can-edit;
+            edited(t) => {
+                root.edit("form", 0, 0, "new_barcode", t);
+            }
+            accepted => {
+                root.action("add-barcode");
+            }
+        }
+        VerticalLayout {
+            alignment: end;
+            SmallButton {
+                text: @tr("Add barcode");
+                enabled: root.form.can-edit;
+                clicked => {
+                    root.action("add-barcode");
+                }
+            }
+        }
+        VerticalLayout {
+            alignment: end;
+            SmallButton {
+                text: @tr("Generate internal barcode");
+                enabled: root.form.can-edit;
+                clicked => {
+                    root.action("generate-barcode");
+                }
+            }
+        }
+    }
+    Banner {
+        note: root.form.barcodes-error;
+    }
+    for b[i] in root.barcodes: HorizontalLayout {
+        spacing: 10px;
+        Text {
+            horizontal-stretch: 2;
+            preferred-width: 0px;
+            text: b.label;
+            color: Theme.text;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+        Field {
+            horizontal-stretch: 2;
+            preferred-width: 0px;
+            text: b.code;
+            enabled: root.form.can-edit;
+            error: b.error;
+            edited(t) => {
+                root.edit("barcode", i, 0, "code", t);
+            }
+        }
+        VerticalLayout {
+            alignment: center;
+            SmallButton {
+                text: "×";
+                enabled: root.form.can-edit;
+                clicked => {
+                    root.pick("remove-barcode", i, 0);
+                }
+            }
+        }
+    }
+
+    if root.form.bundle: VerticalLayout {
+        spacing: 8px;
+        SectionTitle {
+            text: @tr("Bundle components");
+        }
+        Banner {
+            note: root.form.components-error;
+        }
+        Field {
+            text: root.form.component-search;
+            placeholder: @tr("Search a product to add (name or SKU)");
+            enabled: root.form.can-edit;
+            edited(t) => {
+                root.edit("form", 0, 0, "component_search", t);
+            }
+        }
+        for h[i] in root.hits: Rectangle {
+            height: 32px;
+            border-radius: 6px;
+            background: touch.has-hover ? Theme.raised : Theme.panel;
+            accessible-role: button;
+            accessible-label: h.name;
+            accessible-action-default => {
+                root.pick("hit", i, 0);
+            }
+            touch := TouchArea {
+                mouse-cursor: pointer;
+                clicked => {
+                    root.pick("hit", i, 0);
+                }
+            }
+            HorizontalLayout {
+                padding-left: 10px;
+                spacing: 12px;
+                Text {
+                    text: "+ " + h.name;
+                    color: Theme.text;
+                    vertical-alignment: center;
+                }
+                Text {
+                    text: h.sku;
+                    color: Theme.muted;
+                    vertical-alignment: center;
+                }
+            }
+        }
+        for c[i] in root.components: HorizontalLayout {
+            spacing: 10px;
+            VerticalLayout {
+                horizontal-stretch: 3;
+                alignment: center;
+                Text {
+                    text: c.name;
+                    color: Theme.text;
+                    overflow: elide;
+                }
+                Text {
+                    text: c.sku;
+                    color: Theme.muted;
+                    font-size: 12px;
+                }
+            }
+            Picker {
+                horizontal-stretch: 1;
+                model: c.units;
+                index: c.unit-index;
+                enabled: root.form.can-edit;
+                selected(k) => {
+                    root.choose("component", i, "unit", k);
+                }
+            }
+            Field {
+                horizontal-stretch: 1;
+                text: c.qty;
+                placeholder: @tr("Qty");
+                enabled: root.form.can-edit;
+                error: c.error;
+                edited(t) => {
+                    root.edit("component", i, 0, "qty", t);
+                }
+            }
+            VerticalLayout {
+                alignment: center;
+                SmallButton {
+                    text: "×";
+                    enabled: root.form.can-edit;
+                    clicked => {
+                        root.pick("remove-component", i, 0);
+                    }
+                }
+            }
+        }
+    }
+}
+
+// The whole form screen: title bar, notices, tabs and the current tab.
+export component FormScreen inherits VerticalLayout {
+    in property <BoForm> form;
+    in property <BoGeneral> general;
+    in property <[BoOption]> options;
+    in property <[BoCombo]> combos;
+    in property <[BoUnit]> units;
+    in property <[BoBarcode]> barcodes;
+    in property <[BoComponent]> components;
+    in property <[BoHit]> hits;
+    in property <[BoBranch]> branches;
+    in property <[string]> category-choices;
+    in property <[string]> brand-choices;
+    in property <[string]> tax-choices;
+    in property <[string]> unit-choices;
+    in property <[string]> variant-choices;
+    in property <image> thumbnail;
+    in property <int> form-serial;
+    in property <string> focus-target;
+    callback action(string);
+    callback edit(string, int, int, string, string);
+    callback toggle(string, int, string, bool);
+    callback choose(string, int, string, int);
+    callback pick(string, int, int);
+    padding: 16px;
+    spacing: 10px;
+
+    HorizontalLayout {
+        spacing: 10px;
+        VerticalLayout {
+            alignment: center;
+            Text {
+                text: root.form.is-new ? @tr("New product") : root.form.title;
+                color: Theme.text;
+                font-size: 20px;
+                font-weight: 700;
+                overflow: elide;
+            }
+            Text {
+                text: root.form.code;
+                color: Theme.muted;
+                font-size: 12px;
+            }
+        }
+        if root.form.used: VerticalLayout {
+            alignment: center;
+            Badge {
+                text: @tr("Used: some fields are locked");
+            }
+        }
+        if root.form.archived: VerticalLayout {
+            alignment: center;
+            Badge {
+                text: @tr("Archived");
+                tone: Theme.danger;
+            }
+        }
+        if root.form.dirty: VerticalLayout {
+            alignment: center;
+            Badge {
+                text: @tr("Unsaved changes");
+                tone: Theme.accent;
+            }
+        }
+        Rectangle {
+            horizontal-stretch: 1;
+        }
+        KeyButton {
+            keys: "Esc";
+            text: @tr("Back");
+            clicked => {
+                root.action("back");
+            }
+        }
+        if !root.form.is-new && root.form.can-edit: KeyButton {
+            keys: "Ctrl+Shift+A";
+            text: root.form.archived ? @tr("Unarchive") : @tr("Archive");
+            clicked => {
+                root.action("archive");
+            }
+        }
+        KeyButton {
+            keys: "Ctrl+S";
+            text: root.form.saving ? @tr("Saving…") : @tr("Save");
+            primary: true;
+            enabled: root.form.can-edit && !root.form.saving;
+            clicked => {
+                root.action("save");
+            }
+        }
+    }
+
+    Banner {
+        note: root.form.notice;
+    }
+    if root.form.changed-elsewhere: Rectangle {
+        height: 40px;
+        border-radius: 8px;
+        background: Theme.danger-soft;
+        HorizontalLayout {
+            padding-left: 12px;
+            padding-right: 6px;
+            spacing: 10px;
+            Text {
+                horizontal-stretch: 1;
+                text: @tr("This product was changed elsewhere since you opened it.");
+                color: Theme.warn;
+                vertical-alignment: center;
+            }
+            VerticalLayout {
+                alignment: center;
+                SmallButton {
+                    text: @tr("Reload (drops your changes)");
+                    clicked => {
+                        root.action("reload");
+                    }
+                }
+            }
+        }
+    }
+
+    HorizontalLayout {
+        spacing: 6px;
+        alignment: start;
+        TabButton {
+            text: @tr("General");
+            keys: "Ctrl+1";
+            selected: root.form.tab == 0;
+            has-error: root.form.tab-errors[0];
+            clicked => {
+                root.action("tab-0");
+            }
+        }
+        TabButton {
+            text: @tr("Variants");
+            keys: "Ctrl+2";
+            selected: root.form.tab == 1;
+            has-error: root.form.tab-errors[1];
+            clicked => {
+                root.action("tab-1");
+            }
+        }
+        TabButton {
+            text: @tr("Units & barcodes");
+            keys: "Ctrl+3";
+            selected: root.form.tab == 2;
+            has-error: root.form.tab-errors[2];
+            clicked => {
+                root.action("tab-2");
+            }
+        }
+    }
+
+    Card {
+        vertical-stretch: 1;
+        ScrollView {
+            x: 1px;
+            y: 1px;
+            width: parent.width - 2px;
+            height: parent.height - 2px;
+            VerticalLayout {
+                padding: 18px;
+                // Rebuilt when Rust changes texts under the user (see the file comment).
+                for serial in [root.form-serial]: VerticalLayout {
+                    if root.form.tab == 0: GeneralTab {
+                        form: root.form;
+                        general: root.general;
+                        category-choices: root.category-choices;
+                        brand-choices: root.brand-choices;
+                        tax-choices: root.tax-choices;
+                        branches: root.branches;
+                        thumbnail: root.thumbnail;
+                        focus-target: root.focus-target;
+                        action(id) => {
+                            root.action(id);
+                        }
+                        edit(k, r, s, f, v) => {
+                            root.edit(k, r, s, f, v);
+                        }
+                        toggle(k, r, f, on) => {
+                            root.toggle(k, r, f, on);
+                        }
+                        choose(k, r, f, i) => {
+                            root.choose(k, r, f, i);
+                        }
+                    }
+                    if root.form.tab == 1: VariantsTab {
+                        form: root.form;
+                        options: root.options;
+                        combos: root.combos;
+                        action(id) => {
+                            root.action(id);
+                        }
+                        edit(k, r, s, f, v) => {
+                            root.edit(k, r, s, f, v);
+                        }
+                        toggle(k, r, f, on) => {
+                            root.toggle(k, r, f, on);
+                        }
+                        pick(k, r, s) => {
+                            root.pick(k, r, s);
+                        }
+                    }
+                    if root.form.tab == 2: UnitsTab {
+                        form: root.form;
+                        units: root.units;
+                        unit-choices: root.unit-choices;
+                        variant-choices: root.variant-choices;
+                        barcodes: root.barcodes;
+                        components: root.components;
+                        hits: root.hits;
+                        action(id) => {
+                            root.action(id);
+                        }
+                        edit(k, r, s, f, v) => {
+                            root.edit(k, r, s, f, v);
+                        }
+                        toggle(k, r, f, on) => {
+                            root.toggle(k, r, f, on);
+                        }
+                        choose(k, r, f, i) => {
+                            root.choose(k, r, f, i);
+                        }
+                        pick(k, r, s) => {
+                            root.pick(k, r, s);
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

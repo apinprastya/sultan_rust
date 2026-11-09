@@ -91,6 +91,7 @@ pub fn routes(state: &AppState) -> Router<AppState> {
         .route("/events", get(events::events))
         .route("/auth/pin", post(auth::pin_login))
         .route("/auth/password", post(auth::password_login))
+        .route("/auth/me", get(auth::me))
         .route("/registers/pair", post(registers::pair))
         .route("/registers/me/users", get(registers::me_users))
         .route("/registers", get(registers::list))

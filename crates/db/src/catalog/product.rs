@@ -105,6 +105,8 @@ pub struct ProductSummary {
     pub sellable: bool,
     /// When archived.
     pub archived_at: Option<Timestamp>,
+    /// Number of active (not archived) variants.
+    pub variant_count: u32,
 }
 
 /// A stored product plus what the diff needs.
@@ -1168,8 +1170,9 @@ pub async fn list_products<'c>(
     }
     values.push(i64::from(clamp_limit(filter.limit, MAX_LIST_LIMIT)).into());
     let sql = format!(
-        "SELECT id, code, name, type, category_id, brand_id, sellable, archived_at FROM product \
-         WHERE {} ORDER BY id DESC LIMIT ?",
+        "SELECT id, code, name, type, category_id, brand_id, sellable, archived_at, \
+         (SELECT COUNT(*) FROM variant v WHERE v.product_id = product.id AND v.archived = 0) \
+         AS variant_count FROM product WHERE {} ORDER BY id DESC LIMIT ?",
         conditions.join(" AND ")
     );
     sql::fetch_all(conn.into(), &sql, values, |row| {
@@ -1182,6 +1185,7 @@ pub async fn list_products<'c>(
             brand: sql::opt_id(row, "brand_id")?,
             sellable: row.bool("sellable")?,
             archived_at: sql::opt_ts(row, "archived_at")?,
+            variant_count: u32::try_from(row.i64("variant_count")?).unwrap_or(u32::MAX),
         })
     })
     .await

@@ -3205,6 +3205,46 @@
             },
             "description": ""
           }
+        },
+        {
+          "name": "67 Who am I: permissions for the back office",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('the owner holds the catalog permissions for all branches', () => {",
+                  "    pm.response.to.have.status(200);",
+                  "    const body = pm.response.json();",
+                  "    pm.expect(body.username).to.eql(pm.collectionVariables.get('ownerUsername') || body.username);",
+                  "    pm.expect(body.register_id).to.eql(null);",
+                  "    pm.expect(body.permissions_everywhere).to.include.members(['catalog.manage', 'catalog.view_archived']);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/auth/me",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "me"
+              ]
+            },
+            "description": "The session's user and permission keys (at the session branch and for all branches); the back office hides what the user may not do (spec 2.2 §12)."
+          }
         }
       ]
     }

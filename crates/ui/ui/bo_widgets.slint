@@ -1,0 +1,424 @@
+// Back office (phase C4): strings and small widgets shared by `backoffice.slint` and
+// `bo_form.slint`. Rust sends message and label codes; this file turns them into text with
+// @tr(), so Indonesian and English live in one place.
+
+import { LineEdit } from "std-widgets.slint";
+import { Theme } from "theme.slint";
+import { Note } from "widgets.slint";
+
+export global BoStrings {
+    // Messages (codes from `crates/ui/src/backoffice/`).
+    public pure function message(code: string, arg: string) -> string {
+        if (code == "") {
+            return "";
+        }
+        if (code == "wrong_password") {
+            return @tr("Wrong username or password.");
+        }
+        if (code == "locked_out_bo") {
+            return @tr("Too many wrong tries. Wait a few minutes and try again.");
+        }
+        if (code == "login_required") {
+            return @tr("Type your username and password.");
+        }
+        if (code == "network") {
+            return @tr("Cannot reach the server. Check the network and try again.");
+        }
+        if (code == "session_ended") {
+            return @tr("Your login ended. Please log in again.");
+        }
+        if (code == "read_only") {
+            return @tr("Read-only: changing the catalog needs the permission catalog.manage from a role for all branches. Ask the owner.");
+        }
+        if (code == "read_only_branch") {
+            return @tr("Read-only: you hold catalog.manage at this branch only. The catalog is shared by all branches, so the permission must come from a role assigned for all branches. Ask the owner.");
+        }
+        if (code == "permission_denied_catalog") {
+            return @tr("Not allowed: this needs the permission {} from a role for all branches.", arg);
+        }
+        if (code == "read_only_replica") {
+            return @tr("This is a branch server. Change the catalog at the HQ server.");
+        }
+        if (code == "fix_errors") {
+            return @tr("Not saved: please fix the marked fields.");
+        }
+        if (code == "saved") {
+            return @tr("Saved.");
+        }
+        if (code == "archived_done") {
+            return @tr("The product is archived. It cannot be sold or bought any more.");
+        }
+        if (code == "unarchived_done") {
+            return @tr("The product is active again.");
+        }
+        if (code == "file_error") {
+            return @tr("Cannot read the file: {}", arg);
+        }
+        if (code == "invalid_image") {
+            return @tr("This file is not a PNG, JPEG or WebP image.");
+        }
+        if (code == "image_too_large") {
+            return @tr("The image is too large (at most 10 MB).");
+        }
+        if (code == "conflict_retry") {
+            return @tr("Someone else saved at the same moment. Try again.");
+        }
+        if (code == "not_found") {
+            return @tr("Not found. It may have been removed; refresh the list.");
+        }
+        if (code == "duplicate_name") {
+            return @tr("This name is already used.");
+        }
+        if (code == "category_cycle") {
+            return @tr("A category cannot be moved under itself.");
+        }
+        if (code == "category_too_deep") {
+            return @tr("Categories go at most 4 levels deep.");
+        }
+        if (code == "name_required") {
+            return @tr("Type a name.");
+        }
+        if (code == "invalid_input") {
+            return @tr("Please check: {}", arg);
+        }
+        // Field errors of the product form.
+        if (code == "invalid_number") {
+            return @tr("Not a number: {}", arg);
+        }
+        if (code == "factor_whole") {
+            return @tr("Use a whole number: the base unit counts whole pieces.");
+        }
+        if (code == "factor_above_one") {
+            return @tr("The factor must be more than 1.");
+        }
+        if (code == "invalid_plu") {
+            return @tr("A PLU has 1 to 6 digits.");
+        }
+        if (code == "invalid_product_code") {
+            return @tr("A code has 1 to 24 letters, digits, dots, dashes or underscores.");
+        }
+        if (code == "invalid_sku") {
+            return @tr("An SKU has 1 to 32 letters, digits, dots, dashes or underscores.");
+        }
+        if (code == "invalid_value_code") {
+            return @tr("A short code has 1 to 8 letters or digits.");
+        }
+        if (code == "invalid_barcode") {
+            return @tr("A barcode has 1 to 64 characters without spaces.");
+        }
+        if (code == "invalid_check_digit") {
+            return @tr("The check digit of {} is wrong.", arg);
+        }
+        if (code == "invalid_unit_factor") {
+            return @tr("The factor of {} is not valid.", arg);
+        }
+        if (code == "duplicate_unit_name") {
+            return @tr("The unit name {} is used twice.", arg);
+        }
+        if (code == "duplicate_option") {
+            return @tr("The option {} is there twice.", arg);
+        }
+        if (code == "duplicate_option_value") {
+            return @tr("The value {} is there twice.", arg);
+        }
+        if (code == "duplicate_code") {
+            return @tr("The code {} is used by another product.", arg);
+        }
+        if (code == "duplicate_sku") {
+            return @tr("The SKU {} is used by another product.", arg);
+        }
+        if (code == "duplicate_barcode") {
+            return @tr("The barcode {} is used by another product.", arg);
+        }
+        if (code == "duplicate_plu") {
+            return @tr("The PLU {} is used by another product.", arg);
+        }
+        if (code == "rule_weighed_decimal") {
+            return @tr("A weighed product needs a decimal base unit, e.g. kg.");
+        }
+        if (code == "rule_single_unit") {
+            return @tr("This type has only its base unit.");
+        }
+        if (code == "rule_bundle_options") {
+            return @tr("A bundle has no options.");
+        }
+        if (code == "rule_bundle_integer") {
+            return @tr("A bundle is counted in whole pieces.");
+        }
+        if (code == "rule_components") {
+            return @tr("Only a bundle has components.");
+        }
+        if (code == "invalid_name") {
+            return @tr("Type a name (at most 120 characters).");
+        }
+        if (code == "invalid_receipt_name") {
+            return @tr("At most 32 characters.");
+        }
+        if (code == "invalid_tags") {
+            return @tr("At most 20 tags of up to 40 characters.");
+        }
+        if (code == "invalid_options_name" || code == "invalid_options_values_name") {
+            return @tr("Every option and value needs a name.");
+        }
+        if (code == "invalid_options_values") {
+            return @tr("An option needs at least one value.");
+        }
+        if (code == "invalid_units_name") {
+            return @tr("Every unit needs a name (at most 24 characters).");
+        }
+        if (code == "invalid_units_short_name") {
+            return @tr("A short name has at most 8 characters.");
+        }
+        if (code == "too_many_units") {
+            return @tr("At most 5 units besides the base unit.");
+        }
+        if (code == "too_many_options") {
+            return @tr("At most 3 options.");
+        }
+        if (code == "too_many_variants") {
+            return @tr("Too many variants (at most 500).");
+        }
+        if (code == "invalid_variant" || code == "invalid_variants") {
+            return @tr("Switch on at least one variant.");
+        }
+        if (code == "duplicate_combination") {
+            return @tr("Two variants have the same values.");
+        }
+        if (code == "invalid_bundle") {
+            return @tr("A bundle needs 1 to 50 components of other products.");
+        }
+        if (code == "bundle_nesting") {
+            return @tr("A bundle cannot contain another bundle.");
+        }
+        if (code == "component_archived") {
+            return @tr("An archived variant cannot be a component.");
+        }
+        if (code == "duplicate_component") {
+            return @tr("The same variant and unit is there twice.");
+        }
+        if (code == "invalid_qty") {
+            return @tr("Type a quantity above zero.");
+        }
+        if (code == "invalid_default_unit") {
+            return @tr("The default unit must be active and allowed for selling or buying.");
+        }
+        if (code == "invalid_reference") {
+            return @tr("A category, brand or tax class no longer exists. Refresh and pick again.");
+        }
+        if (code == "frozen_type") {
+            return @tr("The type cannot change after the product was used.");
+        }
+        if (code == "frozen_base_unit") {
+            return @tr("The base unit cannot change after the product was used.");
+        }
+        if (code == "frozen_units" || code == "frozen_units_factor" || code == "frozen_units_kind") {
+            return @tr("A used unit cannot change: archive it and add a new one.");
+        }
+        if (code == "frozen_options" || code == "frozen_options_values") {
+            return @tr("Options cannot be added or removed after the product was used.");
+        }
+        if (code == "error") {
+            return @tr("Something went wrong ({}).", arg);
+        }
+        return @tr("Please check this field ({}).", code);
+    }
+
+    // Labels for codes (types, empty choices).
+    public pure function label(code: string) -> string {
+        if (code == "stock") {
+            return @tr("Stock");
+        }
+        if (code == "weighed") {
+            return @tr("Weighed");
+        }
+        if (code == "service") {
+            return @tr("Service");
+        }
+        if (code == "bundle") {
+            return @tr("Bundle");
+        }
+        if (code == "no_category") {
+            return @tr("(No category)");
+        }
+        if (code == "no_brand") {
+            return @tr("(No brand)");
+        }
+        if (code == "all_categories") {
+            return @tr("All categories");
+        }
+        if (code == "all_brands") {
+            return @tr("All brands");
+        }
+        if (code == "top_level") {
+            return @tr("(Top level)");
+        }
+        return code;
+    }
+}
+
+// A label above a text field, with its error below.
+export component Field inherits VerticalLayout {
+    in property <string> label;
+    in property <string> text;
+    in property <string> placeholder;
+    in property <bool> enabled: true;
+    in property <bool> secret;
+    in property <Note> error;
+    callback edited(string);
+    callback accepted();
+    spacing: 3px;
+    public function focus-edit() {
+        edit.focus();
+    }
+    if root.label != "": Text {
+        text: root.label;
+        color: Theme.muted;
+        font-size: 12px;
+    }
+    edit := LineEdit {
+        min-width: 48px;
+        text: root.text;
+        placeholder-text: root.placeholder;
+        enabled: root.enabled;
+        input-type: root.secret ? InputType.password : InputType.text;
+        accessible-label: root.label != "" ? root.label : root.placeholder;
+        edited(t) => {
+            root.edited(t);
+        }
+        accepted => {
+            root.accepted();
+        }
+    }
+    if root.error.code != "": Text {
+        text: BoStrings.message(root.error.code, root.error.arg);
+        color: Theme.danger;
+        font-size: 12px;
+        wrap: word-wrap;
+    }
+}
+
+// A small flat button with an accessible label.
+export component SmallButton inherits Rectangle {
+    in property <string> text;
+    in property <bool> enabled: true;
+    in property <bool> primary;
+    in property <bool> danger;
+    callback clicked;
+    accessible-role: button;
+    accessible-label: root.text;
+    accessible-action-default => {
+        if (root.enabled) {
+            root.clicked();
+        }
+    }
+    height: 32px;
+    min-width: label.preferred-width + 20px;
+    preferred-width: label.preferred-width + 24px;
+    horizontal-stretch: 0;
+    border-radius: 8px;
+    border-width: 1px;
+    border-color: root.primary ? Theme.accent : Theme.border;
+    background: !root.enabled ? Theme.bg : root.primary ? (touch.has-hover ? #4a7af0 : Theme.accent) : touch.has-hover ? Theme.raised : Theme.panel;
+    opacity: root.enabled ? 1 : 0.5;
+    touch := TouchArea {
+        enabled: root.enabled;
+        mouse-cursor: pointer;
+        clicked => {
+            root.clicked();
+        }
+    }
+    label := Text {
+        text: root.text;
+        color: root.primary ? white : root.danger ? Theme.danger : Theme.text;
+        font-size: 13px;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+}
+
+// A key hint chip (shortcut + label), clickable.
+export component KeyButton inherits Rectangle {
+    in property <string> keys;
+    in property <string> text;
+    in property <bool> enabled: true;
+    in property <bool> primary;
+    callback clicked;
+    accessible-role: button;
+    accessible-label: root.text;
+    accessible-action-default => {
+        if (root.enabled) {
+            root.clicked();
+        }
+    }
+    height: 34px;
+    min-width: row.preferred-width;
+    preferred-width: row.preferred-width;
+    horizontal-stretch: 0;
+    border-radius: 8px;
+    border-width: 1px;
+    border-color: root.primary ? Theme.accent : Theme.border;
+    background: root.primary ? Theme.accent-soft : touch.has-hover ? Theme.raised : Theme.panel;
+    opacity: root.enabled ? 1 : 0.45;
+    touch := TouchArea {
+        enabled: root.enabled;
+        mouse-cursor: pointer;
+        clicked => {
+            root.clicked();
+        }
+    }
+    row := HorizontalLayout {
+        padding-left: 6px;
+        padding-right: 12px;
+        spacing: 8px;
+        if root.keys != "": VerticalLayout {
+            alignment: center;
+            horizontal-stretch: 0;
+            Rectangle {
+                height: 22px;
+                width: keys-text.preferred-width + 12px;
+                border-radius: 5px;
+                background: Theme.accent-soft;
+                keys-text := Text {
+                    text: root.keys;
+                    color: Theme.accent;
+                    font-size: 12px;
+                    font-weight: 700;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+            }
+        }
+        Text {
+            horizontal-stretch: 1;
+            text: root.text;
+            color: Theme.text;
+            font-size: 13px;
+            vertical-alignment: center;
+        }
+    }
+}
+
+// One line of feedback on a coloured background; nothing when empty.
+export component Banner inherits Rectangle {
+    in property <Note> note;
+    visible: root.note.code != "";
+    height: root.note.code == "" ? 0px : max(36px, text.preferred-height + 14px);
+    border-radius: 8px;
+    background: root.note.tone < 0 ? Theme.danger-soft : root.note.tone > 0 ? Theme.success-soft : Theme.accent-soft;
+    text := Text {
+        x: 12px;
+        width: parent.width - 24px;
+        text: BoStrings.message(root.note.code, root.note.arg);
+        color: Theme.tone-color(root.note.tone) == Theme.muted ? Theme.text : Theme.tone-color(root.note.tone);
+        wrap: word-wrap;
+        vertical-alignment: center;
+        font-size: 13px;
+    }
+}
+
+// A section title inside a card.
+export component SectionTitle inherits Text {
+    color: Theme.text;
+    font-size: 15px;
+    font-weight: 700;
+}

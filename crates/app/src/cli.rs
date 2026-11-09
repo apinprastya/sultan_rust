@@ -45,6 +45,26 @@ pub enum Command {
     /// The register (till): without a subcommand, open the register window of this paired
     /// machine; `status` prints whether it is paired; `pair` pairs it.
     Register(RegisterArgs),
+    /// Open the back-office window (catalog: products, categories, brands); log in with a
+    /// back-office username and password.
+    Backoffice(BackofficeArgs),
+}
+
+/// `sultan backoffice`.
+#[derive(Debug, Args)]
+pub struct BackofficeArgs {
+    /// Server URL.
+    #[arg(
+        long,
+        value_name = "URL",
+        help = "Server URL, e.g. http://192.168.1.10:8080 [env: SULTAN_SERVER] [default: the \
+                paired register's server, else this machine's listen address, else \
+                http://127.0.0.1:8080]"
+    )]
+    pub server: Option<String>,
+    /// Username to start with.
+    #[arg(long, value_name = "USERNAME")]
+    pub user: Option<String>,
 }
 
 /// `sultan init`.
@@ -219,6 +239,14 @@ mod tests {
             cli.command,
             Some(Command::Register(RegisterArgs {
                 action: Some(RegisterAction::Pair { .. })
+            }))
+        ));
+        let cli = Cli::try_parse_from(["sultan", "backoffice", "--server", "http://h:1"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(Command::Backoffice(BackofficeArgs {
+                server: Some(_),
+                user: None
             }))
         ));
         assert!(Cli::try_parse_from(["sultan"]).unwrap().command.is_none());

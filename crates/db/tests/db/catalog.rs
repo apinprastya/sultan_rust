@@ -27,6 +27,7 @@ db_tests!(
     bundles_validate_against_the_database,
     mark_used_is_idempotent,
     empty_skus_get_the_default,
+    variant_count_and_labels,
 );
 
 type Edit = fn(&mut catalog::ProductDoc);
@@ -728,4 +729,41 @@ async fn empty_skus_get_the_default(db: &Db) {
     let (_, stored) = put(db, &o, &doc).await;
     assert!(!stored.draft.code.is_empty());
     assert_eq!(stored.draft.variants[0].sku, stored.draft.code);
+}
+
+/// `ProductSummary::variant_count` and `variant_labels` (back office, phase C4).
+async fn variant_count_and_labels(db: &Db) {
+    let o = org(db).await;
+    // Active variants are counted; labels name a variant of another product.
+    let shirt = kaos("KAOS");
+    put(db, &o, &shirt).await;
+    let mut archived = shirt.clone();
+    archived.draft.variants[3].archived = true;
+    put(db, &o, &archived).await;
+    let counted = list_products(
+        db,
+        &ProductFilter {
+            q: Some("KAOS".into()),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(counted[0].variant_count, 3);
+    let cheese = cheese("KEJU", 5);
+    put(db, &o, &cheese).await;
+    let all = list_products(db, &ProductFilter::default()).await.unwrap();
+    assert_eq!(all[0].variant_count, 1);
+    let red = shirt.draft.variants[0].id;
+    let labels = catalog::variant_labels(db, &[red, VariantId::generate()])
+        .await
+        .unwrap();
+    assert_eq!(labels.len(), 1, "unknown variants are left out");
+    let label = &labels[&red];
+    assert_eq!(label.product, shirt.draft.id);
+    assert_eq!(label.sku, "KAOS-S-RED");
+    assert_eq!(label.name, format!("{} – Small / Red", shirt.draft.name));
+    let units: Vec<&str> = label.units.iter().map(|(_, n)| n.as_str()).collect();
+    assert_eq!(units, ["pcs", "box"]);
+    assert!(catalog::variant_labels(db, &[]).await.unwrap().is_empty());
 }

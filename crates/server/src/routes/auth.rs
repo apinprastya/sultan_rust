@@ -5,6 +5,8 @@
 //! - Back office: `POST /auth/password {username, password, branch_id?}` → a session without a
 //!   register. `branch_id` picks the branch the session acts at; when omitted, the first branch (by
 //!   code) the user is assigned to.
+//! - `GET /auth/me`: the session's user, branch and permission keys (at the branch and for all
+//!   branches), so the back office can hide what the user may not do.
 //! - Lockout: 5 consecutive failures lock the user on that branch for 5 minutes
 //!   (`core::access::LoginAttempts`); the 5th failure and every attempt while locked answer
 //!   `423 locked_out`. Failures and lockouts are audited (spec 2.1 §7).
@@ -15,7 +17,7 @@ use axum::Json;
 use axum::extract::State;
 use axum::http::StatusCode;
 use serde::{Deserialize, Serialize};
-use sultan_core::access::LoginAttempts;
+use sultan_core::access::{LoginAttempts, Permission};
 use sultan_core::ids::{BranchId, RegisterId, UserId};
 use sultan_db::audit::{self, AuditEntry};
 use sultan_db::auth::{self, AuthSession};
@@ -24,6 +26,7 @@ use sultan_db::{Db, org, roles};
 use utoipa::ToSchema;
 
 use super::{attempts_json, parse_id};
+use crate::access::Caller;
 use crate::credentials;
 use crate::error::ApiError;
 use crate::events::Event;
@@ -231,6 +234,63 @@ pub async fn password_login(
     }
     let branch = branch.ok_or_else(ApiError::invalid_credentials)?;
     login(&state, &user, branch, None, phc, request.password).await
+}
+
+/// The caller's session and permissions (`GET /auth/me`), so a client can show or hide what
+/// the user may do. The server checks every request anyway.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct MeResponse {
+    /// The user.
+    pub user_id: String,
+    /// Login name.
+    pub username: String,
+    /// Display name.
+    pub display_name: String,
+    /// The branch the session acts at.
+    pub branch_id: String,
+    /// The register (PIN session) or `null` (back office).
+    pub register_id: Option<String>,
+    /// Permission keys held at the session's branch, in catalog order.
+    pub permissions: Vec<&'static str>,
+    /// Permission keys held through a role assigned for **all** branches (what company-wide
+    /// data such as the catalog requires, spec 2.2 §12).
+    pub permissions_everywhere: Vec<&'static str>,
+}
+
+/// `GET /api/v1/auth/me`: who the session is and what it may do.
+///
+/// # Errors
+/// `401 invalid_session` / `invalid_device_token`.
+#[utoipa::path(get, path = "/api/v1/auth/me", tag = "auth",
+    security(("bearer" = []), ("bearer" = [], "register_token" = [])),
+    responses((status = 200, body = MeResponse), (status = 401, body = crate::openapi::Problem)))]
+pub async fn me(
+    State(state): State<AppState>,
+    session: UserSession,
+) -> Result<Json<MeResponse>, ApiError> {
+    let caller = Caller::load(&state.db, &session).await?;
+    let held = |everywhere: bool| -> Vec<&'static str> {
+        Permission::ALL
+            .into_iter()
+            .filter(|p| {
+                if everywhere {
+                    caller.holds_everywhere(*p)
+                } else {
+                    caller.permissions.contains(*p)
+                }
+            })
+            .map(Permission::as_str)
+            .collect()
+    };
+    Ok(Json(MeResponse {
+        user_id: session.user.id.to_string(),
+        username: session.user.username.clone(),
+        display_name: session.user.display_name.clone(),
+        branch_id: session.session.branch.to_string(),
+        register_id: session.session.register.map(|r| r.to_string()),
+        permissions: held(false),
+        permissions_everywhere: held(true),
+    }))
 }
 
 /// `POST /api/v1/auth/logout`: revokes the caller's session → `204` and pushes `session.revoked`

@@ -1,0 +1,974 @@
+// The back-office window (phase C4, spec 2.2): login, product list, product form
+// (`bo_form.slint`), category tree and brand list. Mostly declarative: Rust
+// (`crates/ui/src/backoffice_app.rs`, `crates/ui/src/backoffice/`) sets the view properties and
+// receives keys, actions, edits, toggles, choices and picks.
+//
+// Keyboard: one FocusScope wraps the window. Its capture phase hands every key to Rust first
+// (`capture-key`), so shortcuts with Ctrl, Esc and the function keys work while a text field has
+// the focus (the reason `sultan-spike` needed `capture-key-pressed`); Rust returns false for
+// typing, which then reaches the field. Keys no widget used arrive in `key` (`/` focuses the
+// search). Focus requests come from Rust as `focus-target` + `focus-serial`.
+
+import { LineEdit, ComboBox, CheckBox, ListView } from "std-widgets.slint";
+import { Theme } from "theme.slint";
+import { Note, Card } from "widgets.slint";
+import { BoStrings, Field, SmallButton, KeyButton, Banner, SectionTitle } from "bo_widgets.slint";
+import { FormScreen, BoForm, BoGeneral, BoOption, BoValue, BoCombo, BoUnit, BoBarcode, BoComponent, BoHit, BoBranch } from "bo_form.slint";
+
+export { BoStrings, BoForm, BoGeneral, BoOption, BoValue, BoCombo, BoUnit, BoBarcode, BoComponent, BoHit, BoBranch }
+
+export struct BoLogin {
+    server: string,
+    username: string,
+    notice: Note,
+}
+
+export struct BoList {
+    search: string,
+    category-index: int,
+    brand-index: int,
+    type-index: int,
+    archived: bool,
+    show-archived: bool,
+    can-edit: bool,
+    cursor: int,
+    has-more: bool,
+    loading: bool,
+    notice: Note,
+}
+
+export struct BoProductRow {
+    code: string,
+    name: string,
+    kind: string,
+    category: string,
+    brand: string,
+    variants: string,
+    archived: bool,
+}
+
+export struct BoTreeRow {
+    name: string,
+    code: string,
+    depth: int,
+    archived: bool,
+}
+
+export struct BoCategoryEditor {
+    is-new: bool,
+    name: string,
+    code: string,
+    parent-index: int,
+    archived: bool,
+    cursor: int,
+    can-edit: bool,
+    notice: Note,
+}
+
+export struct BoBrandEditor {
+    is-new: bool,
+    name: string,
+    archived: bool,
+    cursor: int,
+    can-edit: bool,
+    notice: Note,
+}
+
+component Header inherits Rectangle {
+    in property <string> screen;
+    in property <string> user;
+    in property <string> server;
+    in property <bool> busy;
+    callback action(string);
+    height: 56px;
+    background: Theme.panel;
+    HorizontalLayout {
+        padding-left: 16px;
+        padding-right: 16px;
+        spacing: 10px;
+        VerticalLayout {
+            alignment: center;
+            Rectangle {
+                width: 32px;
+                height: 32px;
+                border-radius: 8px;
+                background: Theme.accent;
+                Text {
+                    text: "S";
+                    color: white;
+                    font-size: 17px;
+                    font-weight: 800;
+                }
+            }
+        }
+        Text {
+            text: @tr("Back office");
+            color: Theme.text;
+            font-size: 17px;
+            font-weight: 700;
+            vertical-alignment: center;
+        }
+        Rectangle {
+            width: 12px;
+        }
+        for nav in [
+            { id: "nav-products", keys: "F2", label: @tr("Products"), on: root.screen == "products" || root.screen == "form" },
+            { id: "nav-categories", keys: "F3", label: @tr("Categories"), on: root.screen == "categories" },
+            { id: "nav-brands", keys: "F4", label: @tr("Brands"), on: root.screen == "brands" },
+        ]: VerticalLayout {
+            alignment: center;
+            KeyButton {
+                keys: nav.keys;
+                text: nav.label;
+                primary: nav.on;
+                clicked => {
+                    root.action(nav.id);
+                }
+            }
+        }
+        Rectangle {
+            horizontal-stretch: 1;
+        }
+        Text {
+            text: root.busy ? @tr("Working…") : root.server;
+            color: root.busy ? Theme.warn : Theme.muted;
+            font-size: 12px;
+            vertical-alignment: center;
+        }
+        Text {
+            text: root.user;
+            color: Theme.text;
+            vertical-alignment: center;
+        }
+        VerticalLayout {
+            alignment: center;
+            KeyButton {
+                keys: "F12";
+                text: @tr("Log out");
+                clicked => {
+                    root.action("logout");
+                }
+            }
+        }
+    }
+}
+
+component LoginScreen inherits Rectangle {
+    in property <BoLogin> login;
+    in property <bool> busy;
+    in property <string> focus-target;
+    in property <int> focus-serial;
+    callback action(string);
+    callback edit(string, int, int, string, string);
+    Card {
+        width: min(440px, parent.width - 32px);
+        height: layout.preferred-height;
+        layout := VerticalLayout {
+            padding: 28px;
+            spacing: 14px;
+            Text {
+                text: @tr("Sultan back office");
+                color: Theme.text;
+                font-size: 24px;
+                font-weight: 700;
+            }
+            Text {
+                text: @tr("Log in with your back-office username and password.");
+                color: Theme.muted;
+                wrap: word-wrap;
+            }
+            Text {
+                text: @tr("Server: {}", root.login.server);
+                color: Theme.muted;
+                font-size: 12px;
+            }
+            user := Field {
+                label: @tr("Username");
+                text: root.login.username;
+                edited(t) => {
+                    root.edit("login", 0, 0, "username", t);
+                }
+                accepted => {
+                    password.focus-edit();
+                }
+            }
+            password := Field {
+                label: @tr("Password");
+                secret: true;
+                edited(t) => {
+                    root.edit("login", 0, 0, "password", t);
+                }
+                accepted => {
+                    root.action("login");
+                }
+            }
+            Banner {
+                note: root.login.notice;
+            }
+            KeyButton {
+                keys: "Enter";
+                text: root.busy ? @tr("Logging in…") : @tr("Log in");
+                primary: true;
+                enabled: !root.busy;
+                clicked => {
+                    root.action("login");
+                }
+            }
+        }
+    }
+    changed focus-serial => {
+        if (root.focus-target == "password") {
+            password.focus-edit();
+        } else if (root.focus-target == "username") {
+            user.focus-edit();
+        }
+    }
+    init => {
+        user.focus-edit();
+    }
+}
+
+component ProductsScreen inherits VerticalLayout {
+    in property <BoList> list;
+    in property <[BoProductRow]> rows;
+    in property <[string]> category-choices;
+    in property <[string]> brand-choices;
+    in property <Note> read-only;
+    in property <string> focus-target;
+    in property <int> focus-serial;
+    callback action(string);
+    callback edit(string, int, int, string, string);
+    callback toggle(string, int, string, bool);
+    callback choose(string, int, string, int);
+    callback pick(string, int, int);
+    property <length> row-height: 40px;
+    padding: 16px;
+    spacing: 10px;
+
+    changed focus-serial => {
+        if (root.focus-target == "search") {
+            search.focus-edit();
+        }
+    }
+    init => {
+        if (root.focus-target == "search") {
+            search.focus-edit();
+        }
+    }
+    changed list => {
+        // Keep the highlighted row in view.
+        if (root.list.cursor * root.row-height + table.content-y < 0) {
+            table.content-y = -root.list.cursor * root.row-height;
+        }
+        if ((root.list.cursor + 1) * root.row-height + table.content-y > table.visible-height) {
+            table.content-y = table.visible-height - (root.list.cursor + 1) * root.row-height;
+        }
+    }
+
+    Banner {
+        note: root.read-only;
+    }
+    HorizontalLayout {
+        spacing: 10px;
+        search := Field {
+            horizontal-stretch: 3;
+            min-width: 180px;
+            text: root.list.search;
+            placeholder: @tr("Search name, code or brand  ( / )");
+            edited(t) => {
+                root.edit("list", 0, 0, "search", t);
+            }
+        }
+        ComboBox {
+            horizontal-stretch: 1;
+            min-width: 110px;
+            model: root.category-choices;
+            current-index: root.list.category-index;
+            accessible-label: @tr("Category");
+            selected(v) => {
+                root.choose("list", 0, "category", self.current-index);
+            }
+        }
+        ComboBox {
+            horizontal-stretch: 1;
+            min-width: 110px;
+            model: root.brand-choices;
+            current-index: root.list.brand-index;
+            accessible-label: @tr("Brand");
+            selected(v) => {
+                root.choose("list", 0, "brand", self.current-index);
+            }
+        }
+        ComboBox {
+            horizontal-stretch: 1;
+            min-width: 110px;
+            model: [@tr("All types"), @tr("Stock"), @tr("Weighed"), @tr("Service"), @tr("Bundle")];
+            current-index: root.list.type-index;
+            accessible-label: @tr("Type");
+            selected(v) => {
+                root.choose("list", 0, "type", self.current-index);
+            }
+        }
+        if root.list.show-archived: CheckBox {
+            text: @tr("Archived");
+            checked: root.list.archived;
+            toggled => {
+                root.toggle("list", 0, "archived", self.checked);
+            }
+        }
+        KeyButton {
+            keys: "Ctrl+N";
+            text: @tr("New product");
+            primary: true;
+            enabled: root.list.can-edit;
+            clicked => {
+                root.action("new-product");
+            }
+        }
+        KeyButton {
+            keys: "F5";
+            text: @tr("Refresh");
+            clicked => {
+                root.action("refresh");
+            }
+        }
+    }
+    Banner {
+        note: root.list.notice;
+    }
+    Card {
+        vertical-stretch: 1;
+        VerticalLayout {
+            padding: 1px;
+            Rectangle {
+                height: 34px;
+                HorizontalLayout {
+                    padding-left: 14px;
+                    padding-right: 14px;
+                    spacing: 10px;
+                    Text { width: 130px; text: @tr("Code"); color: Theme.muted; font-size: 12px; vertical-alignment: center; }
+                    Text { horizontal-stretch: 3; preferred-width: 0px; text: @tr("Name"); color: Theme.muted; font-size: 12px; vertical-alignment: center; overflow: elide; }
+                    Text { width: 90px; text: @tr("Type"); color: Theme.muted; font-size: 12px; vertical-alignment: center; }
+                    Text { horizontal-stretch: 1; preferred-width: 0px; text: @tr("Category"); color: Theme.muted; font-size: 12px; vertical-alignment: center; overflow: elide; }
+                    Text { horizontal-stretch: 1; preferred-width: 0px; text: @tr("Brand"); color: Theme.muted; font-size: 12px; vertical-alignment: center; overflow: elide; }
+                    Text { width: 70px; text: @tr("Variants"); color: Theme.muted; font-size: 12px; vertical-alignment: center; horizontal-alignment: right; }
+                    Text { width: 80px; text: ""; }
+                }
+            }
+            Rectangle {
+                height: 1px;
+                background: Theme.border;
+            }
+            table := ListView {
+                vertical-stretch: 1;
+                for row[i] in root.rows: Rectangle {
+                    height: root.row-height;
+                    background: i == root.list.cursor ? Theme.accent-soft : touch.has-hover ? Theme.raised : transparent;
+                    accessible-role: list-item;
+                    accessible-label: row.name;
+                    accessible-action-default => {
+                        root.pick("open", i, 0);
+                    }
+                    touch := TouchArea {
+                        clicked => {
+                            root.pick("products", i, 0);
+                        }
+                        double-clicked => {
+                            root.pick("open", i, 0);
+                        }
+                    }
+                    HorizontalLayout {
+                        padding-left: 14px;
+                        padding-right: 14px;
+                        spacing: 10px;
+                        Text { width: 130px; text: row.code; color: Theme.text; vertical-alignment: center; overflow: elide; font-weight: 600; }
+                        Text { horizontal-stretch: 3; preferred-width: 0px; text: row.name; color: row.archived ? Theme.muted : Theme.text; vertical-alignment: center; overflow: elide; }
+                        Text { width: 90px; text: BoStrings.label(row.kind); color: Theme.muted; vertical-alignment: center; horizontal-alignment: left; }
+                        Text { horizontal-stretch: 1; preferred-width: 0px; text: row.category; color: Theme.muted; vertical-alignment: center; overflow: elide; }
+                        Text { horizontal-stretch: 1; preferred-width: 0px; text: row.brand; color: Theme.muted; vertical-alignment: center; overflow: elide; }
+                        Text { width: 70px; text: row.variants; color: Theme.text; vertical-alignment: center; horizontal-alignment: right; }
+                        Text { width: 80px; text: row.archived ? @tr("archived") : ""; color: Theme.warn; vertical-alignment: center; horizontal-alignment: right; font-size: 12px; }
+                    }
+                }
+            }
+            if root.rows.length == 0 && !root.list.loading: Text {
+                height: 60px;
+                text: @tr("No products found.");
+                color: Theme.muted;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+            if root.list.has-more: HorizontalLayout {
+                padding: 8px;
+                alignment: center;
+                SmallButton {
+                    text: root.list.loading ? @tr("Loading…") : @tr("Load more");
+                    clicked => {
+                        root.action("load-more");
+                    }
+                }
+            }
+        }
+    }
+    HorizontalLayout {
+        spacing: 8px;
+        alignment: start;
+        KeyButton { keys: "↑ ↓"; text: @tr("Move"); }
+        KeyButton {
+            keys: "Enter";
+            text: @tr("Open");
+            clicked => {
+                root.action("open");
+            }
+        }
+        KeyButton { keys: "/  Ctrl+F"; text: @tr("Search"); }
+    }
+}
+
+component CategoriesScreen inherits HorizontalLayout {
+    in property <[BoTreeRow]> rows;
+    in property <BoCategoryEditor> editor;
+    in property <[string]> parent-choices;
+    in property <Note> read-only;
+    in property <string> focus-target;
+    in property <int> focus-serial;
+    callback action(string);
+    callback edit(string, int, int, string, string);
+    callback choose(string, int, string, int);
+    callback pick(string, int, int);
+    padding: 16px;
+    spacing: 16px;
+
+    changed focus-serial => {
+        if (root.focus-target == "category-name") {
+            name.focus-edit();
+        }
+    }
+    init => {
+        if (root.focus-target == "category-name") {
+            name.focus-edit();
+        }
+    }
+
+    Card {
+        horizontal-stretch: 1;
+        VerticalLayout {
+            padding: 14px;
+            spacing: 6px;
+            SectionTitle {
+                text: @tr("Categories");
+            }
+            ListView {
+                vertical-stretch: 1;
+                for row[i] in root.rows: Rectangle {
+                    height: 34px;
+                    background: i == root.editor.cursor && !root.editor.is-new ? Theme.accent-soft : touch.has-hover ? Theme.raised : transparent;
+                    border-radius: 6px;
+                    accessible-role: list-item;
+                    accessible-label: row.name;
+                    accessible-action-default => {
+                        root.pick("category", i, 0);
+                    }
+                    touch := TouchArea {
+                        clicked => {
+                            root.pick("category", i, 0);
+                        }
+                    }
+                    HorizontalLayout {
+                        padding-left: 10px + row.depth * 22px;
+                        padding-right: 10px;
+                        spacing: 8px;
+                        Text {
+                            text: (row.depth > 0 ? "└ " : "") + row.name;
+                            color: row.archived ? Theme.muted : Theme.text;
+                            vertical-alignment: center;
+                        }
+                        Text {
+                            text: row.code;
+                            color: Theme.muted;
+                            font-size: 12px;
+                            vertical-alignment: center;
+                        }
+                        Rectangle {
+                            horizontal-stretch: 1;
+                        }
+                        if row.archived: Text {
+                            text: @tr("archived");
+                            color: Theme.warn;
+                            font-size: 12px;
+                            vertical-alignment: center;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    Card {
+        width: 420px;
+        VerticalLayout {
+            padding: 18px;
+            spacing: 12px;
+            alignment: start;
+            Banner {
+                note: root.read-only;
+            }
+            SectionTitle {
+                text: root.editor.is-new ? @tr("New category") : @tr("Edit category");
+            }
+            name := Field {
+                label: @tr("Name");
+                text: root.editor.name;
+                enabled: root.editor.can-edit;
+                edited(t) => {
+                    root.edit("category", 0, 0, "name", t);
+                }
+                accepted => {
+                    root.action("cat-save");
+                }
+            }
+            Field {
+                label: @tr("Short code (optional)");
+                text: root.editor.code;
+                enabled: root.editor.can-edit;
+                edited(t) => {
+                    root.edit("category", 0, 0, "code", t);
+                }
+            }
+            VerticalLayout {
+                spacing: 3px;
+                Text {
+                    text: @tr("Parent (move)");
+                    color: Theme.muted;
+                    font-size: 12px;
+                }
+                ComboBox {
+                    model: root.parent-choices;
+                    current-index: root.editor.parent-index;
+                    enabled: root.editor.can-edit;
+                    accessible-label: @tr("Parent (move)");
+                    selected(v) => {
+                        root.choose("category", 0, "parent", self.current-index);
+                    }
+                }
+            }
+            Banner {
+                note: root.editor.notice;
+            }
+            HorizontalLayout {
+                spacing: 8px;
+                KeyButton {
+                    keys: "Ctrl+S";
+                    text: @tr("Save");
+                    primary: true;
+                    enabled: root.editor.can-edit;
+                    clicked => {
+                        root.action("cat-save");
+                    }
+                }
+                if !root.editor.is-new: KeyButton {
+                    keys: "Ctrl+Shift+A";
+                    text: root.editor.archived ? @tr("Unarchive") : @tr("Archive");
+                    enabled: root.editor.can-edit;
+                    clicked => {
+                        root.action("cat-archive");
+                    }
+                }
+            }
+            HorizontalLayout {
+                spacing: 8px;
+                KeyButton {
+                    keys: "Ctrl+N";
+                    text: @tr("Add child");
+                    enabled: root.editor.can-edit;
+                    clicked => {
+                        root.action("cat-add-child");
+                    }
+                }
+                KeyButton {
+                    keys: "";
+                    text: @tr("Add top-level");
+                    enabled: root.editor.can-edit;
+                    clicked => {
+                        root.action("cat-add-root");
+                    }
+                }
+            }
+        }
+    }
+}
+
+component BrandsScreen inherits HorizontalLayout {
+    in property <[BoTreeRow]> rows;
+    in property <BoBrandEditor> editor;
+    in property <Note> read-only;
+    in property <string> focus-target;
+    in property <int> focus-serial;
+    callback action(string);
+    callback edit(string, int, int, string, string);
+    callback pick(string, int, int);
+    padding: 16px;
+    spacing: 16px;
+
+    changed focus-serial => {
+        if (root.focus-target == "brand-name") {
+            name.focus-edit();
+        }
+    }
+    init => {
+        if (root.focus-target == "brand-name") {
+            name.focus-edit();
+        }
+    }
+
+    Card {
+        horizontal-stretch: 1;
+        VerticalLayout {
+            padding: 14px;
+            spacing: 6px;
+            SectionTitle {
+                text: @tr("Brands");
+            }
+            ListView {
+                vertical-stretch: 1;
+                for row[i] in root.rows: Rectangle {
+                    height: 34px;
+                    border-radius: 6px;
+                    background: i == root.editor.cursor && !root.editor.is-new ? Theme.accent-soft : touch.has-hover ? Theme.raised : transparent;
+                    accessible-role: list-item;
+                    accessible-label: row.name;
+                    accessible-action-default => {
+                        root.pick("brand", i, 0);
+                    }
+                    touch := TouchArea {
+                        clicked => {
+                            root.pick("brand", i, 0);
+                        }
+                    }
+                    HorizontalLayout {
+                        padding-left: 10px;
+                        padding-right: 10px;
+                        Text {
+                            horizontal-stretch: 1;
+                            text: row.name;
+                            color: row.archived ? Theme.muted : Theme.text;
+                            vertical-alignment: center;
+                        }
+                        if row.archived: Text {
+                            text: @tr("archived");
+                            color: Theme.warn;
+                            font-size: 12px;
+                            vertical-alignment: center;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    Card {
+        width: 420px;
+        VerticalLayout {
+            padding: 18px;
+            spacing: 12px;
+            alignment: start;
+            Banner {
+                note: root.read-only;
+            }
+            SectionTitle {
+                text: root.editor.is-new ? @tr("New brand") : @tr("Edit brand");
+            }
+            name := Field {
+                label: @tr("Name");
+                text: root.editor.name;
+                enabled: root.editor.can-edit;
+                edited(t) => {
+                    root.edit("brand", 0, 0, "name", t);
+                }
+                accepted => {
+                    root.action("brand-save");
+                }
+            }
+            Banner {
+                note: root.editor.notice;
+            }
+            HorizontalLayout {
+                spacing: 8px;
+                KeyButton {
+                    keys: "Ctrl+S";
+                    text: @tr("Save");
+                    primary: true;
+                    enabled: root.editor.can-edit;
+                    clicked => {
+                        root.action("brand-save");
+                    }
+                }
+                if !root.editor.is-new: KeyButton {
+                    keys: "Ctrl+Shift+A";
+                    text: root.editor.archived ? @tr("Unarchive") : @tr("Archive");
+                    enabled: root.editor.can-edit;
+                    clicked => {
+                        root.action("brand-archive");
+                    }
+                }
+                KeyButton {
+                    keys: "Ctrl+N";
+                    text: @tr("Add brand");
+                    enabled: root.editor.can-edit;
+                    clicked => {
+                        root.action("brand-add");
+                    }
+                }
+            }
+        }
+    }
+}
+
+export component BackOfficeWindow inherits Window {
+    title: @tr("Sultan POS · Back office");
+    preferred-width: 1366px;
+    preferred-height: 768px;
+    min-width: 1024px;
+    min-height: 640px;
+    background: Theme.bg;
+    default-font-size: 14px;
+    forward-focus: keys;
+
+    in property <string> screen: "login";
+    in property <bool> busy;
+    in property <string> user-name;
+    in property <string> server;
+    in property <Note> read-only;
+    in property <BoLogin> login;
+    in property <BoList> list;
+    in property <[BoProductRow]> rows;
+    in property <[string]> filter-categories;
+    in property <[string]> filter-brands;
+    in property <BoForm> form;
+    in property <BoGeneral> general;
+    in property <[BoOption]> options;
+    in property <[BoCombo]> combos;
+    in property <[BoUnit]> units;
+    in property <[BoBarcode]> barcodes;
+    in property <[BoComponent]> components;
+    in property <[BoHit]> hits;
+    in property <[BoBranch]> branches;
+    in property <[string]> category-choices;
+    in property <[string]> brand-choices;
+    in property <[string]> tax-choices;
+    in property <[string]> unit-choices;
+    in property <[string]> variant-choices;
+    in property <image> thumbnail;
+    in property <int> form-serial;
+    in property <[BoTreeRow]> category-rows;
+    in property <BoCategoryEditor> category-editor;
+    in property <[string]> parent-choices;
+    in property <[BoTreeRow]> brand-rows;
+    in property <BoBrandEditor> brand-editor;
+    // "", "discard", "archive" or "unarchive".
+    in property <string> confirm;
+    in property <string> focus-target;
+    in property <int> focus-serial;
+    out property <bool> has-focus: keys.has-focus;
+
+    // A key before the focused widget (true = handled), and a key no widget used.
+    callback capture-key(string, bool, bool) -> bool;
+    callback key(string, bool, bool) -> bool;
+    callback action(string);
+    callback edit(string, int, int, string, string);
+    callback toggle(string, int, string, bool);
+    callback choose(string, int, string, int);
+    callback pick(string, int, int);
+    callback pump();
+
+    // The texts as shown, in the current language (used by Rust and the headless tests).
+    public pure function message(note: Note) -> string {
+        return BoStrings.message(note.code, note.arg);
+    }
+    public pure function label(code: string) -> string {
+        return BoStrings.label(code);
+    }
+
+    changed focus-serial => {
+        if (root.focus-target == "list") {
+            keys.focus();
+        }
+    }
+
+    keys := FocusScope {
+        capture-key-pressed(e) => {
+            if (root.capture-key(e.text, e.modifiers.control, e.modifiers.shift)) {
+                return accept;
+            }
+            reject
+        }
+        key-pressed(e) => {
+            if (root.key(e.text, e.modifiers.control, e.modifiers.shift)) {
+                return accept;
+            }
+            reject
+        }
+
+        VerticalLayout {
+            if root.screen != "login": Header {
+                screen: root.screen;
+                user: root.user-name;
+                server: root.server;
+                busy: root.busy;
+                action(id) => {
+                    root.action(id);
+                }
+            }
+            Rectangle {
+                vertical-stretch: 1;
+                if root.screen == "login": LoginScreen {
+                    login: root.login;
+                    busy: root.busy;
+                    focus-target: root.focus-target;
+                    focus-serial: root.focus-serial;
+                    action(id) => {
+                        root.action(id);
+                    }
+                    edit(k, r, s, f, v) => {
+                        root.edit(k, r, s, f, v);
+                    }
+                }
+                if root.screen == "products": ProductsScreen {
+                    list: root.list;
+                    rows: root.rows;
+                    category-choices: root.filter-categories;
+                    brand-choices: root.filter-brands;
+                    read-only: root.read-only;
+                    focus-target: root.focus-target;
+                    focus-serial: root.focus-serial;
+                    action(id) => {
+                        root.action(id);
+                    }
+                    edit(k, r, s, f, v) => {
+                        root.edit(k, r, s, f, v);
+                    }
+                    toggle(k, r, f, on) => {
+                        root.toggle(k, r, f, on);
+                    }
+                    choose(k, r, f, i) => {
+                        root.choose(k, r, f, i);
+                    }
+                    pick(k, r, s) => {
+                        root.pick(k, r, s);
+                    }
+                }
+                if root.screen == "form": FormScreen {
+                    form: root.form;
+                    general: root.general;
+                    options: root.options;
+                    combos: root.combos;
+                    units: root.units;
+                    barcodes: root.barcodes;
+                    components: root.components;
+                    hits: root.hits;
+                    branches: root.branches;
+                    category-choices: root.category-choices;
+                    brand-choices: root.brand-choices;
+                    tax-choices: root.tax-choices;
+                    unit-choices: root.unit-choices;
+                    variant-choices: root.variant-choices;
+                    thumbnail: root.thumbnail;
+                    form-serial: root.form-serial;
+                    focus-target: root.focus-target;
+                    action(id) => {
+                        root.action(id);
+                    }
+                    edit(k, r, s, f, v) => {
+                        root.edit(k, r, s, f, v);
+                    }
+                    toggle(k, r, f, on) => {
+                        root.toggle(k, r, f, on);
+                    }
+                    choose(k, r, f, i) => {
+                        root.choose(k, r, f, i);
+                    }
+                    pick(k, r, s) => {
+                        root.pick(k, r, s);
+                    }
+                }
+                if root.screen == "categories": CategoriesScreen {
+                    rows: root.category-rows;
+                    editor: root.category-editor;
+                    parent-choices: root.parent-choices;
+                    read-only: root.read-only;
+                    focus-target: root.focus-target;
+                    focus-serial: root.focus-serial;
+                    action(id) => {
+                        root.action(id);
+                    }
+                    edit(k, r, s, f, v) => {
+                        root.edit(k, r, s, f, v);
+                    }
+                    choose(k, r, f, i) => {
+                        root.choose(k, r, f, i);
+                    }
+                    pick(k, r, s) => {
+                        root.pick(k, r, s);
+                    }
+                }
+                if root.screen == "brands": BrandsScreen {
+                    rows: root.brand-rows;
+                    editor: root.brand-editor;
+                    read-only: root.read-only;
+                    focus-target: root.focus-target;
+                    focus-serial: root.focus-serial;
+                    action(id) => {
+                        root.action(id);
+                    }
+                    edit(k, r, s, f, v) => {
+                        root.edit(k, r, s, f, v);
+                    }
+                    pick(k, r, s) => {
+                        root.pick(k, r, s);
+                    }
+                }
+            }
+        }
+
+        if root.confirm != "": Rectangle {
+            background: Theme.scrim;
+            TouchArea { }
+            Card {
+                width: 460px;
+                height: dialog.preferred-height;
+                dialog := VerticalLayout {
+                    padding: 24px;
+                    spacing: 16px;
+                    Text {
+                        text: root.confirm == "discard" ? @tr("Discard your changes?") : root.confirm == "archive" ? @tr("Archive this product?") : @tr("Unarchive this product?");
+                        color: Theme.text;
+                        font-size: 18px;
+                        font-weight: 700;
+                    }
+                    Text {
+                        text: root.confirm == "discard" ? @tr("The product has unsaved changes. They are lost if you leave now.") : root.confirm == "archive" ? @tr("Archived products cannot be sold or bought; they stay in history and reports.") : @tr("The product can be sold and bought again.");
+                        color: Theme.muted;
+                        wrap: word-wrap;
+                    }
+                    HorizontalLayout {
+                        spacing: 10px;
+                        alignment: end;
+                        KeyButton {
+                            keys: "Esc";
+                            text: @tr("No");
+                            clicked => {
+                                root.action("confirm-no");
+                            }
+                        }
+                        KeyButton {
+                            keys: "Enter";
+                            text: root.confirm == "discard" ? @tr("Discard") : @tr("Yes");
+                            primary: true;
+                            clicked => {
+                                root.action("confirm-yes");
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

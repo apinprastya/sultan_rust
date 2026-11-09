@@ -46,7 +46,7 @@ use axum::response::{IntoResponse, Response};
 use serde_json::{Map, Value, json};
 use sultan_core::access::{AccessError, Limit};
 use sultan_core::cashier_session::{OpenConflict, SessionError};
-use sultan_core::catalog::{CatalogError, CodeKind};
+use sultan_core::catalog::CatalogError;
 use sultan_db::DbError;
 use sultan_db::catalog::{CatalogDbError, Duplicate};
 
@@ -332,61 +332,7 @@ impl From<DbError> for ApiError {
 /// `units.factor_thousandths`, …), when there is one.
 #[must_use]
 pub fn catalog_field(error: &CatalogError) -> Option<&'static str> {
-    Some(match error {
-        CatalogError::InvalidField { field, .. }
-        | CatalogError::NonPositive { field }
-        | CatalogError::FrozenAfterUse { field } => field,
-        CatalogError::InvalidCode { kind, .. } => match kind {
-            CodeKind::ProductCode | CodeKind::CategoryCode => "code",
-            CodeKind::Sku => "variants.sku",
-            CodeKind::OptionValueCode => "options.values.code",
-            CodeKind::Barcode => "barcodes.code",
-            CodeKind::Plu => "variants.plu",
-            CodeKind::ProductCodePrefix => "product_code_prefix",
-            CodeKind::BarcodePrefix => "internal_barcode_prefix",
-        },
-        CatalogError::InvalidCheckDigit { .. } | CatalogError::DuplicateBarcode { .. } => {
-            "barcodes.code"
-        }
-        CatalogError::DuplicateCode { .. } => "code",
-        CatalogError::DuplicateSku { .. } => "variants.sku",
-        CatalogError::DuplicatePlu { .. } => "variants.plu",
-        CatalogError::InvalidUnitFactor { .. } => "units.factor_thousandths",
-        CatalogError::DuplicateUnitName { .. } => "units.name",
-        CatalogError::TooManyUnits { .. } | CatalogError::UnknownUnit => "units",
-        CatalogError::InvalidDefaultUnit { which, .. } => {
-            if *which == "sale" {
-                "default_sale_unit_id"
-            } else {
-                "default_purchase_unit_id"
-            }
-        }
-        CatalogError::TooManyOptions { .. }
-        | CatalogError::DuplicateOption { .. }
-        | CatalogError::DuplicateOptionValue { .. } => "options",
-        CatalogError::TooManyVariants { .. }
-        | CatalogError::VariantCount { .. }
-        | CatalogError::VariantValuesMismatch
-        | CatalogError::DuplicateCombination => "variants",
-        CatalogError::TrackingNotSupported { .. } => "tracking",
-        CatalogError::ProductTypeRule { .. } => "type",
-        CatalogError::BundleComponentCount { .. }
-        | CatalogError::BundleNesting { .. }
-        | CatalogError::BundleComponentArchived { .. }
-        | CatalogError::BundleComponentSelf { .. }
-        | CatalogError::DuplicateBundleComponent { .. }
-        | CatalogError::UnknownBundleComponent { .. } => "components",
-        CatalogError::InvalidScaleLayout { .. } | CatalogError::ScalePrefixOverlap { .. } => {
-            "scale_layouts"
-        }
-        CatalogError::CategoryCycle
-        | CatalogError::CategoryTooDeep { .. }
-        | CatalogError::UnknownCategory => "parent_id",
-        CatalogError::DuplicateCategoryName { .. } | CatalogError::DuplicateBrandName { .. } => {
-            "name"
-        }
-        _ => return None,
-    })
+    error.field()
 }
 
 impl ApiError {
@@ -491,6 +437,7 @@ mod tests {
     use super::*;
     use axum::body::to_bytes;
     use sultan_core::access::Permission;
+    use sultan_core::catalog::CodeKind;
     use sultan_core::time::Timestamp;
 
     async fn render(error: ApiError) -> (StatusCode, Option<String>, Value) {

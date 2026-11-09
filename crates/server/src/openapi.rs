@@ -107,6 +107,7 @@ impl Modify for SecuritySchemes {
     paths(
         routes::auth::pin_login,
         routes::auth::password_login,
+        routes::auth::me,
         routes::auth::logout,
         routes::registers::pair,
         routes::registers::me_users,

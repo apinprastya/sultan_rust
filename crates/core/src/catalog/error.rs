@@ -320,6 +320,62 @@ pub enum CatalogError {
 }
 
 impl CatalogError {
+    /// The field of the request body this error is about (`variants.sku`,
+    /// `units.factor_thousandths`, …), when there is one. The server sends it as `field` in
+    /// problem+json; the back office uses it to put the error next to the right input.
+    #[must_use]
+    pub fn field(&self) -> Option<&'static str> {
+        Some(match self {
+            Self::InvalidField { field, .. }
+            | Self::NonPositive { field }
+            | Self::FrozenAfterUse { field } => field,
+            Self::InvalidCode { kind, .. } => match kind {
+                CodeKind::ProductCode | CodeKind::CategoryCode => "code",
+                CodeKind::Sku => "variants.sku",
+                CodeKind::OptionValueCode => "options.values.code",
+                CodeKind::Barcode => "barcodes.code",
+                CodeKind::Plu => "variants.plu",
+                CodeKind::ProductCodePrefix => "product_code_prefix",
+                CodeKind::BarcodePrefix => "internal_barcode_prefix",
+            },
+            Self::InvalidCheckDigit { .. } | Self::DuplicateBarcode { .. } => "barcodes.code",
+            Self::DuplicateCode { .. } => "code",
+            Self::DuplicateSku { .. } => "variants.sku",
+            Self::DuplicatePlu { .. } => "variants.plu",
+            Self::InvalidUnitFactor { .. } => "units.factor_thousandths",
+            Self::DuplicateUnitName { .. } => "units.name",
+            Self::TooManyUnits { .. } | Self::UnknownUnit => "units",
+            Self::InvalidDefaultUnit { which, .. } => {
+                if *which == "sale" {
+                    "default_sale_unit_id"
+                } else {
+                    "default_purchase_unit_id"
+                }
+            }
+            Self::TooManyOptions { .. }
+            | Self::DuplicateOption { .. }
+            | Self::DuplicateOptionValue { .. } => "options",
+            Self::TooManyVariants { .. }
+            | Self::VariantCount { .. }
+            | Self::VariantValuesMismatch
+            | Self::DuplicateCombination => "variants",
+            Self::TrackingNotSupported { .. } => "tracking",
+            Self::ProductTypeRule { .. } => "type",
+            Self::BundleComponentCount { .. }
+            | Self::BundleNesting { .. }
+            | Self::BundleComponentArchived { .. }
+            | Self::BundleComponentSelf { .. }
+            | Self::DuplicateBundleComponent { .. }
+            | Self::UnknownBundleComponent { .. } => "components",
+            Self::InvalidScaleLayout { .. } | Self::ScalePrefixOverlap { .. } => "scale_layouts",
+            Self::CategoryCycle | Self::CategoryTooDeep { .. } | Self::UnknownCategory => {
+                "parent_id"
+            }
+            Self::DuplicateCategoryName { .. } | Self::DuplicateBrandName { .. } => "name",
+            _ => return None,
+        })
+    }
+
     /// The stable error code used in problem+json responses (spec 2.2 §12).
     #[must_use]
     pub const fn code(&self) -> &'static str {
