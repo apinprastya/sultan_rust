@@ -507,3 +507,20 @@ fn barcodes_keep_their_flag_and_follow_their_variants() {
     f.data.combos[0].on = false;
     assert!(f.to_body().barcodes.is_empty());
 }
+
+#[test]
+fn changing_the_type_drops_barcodes_of_removed_units() {
+    let mut f = ProductForm::new_product(TAX);
+    f.add_unit();
+    let (variant, base, box_) = (
+        f.data.combos[0].variant_id.clone(),
+        f.data.units[0].id.clone(),
+        f.data.units[1].id.clone(),
+    );
+    f.add_barcode(&variant, &base, "111");
+    f.add_barcode(&variant, &box_, "222");
+    f.set_type(ProductType::Weighed);
+    assert_eq!(f.data.units.len(), 1);
+    assert_eq!(f.data.barcodes.len(), 1);
+    assert_eq!(f.data.barcodes[0].code, "111");
+}

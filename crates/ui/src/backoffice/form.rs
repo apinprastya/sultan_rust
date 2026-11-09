@@ -779,6 +779,8 @@ impl ProductForm {
         }
         let base = self.data.units[0].id.clone();
         let ids: Vec<&String> = self.data.units.iter().map(|u| &u.id).collect();
+        let kept: Vec<String> = ids.iter().map(|id| (*id).clone()).collect();
+        self.data.barcodes.retain(|b| kept.contains(&b.unit_id));
         if !ids.contains(&&self.data.default_sale) {
             self.data.default_sale.clone_from(&base);
         }
