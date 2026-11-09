@@ -186,6 +186,8 @@ pub struct BarcodeRow {
     pub unit_id: String,
     /// Code as typed.
     pub code: String,
+    /// The stored barcode may fail the check digit (kept so a save does not clear it).
+    pub allow_invalid_check_digit: bool,
 }
 
 /// A bundle component row.
@@ -507,6 +509,7 @@ impl ProductForm {
                     variant_id: b.variant_id.clone(),
                     unit_id: b.unit_id.clone(),
                     code: b.code.clone(),
+                    allow_invalid_check_digit: b.allow_invalid_check_digit,
                 })
                 .collect(),
             components: p
@@ -826,6 +829,16 @@ impl ProductForm {
         if self.used && self.data.units[i].stored {
             let archived = !self.data.units[i].archived;
             self.data.units[i].archived = archived;
+            if archived {
+                let id = self.data.units[i].id.clone();
+                let base = self.data.units[0].id.clone();
+                if self.data.default_sale == id {
+                    self.data.default_sale.clone_from(&base);
+                }
+                if self.data.default_purchase == id {
+                    self.data.default_purchase = base;
+                }
+            }
             return;
         }
         let id = self.data.units.remove(i).id;
@@ -894,6 +907,7 @@ impl ProductForm {
             variant_id: variant_id.to_owned(),
             unit_id: unit_id.to_owned(),
             code: code.trim().to_owned(),
+            allow_invalid_check_digit: false,
         });
     }
 
@@ -946,7 +960,7 @@ impl ProductForm {
             })
             .collect();
         let weighed = d.product_type == ProductType::Weighed;
-        let variants = d
+        let variants: Vec<Variant> = d
             .combos
             .iter()
             .enumerate()
@@ -961,6 +975,18 @@ impl ProductForm {
                     None
                 },
                 archived: !c.on,
+            })
+            .collect();
+        let barcodes: Vec<Barcode> = d
+            .barcodes
+            .iter()
+            .filter(|b| variants.iter().any(|v| v.id == b.variant_id))
+            .map(|b| Barcode {
+                id: b.id.clone(),
+                variant_id: b.variant_id.clone(),
+                unit_id: b.unit_id.clone(),
+                code: b.code.trim().to_owned(),
+                allow_invalid_check_digit: b.allow_invalid_check_digit,
             })
             .collect();
         Product {
@@ -1006,17 +1032,7 @@ impl ProductForm {
             default_sale_unit_id: d.default_sale.clone(),
             default_purchase_unit_id: d.default_purchase.clone(),
             variants,
-            barcodes: d
-                .barcodes
-                .iter()
-                .map(|b| Barcode {
-                    id: b.id.clone(),
-                    variant_id: b.variant_id.clone(),
-                    unit_id: b.unit_id.clone(),
-                    code: b.code.trim().to_owned(),
-                    allow_invalid_check_digit: false,
-                })
-                .collect(),
+            barcodes,
             archived_barcodes: Vec::new(),
             components: d
                 .components

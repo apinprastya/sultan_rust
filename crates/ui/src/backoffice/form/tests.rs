@@ -469,3 +469,41 @@ fn core_rules_point_at_rows() {
         f.errors
     );
 }
+
+#[test]
+fn archiving_the_default_unit_resets_the_defaults() {
+    let p = stored(true);
+    let mut f = ProductForm::from_product(&p, &[], false);
+    let (base, box_) = (f.data.units[0].id.clone(), f.data.units[1].id.clone());
+    assert_eq!(f.data.default_purchase, box_);
+    f.data.default_sale.clone_from(&box_);
+    f.remove_unit(1);
+    assert!(f.data.units[1].archived);
+    assert_eq!(f.data.default_purchase, base);
+    assert_eq!(f.data.default_sale, base);
+    let body = f.to_body();
+    assert_eq!(body.default_purchase_unit_id, base);
+    // Restoring the unit leaves the defaults alone.
+    f.remove_unit(1);
+    assert!(!f.data.units[1].archived);
+    assert_eq!(f.data.default_purchase, base);
+}
+
+#[test]
+fn barcodes_keep_their_flag_and_follow_their_variants() {
+    let mut p = stored(false);
+    p.barcodes[0].allow_invalid_check_digit = true;
+    let mut f = ProductForm::from_product(&p, &[], false);
+    assert!(f.to_body().barcodes[0].allow_invalid_check_digit);
+    // A barcode whose variant is no longer in the body is not sent.
+    let unit = f.data.units[0].id.clone();
+    f.add_barcode(&new_id(), &unit, "777");
+    assert_eq!(f.data.barcodes.len(), 2);
+    let body = f.to_body();
+    assert_eq!(body.barcodes.len(), 1);
+    assert!(body.barcodes[0].allow_invalid_check_digit);
+    // Switching a new combination off drops its barcode as well.
+    f.data.combos[0].stored = false;
+    f.data.combos[0].on = false;
+    assert!(f.to_body().barcodes.is_empty());
+}
