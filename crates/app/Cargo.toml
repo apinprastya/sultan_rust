@@ -27,7 +27,7 @@ sultan-server = { path = "../server" }
 sultan-client = { path = "../client" }
 sultan-ui = { path = "../ui" }
 thiserror.workspace = true
-tokio = { workspace = true, features = ["net", "signal"] }
+tokio = { workspace = true, features = ["net", "signal", "sync"] }
 toml.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true

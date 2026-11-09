@@ -24,6 +24,11 @@ struct Till {
 }
 
 fn till_with(fake: FakeService, language: Option<&str>) -> Till {
+    till_opened(fake, language, false)
+}
+
+/// A till opened from the Start screen (`start`) or alone.
+fn till_opened(fake: FakeService, language: Option<&str>, start: bool) -> Till {
     // One testing platform per test thread.
     thread_local!(static READY: std::cell::Cell<bool> = const { std::cell::Cell::new(false) });
     if !READY.get() {
@@ -46,6 +51,7 @@ fn till_with(fake: FakeService, language: Option<&str>) -> Till {
         register_label: "R1 · Kasir 1".to_owned(),
         language: language.map(str::to_owned),
         clock,
+        start,
     };
     let app = build_app(
         fake.clone(),
@@ -80,6 +86,7 @@ fn key_text(name: &str) -> SharedString {
         "Control" => Key::Control.into(),
         "F2" => Key::F2.into(),
         "F5" => Key::F5.into(),
+        "F9" => Key::F9.into(),
         "F10" => Key::F10.into(),
         "F12" => Key::F12.into(),
         other => other.into(),
@@ -842,4 +849,32 @@ fn unknown_clicks_are_ignored() {
         !t.app.ui.invoke_key("a".into(), false, false),
         "unused keys are passed on"
     );
+}
+
+#[test]
+fn f9_on_the_lock_screen_goes_back_to_the_start_screen() {
+    // Opened alone (`sultan register`): no way back, F9 does nothing.
+    let t = till();
+    assert!(t.chips().iter().all(|(keys, _)| keys != "F9"));
+    t.press(&["F9"]);
+    assert!(t.app.ui.window().is_visible());
+
+    // Opened from the Start screen: the chip, and F9 closes the window.
+    let t = till_opened(FakeService::default(), Some("en"), true);
+    assert_eq!(
+        t.chips().last().unwrap(),
+        &("F9".to_owned(), "start".to_owned())
+    );
+    assert_eq!(t.app.ui.invoke_chip_label("start".into()), "Start screen");
+    t.press(&["F9"]);
+    assert!(!t.app.ui.window().is_visible());
+
+    // Not from the PIN pad or after login; the chip (a button) closes too.
+    let t = till_opened(FakeService::default(), Some("en"), true);
+    t.press(&["Enter"]);
+    t.press(&["F9"]);
+    assert!(t.app.ui.window().is_visible(), "the PIN pad is open");
+    t.press(&["Esc"]);
+    t.click("Start screen");
+    assert!(!t.app.ui.window().is_visible());
 }

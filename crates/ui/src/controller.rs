@@ -6,7 +6,9 @@
 //! Screens ([`Screen`]):
 //! 1. **Lock** — tiles from `GET /registers/me/users`; arrows (or a click) pick a user, a digit or
 //!    Enter opens the PIN pad; Enter logs in, Esc closes the pad. `401 invalid_credentials` shows
-//!    "wrong PIN"; `423 locked_out` shows a countdown to `locked_until`.
+//!    "wrong PIN"; `423 locked_out` shows a countdown to `locked_until`. Opened from the Start
+//!    screen ([`Controller::start`]), F9 closes the window and goes back there
+//!    ([`Effect::Exit`]).
 //! 2. **Open session** — after login when this register has no open session: the opening cash
 //!    is typed as digits and shown as Rupiah; Enter opens (`Idempotency-Key`, reused only when
 //!    the answer was lost). If another user's session is open here, the screen says whose and
@@ -234,16 +236,19 @@ pub enum Action {
     CloseSession,
     /// Run the demo action protected by an override.
     TestOverride,
+    /// Leave the register for the Start screen (lock screen only, when opened from it).
+    Start,
 }
 
 impl Action {
-    const ALL: [Self; 6] = [
+    const ALL: [Self; 7] = [
         Self::Confirm,
         Self::Back,
         Self::Retry,
         Self::Lock,
         Self::CloseSession,
         Self::TestOverride,
+        Self::Start,
     ];
 
     /// The ID used by the UI.
@@ -256,6 +261,7 @@ impl Action {
             Self::Lock => "lock",
             Self::CloseSession => "close-session",
             Self::TestOverride => "test-override",
+            Self::Start => "start",
         }
     }
 
@@ -469,6 +475,8 @@ pub enum Effect {
         /// The login they belong to.
         generation: u64,
     },
+    /// Close the window: back to the Start screen ([`Action::Start`]).
+    Exit,
 }
 
 /// Input for [`Controller::update`].
@@ -550,6 +558,8 @@ pub struct Controller {
     generation: u64,
     /// Sequence number of the last lookup.
     lookups: u64,
+    /// The window was opened from the Start screen: the lock screen offers F9 to go back.
+    pub start: bool,
 }
 
 impl Controller {
@@ -568,6 +578,7 @@ impl Controller {
             users_failed: false,
             generation: 0,
             lookups: 0,
+            start: false,
         };
         (controller, vec![Effect::LoadUsers])
     }
@@ -631,10 +642,16 @@ impl Controller {
                     s(Key::Escape, Back, "back"),
                 ]
             }
-            Screen::Lock(_) => vec![
-                s(Key::Enter, Confirm, "enter_pin"),
-                s(Key::F(5), Retry, "refresh"),
-            ],
+            Screen::Lock(_) => {
+                let mut keys = vec![
+                    s(Key::Enter, Confirm, "enter_pin"),
+                    s(Key::F(5), Retry, "refresh"),
+                ];
+                if self.start {
+                    keys.push(s(Key::F(9), Action::Start, "start"));
+                }
+                keys
+            }
             Screen::Open(o) if o.blocked.is_some() => vec![s(Key::Escape, Lock, "back_to_lock")],
             Screen::Open(_) => vec![
                 s(Key::Enter, Confirm, "open_session"),
@@ -806,6 +823,7 @@ impl Controller {
                 Vec::new()
             }
             Action::Retry => vec![Effect::LoadUsers],
+            Action::Start => vec![Effect::Exit],
             Action::Lock => self.logout(None),
             Action::CloseSession => {
                 self.screen = Screen::Close(CloseScreen {

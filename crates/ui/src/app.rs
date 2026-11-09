@@ -70,6 +70,9 @@ pub struct Options {
     pub language: Option<String>,
     /// The clock.
     pub clock: Clock,
+    /// Opened from the Start screen: the lock screen offers F9 to go back to it (the window
+    /// closes).
+    pub start: bool,
 }
 
 impl Options {
@@ -80,6 +83,7 @@ impl Options {
             register_label: register_label.into(),
             language: None,
             clock: system_clock(),
+            start: false,
         }
     }
 }
@@ -202,7 +206,7 @@ fn start(service: &dyn Service, effect: Effect) -> Option<MsgFuture> {
             let future = service.lookup(&token, &code);
             Some(Box::pin(async move { Msg::Looked(seq, future.await) }) as MsgFuture)
         }
-        Effect::WatchEvents { .. } => None,
+        Effect::WatchEvents { .. } | Effect::Exit => None,
     }
 }
 
@@ -249,6 +253,13 @@ impl State {
                 self.runner.handle().spawn(async move {
                     let _ = watching.await;
                 });
+                continue;
+            }
+            if effect == Effect::Exit {
+                if let Some(ui) = self.ui.upgrade() {
+                    // Ends `run_event_loop` when this is the last window.
+                    let _ = ui.hide();
+                }
                 continue;
             }
             let Some(future) = start(self.service.as_ref(), effect) else {
@@ -649,7 +660,8 @@ pub fn build_app(
         }
         Runner::Block(_) => Arc::new(|| {}),
     };
-    let (controller, effects) = Controller::new();
+    let (mut controller, effects) = Controller::new();
+    controller.start = options.start;
     let state = Rc::new(State {
         ui: ui.as_weak(),
         controller: RefCell::new(controller),

@@ -79,6 +79,7 @@ fn till(language: &str) -> Till {
         register_label: "R1 · Kasir 1".to_owned(),
         language: Some(language.to_owned()),
         clock: Arc::new(|| T0),
+        start: false,
     };
     let app = build_app(
         fake.clone(),

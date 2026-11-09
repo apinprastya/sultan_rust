@@ -11,10 +11,14 @@
 //! | node role | `--role` | `SULTAN_ROLE` | `role` | `standalone` |
 //! | app type (bare `sultan`) | – | – | `mode` | the setup wizard |
 //! | back-office server (`sultan backoffice`) | `--server` | `SULTAN_SERVER` | `[register] server`, else `listen` | `http://127.0.0.1:8080` |
+//! | window language (`id` / `en`) | – | `SULTAN_LANG` | `language` (Start screen → Settings) | system locale |
 //!
 //! The database defaults to `sultan.db` **next to the config file**, so one directory holds a
 //! node: `sultan.toml`, `sultan.db` and, on a register, `register.token`. The listen address
 //! defaults to loopback; pass `--listen 0.0.0.0:8080` to serve registers on the shop LAN.
+//!
+//! `language` is written by the Start screen's settings ([`set_language`]); `SULTAN_LANG`
+//! overrides it ([`resolve_language`]).
 //!
 //! `mode` is written by the setup wizard and decides what a bare `sultan` does ([`Mode`]); an
 //! older file without it is read as `client` when it has a `[register]` table and as `server`
@@ -183,6 +187,10 @@ pub struct RegisterConfig {
     pub register_code: String,
     /// Register name.
     pub register_name: String,
+    /// The branch as shown on the Start screen, e.g. `JKT01 · Toko Jakarta`; written when it is
+    /// known at pairing (single app, terminal registered with a manager login).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub branch: Option<String>,
 }
 
 /// The typed view of `sultan.toml`. Every key is optional.
@@ -196,6 +204,9 @@ pub struct FileConfig {
     pub role: Option<String>,
     /// App type ([`Mode`]), written by the setup wizard.
     pub mode: Option<String>,
+    /// Window language (`id` / `en`), written by the Start screen's settings.
+    #[serde(default)]
+    pub language: Option<String>,
     /// The paired register, if any.
     pub register: Option<RegisterConfig>,
 }
@@ -260,6 +271,23 @@ pub fn resolve_server(flag: Option<&str>, env: Env<'_>, file: &FileConfig) -> St
         Some(port) => format!("http://127.0.0.1:{port}"),
         None => format!("http://{listen}"),
     }
+}
+
+/// The window language (see the module table): `SULTAN_LANG` > `language`; `None`: the system
+/// locale.
+#[must_use]
+pub fn resolve_language(env: Env<'_>, file: &FileConfig) -> Option<String> {
+    pick(None, env(crate::ENV_LANG), file.language.as_deref()).filter(|l| !l.trim().is_empty())
+}
+
+/// Saves the window language (`language` in the config file).
+///
+/// # Errors
+/// See [`update`].
+pub fn set_language(path: &Path, language: &str) -> Result<()> {
+    update(path, |table| {
+        table.insert("language".to_owned(), language.into());
+    })
 }
 
 /// The node role (see the module table).
@@ -366,8 +394,27 @@ mod tests {
             listen: listen.map(str::to_owned),
             role: role.map(str::to_owned),
             mode: None,
+            language: None,
             register: None,
         }
+    }
+
+    #[test]
+    fn language_is_env_then_file() {
+        let file = FileConfig {
+            language: Some("id".into()),
+            ..FileConfig::default()
+        };
+        let none = env_of(&[]);
+        let en = env_of(&[(crate::ENV_LANG, "en")]);
+        assert_eq!(resolve_language(&none, &file).as_deref(), Some("id"));
+        assert_eq!(resolve_language(&en, &file).as_deref(), Some("en"));
+        assert_eq!(resolve_language(&none, &FileConfig::default()), None);
+        let blank = FileConfig {
+            language: Some(" ".into()),
+            ..FileConfig::default()
+        };
+        assert_eq!(resolve_language(&none, &blank), None);
     }
 
     #[test]
@@ -382,6 +429,7 @@ mod tests {
             branch_id: "b".into(),
             register_code: "R1".into(),
             register_name: "K".into(),
+            branch: None,
         });
         assert_eq!(resolve_mode(&file).unwrap(), Some(Mode::Client));
         for (text, mode) in [
@@ -466,6 +514,7 @@ mod tests {
                 branch_id: "b".into(),
                 register_code: "R1".into(),
                 register_name: "Kasir".into(),
+                branch: None,
             }),
             ..FileConfig::default()
         };
@@ -603,12 +652,15 @@ mod tests {
             branch_id: "b".into(),
             register_code: "R1".into(),
             register_name: "Kasir 1".into(),
+            branch: Some("JKT01 · Toko".into()),
         };
         set_register(&path, &register).unwrap();
+        set_language(&path, "id").unwrap();
         let loaded = load(&path).unwrap();
         assert_eq!(loaded.db.as_deref(), Some("sqlite://x.db"));
         assert_eq!(loaded.listen.as_deref(), Some("0.0.0.0:9"));
         assert_eq!(loaded.register, Some(register));
+        assert_eq!(loaded.language.as_deref(), Some("id"));
         assert!(
             fs::read_to_string(&path)
                 .unwrap()

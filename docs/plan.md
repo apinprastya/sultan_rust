@@ -206,7 +206,9 @@ audit log viewer · light/dark theme · i18n ID/EN.
 - **2026-11-09 UI only, except HQ:** shop users are not familiar with the command line. Only the
   **HQ server** may need it (`sultan serve`, scripts). On a single app, terminal or branch machine
   everything is reachable from a window: choosing register or back office, setup, pairing,
-  language. CLI subcommands stay for scripts but are never the only way.
+  language. CLI subcommands stay for scripts but are never the only way. Built as the **Start
+  screen** a bare `sultan` opens (F1 register, F2 back office, F3 settings: language,
+  connection, set up again, version; F9 on the lock / back-office login screen goes back).
 
 ## 4. Release phases
 | Phase | Content |

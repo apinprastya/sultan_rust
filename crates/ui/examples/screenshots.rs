@@ -1,5 +1,5 @@
-//! Renders every register screen (with the barcode lookup of phase C5, files `5a`–`5c`) and
-//! every back-office screen (phase C4, files `bo-*`) to PNG
+//! Renders the Start screen (files `0a`–`0c`), every register screen (with the barcode lookup of
+//! phase C5, files `5a`–`5c`) and every back-office screen (phase C4, files `bo-*`) to PNG
 //! with Slint's software renderer (no display needed), driven by keys against the fake service,
 //! like the headless tests.
 //!
@@ -20,9 +20,29 @@ use slint::{ComponentHandle, PhysicalSize, PlatformError, SharedString};
 use sultan_client::fake::{BRANCH_ID, FakeService, STANDARD_TAX_CLASS};
 use sultan_client::{BackOffice, CategoryBody, Product};
 use sultan_core::catalog::gtin_check_digit;
+use sultan_ui::start::{AppKind, StartError, StartFuture, StartInfo, StartService};
 use sultan_ui::{
     App, BackOfficeApp, BackOfficeOptions, Options, Runner, build_app, build_backoffice,
+    build_start,
 };
+
+/// The Start screen's service: the server answers, or not.
+struct Reachable(bool);
+
+impl StartService for Reachable {
+    fn check(&self) -> StartFuture {
+        let answer = if self.0 {
+            Ok(())
+        } else {
+            Err(StartError::new("network", "192.168.1.10:8080"))
+        };
+        Box::pin(async move { answer })
+    }
+
+    fn set_language(&self, _: &str) -> Result<(), String> {
+        Ok(())
+    }
+}
 
 struct Shots(Rc<MinimalSoftwareWindow>);
 
@@ -96,6 +116,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .worker_threads(1)
         .enable_all()
         .build()?;
+    start(&window, &dir, (width, height), &language, &runtime)?;
+
     let fake = Arc::new(FakeService::default());
     fake.set_cash_sales(1_250_000);
     // The register looks codes up in the same demo catalog; Aqua 600 ml is not sold here.
@@ -106,6 +128,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     runtime.block_on(fake.put_branch_blocks(&owner, &aqua600, &[BRANCH_ID.to_owned()]))?;
     let mut options = Options::new("R1 · Kasir 1");
     options.language = Some(language.clone());
+    options.start = true;
     let app = build_app(
         fake.clone(),
         Runner::Block(runtime.handle().clone()),
@@ -339,6 +362,48 @@ fn demo_catalog(fake: &FakeService) -> (String, String) {
 }
 
 /// Renders the back-office screens (`bo-*`).
+fn start(
+    window: &Rc<MinimalSoftwareWindow>,
+    dir: &Path,
+    (width, height): (u32, u32),
+    language: &str,
+    runtime: &tokio::runtime::Runtime,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let shot = |name: &str| {
+        save(
+            window,
+            &dir.join(format!("{name}-{language}-{width}x{height}.png")),
+        )
+    };
+    let info = StartInfo {
+        kind: AppKind::Terminal,
+        server: "http://192.168.1.10:8080".into(),
+        register_code: "R2".into(),
+        register_name: "Kasir 2".into(),
+        branch: "JKT01 · Toko Jakarta".into(),
+        version: env!("CARGO_PKG_VERSION").into(),
+        language: language.to_owned(),
+        language_fixed: false,
+    };
+    for reachable in [true, false] {
+        let start = build_start(
+            Arc::new(Reachable(reachable)),
+            Runner::Block(runtime.handle().clone()),
+            info.clone(),
+        )?;
+        start.ui.show()?;
+        if reachable {
+            shot("0a-start")?;
+            key(start.ui.window(), &[Key::F3.into()]);
+            shot("0b-settings")?;
+        } else {
+            key(start.ui.window(), &[Key::F1.into()]);
+            shot("0c-start-offline")?;
+        }
+    }
+    Ok(())
+}
+
 fn backoffice(
     window: &Rc<MinimalSoftwareWindow>,
     dir: &Path,
@@ -352,6 +417,7 @@ fn backoffice(
     options.language = Some(language.to_owned());
     options.debounce = std::time::Duration::ZERO;
     options.username = "owner".into();
+    options.start = true;
     let app: BackOfficeApp = build_backoffice(
         fake.clone(),
         Runner::Block(runtime.handle().clone()),

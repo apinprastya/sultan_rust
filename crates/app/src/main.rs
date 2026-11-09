@@ -1,6 +1,7 @@
 //! `sultan`: the single Sultan POS binary (`docs/plan.md` §1, plan Phase 7). All logic lives in
 //! the `sultan_app` library; this file wires it to the real process: arguments, `RUST_LOG`,
-//! environment, terminal, stdout, Ctrl+C / `SIGTERM`, the register window, the setup wizard and the back office.
+//! environment, terminal, stdout, Ctrl+C / `SIGTERM`, the register window, the setup wizard, the
+//! back office and the Start screen.
 
 use std::process::ExitCode;
 
@@ -9,7 +10,8 @@ use sultan_app::cli::Cli;
 use sultan_app::config::process_env;
 use sultan_app::prompt::TerminalPrompter;
 use sultan_app::{
-    Context, logging, open_backoffice_window, open_register_window, open_setup_window, run, serve,
+    Context, logging, open_backoffice_window, open_register_window, open_setup_window,
+    open_start_window, run, serve,
 };
 
 fn main() -> ExitCode {
@@ -32,6 +34,7 @@ fn main() -> ExitCode {
     let mut window = open_register_window;
     let mut wizard = open_setup_window;
     let mut backoffice = open_backoffice_window;
+    let mut start = open_start_window;
     let ctx = Context {
         env: &process_env,
         prompter: &mut prompter,
@@ -40,6 +43,7 @@ fn main() -> ExitCode {
         open_ui: &mut window,
         open_setup: &mut wizard,
         open_backoffice: &mut backoffice,
+        open_start: &mut start,
     };
     match runtime.block_on(run(cli, ctx)) {
         Ok(()) => ExitCode::SUCCESS,

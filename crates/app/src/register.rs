@@ -82,17 +82,18 @@ pub async fn pair(server: &str, code: &str, config_path: &Path) -> Result<Regist
         .json()
         .await
         .map_err(|e| AppError::Pair(format!("unexpected answer from {url}: {e}")))?;
-    store(&server_root(server), paired, config_path)
+    store(&server_root(server), paired, None, config_path)
 }
 
 /// Saves a pairing: the device token to `register.token`, the details to `[register]` with
-/// `server` as the server URL.
+/// `server` as the server URL and `branch` as the branch shown on the Start screen.
 ///
 /// # Errors
 /// [`AppError::File`] / [`AppError::Config`].
 pub(crate) fn store(
     server: &str,
     paired: PairResponse,
+    branch: Option<String>,
     config_path: &Path,
 ) -> Result<RegisterConfig> {
     config::write_private(&token_path(config_path), paired.device_token.as_bytes())?;
@@ -102,6 +103,7 @@ pub(crate) fn store(
         branch_id: paired.branch_id,
         register_code: paired.register_code,
         register_name: paired.register_name,
+        branch,
     };
     config::set_register(config_path, &register)?;
     Ok(register)

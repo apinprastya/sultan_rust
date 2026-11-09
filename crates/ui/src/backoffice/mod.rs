@@ -594,6 +594,8 @@ pub enum Effect {
     Debounce(u64),
     /// Read a file (the image to upload) and send [`Msg::FileRead`].
     ReadFile(String),
+    /// Close the window: back to the Start screen (F9 on the login screen).
+    Exit,
 }
 
 /// Input for [`Controller::update`].
@@ -814,6 +816,8 @@ pub struct Controller {
     /// view rebuilds the form so its fields show the new values.
     pub form_serial: u64,
     generation: u64,
+    /// The window was opened from the Start screen: the login screen offers F9 to go back.
+    pub start: bool,
 }
 
 impl Controller {
@@ -923,6 +927,9 @@ impl Controller {
         }
         let screen = self.screen();
         if screen == Screen::Login {
+            if p.f(9) && self.start {
+                return Step::handled(self.on_action("start"));
+            }
             return Step::default();
         }
         for (n, target) in [
@@ -1185,6 +1192,9 @@ impl Controller {
         }
         match id {
             "login" => self.start_login(),
+            "start" if self.start && self.screen() == Screen::Login && !self.busy => {
+                vec![Effect::Exit]
+            }
             "logout" => {
                 let token = self.token();
                 self.logged_out(None);
@@ -1324,8 +1334,10 @@ impl Controller {
     fn logged_out(&mut self, notice: Option<Notice>) {
         let username = self.login.username.clone();
         let generation = self.generation;
+        let start = self.start;
         *self = Self::new(&username);
         self.generation = generation + 1;
+        self.start = start;
         self.login.notice = notice;
     }
 
