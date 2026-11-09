@@ -24,6 +24,7 @@
 //! | `cashier_session.opened` | `session_id`, `register_id`, `branch_id`, `user_id` | callers who may see the branch (spec 2.1 §3) |
 //! | `cashier_session.closed` | same, plus `forced` | callers who may see the branch |
 //! | `user.changed` | `user_id` | the user, and callers who may see a branch where the user has (or had) a role |
+//! | `catalog.changed` | `scope` (`product` / `category` / `brand` / `settings`), plus `product_id`, `category_id` or `brand_id` | every socket: the catalog is company-wide (spec 2.2 §11), so registers drop cached lookups |
 //! | `events.lagged` | `missed` | a socket that fell behind; refetch everything |
 //!
 //! Before each delivery the socket's own login session is checked again; once it is revoked,
@@ -66,6 +67,8 @@ pub enum Audience {
     },
     /// Callers who may see this branch.
     Branch(BranchId),
+    /// Every socket whose session is still valid (company-wide data such as the catalog).
+    Everyone,
     /// `user.changed`: the user themselves, and callers who may see any of `scopes`.
     User {
         /// The changed user.
@@ -104,6 +107,17 @@ impl Event {
             kind: "user.changed",
             data: json!({ "user_id": user.to_string() }),
             audience: Audience::User { user, scopes },
+        }
+    }
+
+    /// `catalog.changed` (spec 2.2 §11) for every socket. `data` carries the `scope` and the
+    /// changed entity's ID.
+    #[must_use]
+    pub const fn catalog_changed(data: Value) -> Self {
+        Self {
+            kind: "catalog.changed",
+            data,
+            audience: Audience::Everyone,
         }
     }
 
@@ -197,7 +211,7 @@ impl FromRequestParts<AppState> for EventsAuth {
     security(("bearer" = []), ("bearer" = [], "register_token" = [])),
     responses((status = 101, description = "Switching to the WebSocket protocol; text frames \
         `{\"type\", \"data\"}`: session.revoked, cashier_session.opened, cashier_session.closed, \
-        user.changed, events.lagged"),
+        user.changed, catalog.changed, events.lagged"),
         (status = 401, body = crate::openapi::Problem)))]
 pub async fn events(
     State(state): State<AppState>,
@@ -272,6 +286,7 @@ async fn decide(state: &AppState, me: &UserSession, event: &Event) -> Result<Del
     let scopes = match &event.audience {
         Audience::Sessions { user, session } => return Ok(revoked(me, event, *user, *session)),
         Audience::Branch(branch) => vec![BranchScope::Branch(*branch)],
+        Audience::Everyone => vec![BranchScope::All],
         Audience::User { scopes, .. } => scopes.clone(),
     };
     if !still_valid(state, me).await? {

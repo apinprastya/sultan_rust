@@ -15,7 +15,7 @@
 //!
 //! ```sh
 //! cargo run -p sultan-server --example dev_server -- 8080
-//! postman collection run postman/sultan-api.postman_collection.json \
+//! postman collection run postman/sultan-api.postman_collection.json --working-dir postman \
 //!     --env-var baseUrl=http://127.0.0.1:8080/api/v1
 //! ```
 //!

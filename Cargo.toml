@@ -64,6 +64,9 @@ chrono = { version = "0.4.45", default-features = false, features = ["clock", "s
 # Phase 9: branch-local dates in document numbers (`core::doc_number`). The IANA database is
 # compiled in, so `core` stays pure (no system tz files).
 chrono-tz = "0.10.4"
+# Server (C3, spec 2.2 §8): product images are decoded (PNG/JPEG/WebP), resized to fit 512×512
+# and re-encoded as JPEG. Pinned exactly; already in the tree via Slint. Only the codecs we need.
+image = { version = "=0.25.10", default-features = false, features = ["png", "jpeg", "webp"] }
 # Register UI screenshots (`crates/ui/examples/screenshots.rs`); already in the tree via Slint.
 png = "0.18.1"
 

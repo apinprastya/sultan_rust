@@ -26,6 +26,7 @@ db_tests!(
     references_are_checked,
     bundles_validate_against_the_database,
     mark_used_is_idempotent,
+    empty_skus_get_the_default,
 );
 
 type Edit = fn(&mut catalog::ProductDoc);
@@ -701,4 +702,30 @@ async fn mark_used_is_idempotent(db: &Db) {
     assert_eq!(mark_used(db, &ids[..2], t(1)).await.unwrap(), 2);
     assert_eq!(mark_used(db, &ids, t(2)).await.unwrap(), 2);
     assert_eq!(mark_used(db, &ids, t(3)).await.unwrap(), 0);
+}
+
+/// An empty SKU becomes `<product code>-<value codes>` (spec 2.2 §3), also with a generated code.
+async fn empty_skus_get_the_default(db: &Db) {
+    let o = org(db).await;
+    let mut doc = kaos("KSKU");
+    for v in &mut doc.draft.variants {
+        v.sku.clear();
+    }
+    let (_, stored) = put(db, &o, &doc).await;
+    let skus: Vec<&str> = stored
+        .draft
+        .variants
+        .iter()
+        .map(|v| v.sku.as_str())
+        .collect();
+    assert_eq!(
+        skus,
+        ["KSKU-S-RED", "KSKU-S-BLUE", "KSKU-M-RED", "KSKU-M-BLUE"]
+    );
+
+    let mut doc = simple("", "SKU-GEN-1");
+    doc.draft.variants[0].sku.clear();
+    let (_, stored) = put(db, &o, &doc).await;
+    assert!(!stored.draft.code.is_empty());
+    assert_eq!(stored.draft.variants[0].sku, stored.draft.code);
 }

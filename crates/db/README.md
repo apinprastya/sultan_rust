@@ -51,7 +51,7 @@ SULTAN_OWNER_PASSWORD=owner-pass-1 SULTAN_OWNER_PIN=1234 target/debug/sultan --c
   init --db mysql://root:test@127.0.0.1:33306/sultan_smoke --company "PT Sultan Demo" \
   --branch JKT01 --branch-name "Toko Jakarta" --owner owner
 target/debug/sultan --config "$DIR/sultan.toml" serve --listen 127.0.0.1:8080 &
-postman collection run postman/sultan-api.postman_collection.json \
+postman collection run postman/sultan-api.postman_collection.json --working-dir postman \
   --env-var baseUrl=http://127.0.0.1:8080/api/v1
 kill %1 && rm -rf "$DIR"
 ```

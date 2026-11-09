@@ -1,7 +1,7 @@
 {
   "info": {
-    "name": "Sultan POS API (2.1 Organization & access)",
-    "description": "Main flows of /api/v1, matching GET /api/v1/openapi.json (docs/plan.md §1, docs/spec/2.1-organization-access.md). Run against the dev server: see postman/README.md.",
+    "name": "Sultan POS API (2.1 Organization & access, 2.2 Catalog)",
+    "description": "Main flows of /api/v1, matching GET /api/v1/openapi.json (docs/plan.md §1, docs/spec/2.1-organization-access.md, docs/spec/2.2-catalog.md). Run against the dev server: see postman/README.md.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "item": [
@@ -1715,6 +1715,1498 @@
         },
         "description": ""
       }
+    },
+    {
+      "name": "Catalog (spec 2.2)",
+      "description": "Catalog flow of docs/spec/2.2-catalog.md §12 (phase C3). Runs after the 2.1 flow: it uses the owner token, the paired register's device token and its branch.",
+      "item": [
+        {
+          "name": "35 Create category (PUT)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Fresh client-generated IDs, codes and barcodes for the catalog flow.",
+                  "function uuidv7() {",
+                  "    const hex = (n) => Array.from({ length: n }, () => Math.floor(Math.random() * 16).toString(16)).join('');",
+                  "    const ts = Date.now().toString(16).padStart(12, '0');",
+                  "    const variant = (8 + Math.floor(Math.random() * 4)).toString(16);",
+                  "    return `${ts.slice(0, 8)}-${ts.slice(8, 12)}-7${hex(3)}-${variant}${hex(3)}-${hex(12)}`;",
+                  "}",
+                  "['catCategoryId', 'catBrandId', 'catProductId', 'catOtherId', 'catBadId', 'catPcsId', 'catBoxId',",
+                  " 'catSizeId', 'catSizeS', 'catSizeM', 'catColorId', 'catColorRed', 'catColorBlue',",
+                  " 'catV1', 'catV2', 'catV3', 'catV4', 'catB1', 'catB2', 'catB3', 'catB4', 'catB5',",
+                  " 'catOtherPcs', 'catOtherV', 'catOtherB', 'catArchiveKey', 'catGenKey']",
+                  "    .forEach((k) => pm.collectionVariables.set(k, uuidv7()));",
+                  "// EAN-13 with a valid check digit: 12-digit body + check.",
+                  "function ean13(body) {",
+                  "    const sum = body.split('').reduce((s, d, i) => s + Number(d) * (i % 2 ? 3 : 1), 0);",
+                  "    return body + ((10 - (sum % 10)) % 10);",
+                  "}",
+                  "const n = String(Date.now()).slice(-6);",
+                  "pm.collectionVariables.set('catCode', 'KAOS' + n);",
+                  "['catEan1', 'catEan2', 'catEan3', 'catEan4'].forEach((k, i) => pm.collectionVariables.set(k, ean13('899' + n + '00' + i)));",
+                  "pm.collectionVariables.set('catBoxCode', 'BOX-' + n);"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201, name trimmed, code upper case', () => {",
+                  "    pm.response.to.have.status(201);",
+                  "    const c = pm.response.json();",
+                  "    pm.expect(c.id).to.eql(pm.collectionVariables.get('catCategoryId'));",
+                  "    pm.expect(c.name).to.eql('Pakaian');",
+                  "    pm.expect(c.code).to.eql('PKN');",
+                  "    pm.expect(c.parent_id).to.eql(null);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/categories/{{catCategoryId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "categories",
+                "{{catCategoryId}}"
+              ]
+            },
+            "description": "Spec 2.2 §8. Also generates the IDs, codes and EAN-13 barcodes of the catalog flow.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \" Pakaian \",\n  \"code\": \"pkn\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "36 Create brand (PUT)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201', () => {",
+                  "    pm.response.to.have.status(201);",
+                  "    pm.expect(pm.response.json().name).to.match(/^Sultan /);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/brands/{{catBrandId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "brands",
+                "{{catBrandId}}"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Sultan {{catCode}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "37 Tax classes (device token)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('the seeded Standard and Exempt classes', () => {",
+                  "    pm.response.to.have.status(200);",
+                  "    const names = pm.response.json().map((t) => t.name);",
+                  "    pm.expect(names).to.include.members(['Standard', 'Exempt']);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Register-Token",
+                "value": "{{deviceToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/tax-classes",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "tax-classes"
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "38 Create product with options, units and barcodes (PUT)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201: 4 variants with default SKUs, box factor in thousandths', () => {",
+                  "    pm.response.to.have.status(201);",
+                  "    const p = pm.response.json();",
+                  "    const code = pm.collectionVariables.get('catCode');",
+                  "    pm.expect(p.variants.map((v) => v.sku)).to.eql([`${code}-S-RED`, `${code}-S-BLUE`, `${code}-M-RED`, `${code}-M-BLUE`]);",
+                  "    pm.expect(p.units[1].factor_thousandths).to.eql(24000);",
+                  "    pm.expect(p.tags).to.eql(['promo']);",
+                  "    pm.expect(p.used).to.eql(false);",
+                  "    pm.expect(p.archived_at).to.eql(null);",
+                  "    pm.expect(p.barcodes).to.have.lengthOf(5);",
+                  "    pm.collectionVariables.set('catProductJson', JSON.stringify(p));",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/products/{{catProductId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "products",
+                "{{catProductId}}"
+              ]
+            },
+            "description": "Spec 2.2 §12: the whole product document in one PUT.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"code\": \"{{catCode}}\",\n  \"name\": \"Kaos Polos\",\n  \"type\": \"stock\",\n  \"category_id\": \"{{catCategoryId}}\",\n  \"brand_id\": \"{{catBrandId}}\",\n  \"tax_class_id\": \"00000000-0000-7000-8000-000000000101\",\n  \"tags\": [\"Promo\"],\n  \"options\": [\n    { \"id\": \"{{catSizeId}}\", \"name\": \"Size\", \"values\": [\n      { \"id\": \"{{catSizeS}}\", \"name\": \"Small\", \"code\": \"S\" },\n      { \"id\": \"{{catSizeM}}\", \"name\": \"Medium\", \"code\": \"M\" } ] },\n    { \"id\": \"{{catColorId}}\", \"name\": \"Color\", \"values\": [\n      { \"id\": \"{{catColorRed}}\", \"name\": \"Red\", \"code\": \"RED\" },\n      { \"id\": \"{{catColorBlue}}\", \"name\": \"Blue\", \"code\": \"BLUE\" } ] }\n  ],\n  \"units\": [\n    { \"id\": \"{{catPcsId}}\", \"name\": \"pcs\", \"kind\": \"integer\", \"factor_thousandths\": 1000 },\n    { \"id\": \"{{catBoxId}}\", \"name\": \"box\", \"kind\": \"integer\", \"factor_thousandths\": 24000 }\n  ],\n  \"base_unit_id\": \"{{catPcsId}}\",\n  \"default_purchase_unit_id\": \"{{catBoxId}}\",\n  \"variants\": [\n    { \"id\": \"{{catV1}}\", \"option_value_ids\": [\"{{catSizeS}}\", \"{{catColorRed}}\"] },\n    { \"id\": \"{{catV2}}\", \"option_value_ids\": [\"{{catSizeS}}\", \"{{catColorBlue}}\"] },\n    { \"id\": \"{{catV3}}\", \"option_value_ids\": [\"{{catSizeM}}\", \"{{catColorRed}}\"] },\n    { \"id\": \"{{catV4}}\", \"option_value_ids\": [\"{{catSizeM}}\", \"{{catColorBlue}}\"] }\n  ],\n  \"barcodes\": [\n    { \"id\": \"{{catB1}}\", \"variant_id\": \"{{catV1}}\", \"unit_id\": \"{{catPcsId}}\", \"code\": \"{{catEan1}}\" },\n    { \"id\": \"{{catB2}}\", \"variant_id\": \"{{catV2}}\", \"unit_id\": \"{{catPcsId}}\", \"code\": \"{{catEan2}}\" },\n    { \"id\": \"{{catB3}}\", \"variant_id\": \"{{catV3}}\", \"unit_id\": \"{{catPcsId}}\", \"code\": \"{{catEan3}}\" },\n    { \"id\": \"{{catB4}}\", \"variant_id\": \"{{catV4}}\", \"unit_id\": \"{{catPcsId}}\", \"code\": \"{{catEan4}}\" },\n    { \"id\": \"{{catB5}}\", \"variant_id\": \"{{catV1}}\", \"unit_id\": \"{{catBoxId}}\", \"code\": \"{{catBoxCode}}\" }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "39 Replay product PUT (idempotent)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 with the same body', () => {",
+                  "    pm.response.to.have.status(200);",
+                  "    pm.expect(pm.response.json()).to.eql(JSON.parse(pm.collectionVariables.get('catProductJson')));",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/products/{{catProductId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "products",
+                "{{catProductId}}"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"code\": \"{{catCode}}\",\n  \"name\": \"Kaos Polos\",\n  \"type\": \"stock\",\n  \"category_id\": \"{{catCategoryId}}\",\n  \"brand_id\": \"{{catBrandId}}\",\n  \"tax_class_id\": \"00000000-0000-7000-8000-000000000101\",\n  \"tags\": [\"Promo\"],\n  \"options\": [\n    { \"id\": \"{{catSizeId}}\", \"name\": \"Size\", \"values\": [\n      { \"id\": \"{{catSizeS}}\", \"name\": \"Small\", \"code\": \"S\" },\n      { \"id\": \"{{catSizeM}}\", \"name\": \"Medium\", \"code\": \"M\" } ] },\n    { \"id\": \"{{catColorId}}\", \"name\": \"Color\", \"values\": [\n      { \"id\": \"{{catColorRed}}\", \"name\": \"Red\", \"code\": \"RED\" },\n      { \"id\": \"{{catColorBlue}}\", \"name\": \"Blue\", \"code\": \"BLUE\" } ] }\n  ],\n  \"units\": [\n    { \"id\": \"{{catPcsId}}\", \"name\": \"pcs\", \"kind\": \"integer\", \"factor_thousandths\": 1000 },\n    { \"id\": \"{{catBoxId}}\", \"name\": \"box\", \"kind\": \"integer\", \"factor_thousandths\": 24000 }\n  ],\n  \"base_unit_id\": \"{{catPcsId}}\",\n  \"default_purchase_unit_id\": \"{{catBoxId}}\",\n  \"variants\": [\n    { \"id\": \"{{catV1}}\", \"option_value_ids\": [\"{{catSizeS}}\", \"{{catColorRed}}\"] },\n    { \"id\": \"{{catV2}}\", \"option_value_ids\": [\"{{catSizeS}}\", \"{{catColorBlue}}\"] },\n    { \"id\": \"{{catV3}}\", \"option_value_ids\": [\"{{catSizeM}}\", \"{{catColorRed}}\"] },\n    { \"id\": \"{{catV4}}\", \"option_value_ids\": [\"{{catSizeM}}\", \"{{catColorBlue}}\"] }\n  ],\n  \"barcodes\": [\n    { \"id\": \"{{catB1}}\", \"variant_id\": \"{{catV1}}\", \"unit_id\": \"{{catPcsId}}\", \"code\": \"{{catEan1}}\" },\n    { \"id\": \"{{catB2}}\", \"variant_id\": \"{{catV2}}\", \"unit_id\": \"{{catPcsId}}\", \"code\": \"{{catEan2}}\" },\n    { \"id\": \"{{catB3}}\", \"variant_id\": \"{{catV3}}\", \"unit_id\": \"{{catPcsId}}\", \"code\": \"{{catEan3}}\" },\n    { \"id\": \"{{catB4}}\", \"variant_id\": \"{{catV4}}\", \"unit_id\": \"{{catPcsId}}\", \"code\": \"{{catEan4}}\" },\n    { \"id\": \"{{catB5}}\", \"variant_id\": \"{{catV1}}\", \"unit_id\": \"{{catBoxId}}\", \"code\": \"{{catBoxCode}}\" }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "40 Get product (device token)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('the stored document', () => {",
+                  "    pm.response.to.have.status(200);",
+                  "    pm.expect(pm.response.json()).to.eql(JSON.parse(pm.collectionVariables.get('catProductJson')));",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Register-Token",
+                "value": "{{deviceToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/products/{{catProductId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "products",
+                "{{catProductId}}"
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "41 Duplicate barcode on another product",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('409 duplicate_barcode naming the conflicting variant', () => {",
+                  "    pm.response.to.have.status(409);",
+                  "    const e = pm.response.json();",
+                  "    pm.expect(e.code).to.eql('duplicate_barcode');",
+                  "    pm.expect(e.product_id).to.eql(pm.collectionVariables.get('catProductId'));",
+                  "    pm.expect(e.variant_id).to.eql(pm.collectionVariables.get('catV1'));",
+                  "    pm.expect(e.value).to.eql(pm.collectionVariables.get('catEan1'));",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/products/{{catOtherId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "products",
+                "{{catOtherId}}"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"code\": \"{{catCode}}X\",\n  \"name\": \"Kaos Lain\",\n  \"type\": \"stock\",\n  \"tax_class_id\": \"00000000-0000-7000-8000-000000000101\",\n  \"units\": [{ \"id\": \"{{catOtherPcs}}\", \"name\": \"pcs\", \"kind\": \"integer\", \"factor_thousandths\": 1000 }],\n  \"base_unit_id\": \"{{catOtherPcs}}\",\n  \"variants\": [{ \"id\": \"{{catOtherV}}\" }],\n  \"barcodes\": [{ \"id\": \"{{catOtherB}}\", \"variant_id\": \"{{catOtherV}}\", \"unit_id\": \"{{catOtherPcs}}\", \"code\": \"{{catEan1}}\" }]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "42 Invalid product lists every error",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('422 with an errors array', () => {",
+                  "    pm.response.to.have.status(422);",
+                  "    const e = pm.response.json();",
+                  "    const codes = e.errors.map((x) => x.code);",
+                  "    pm.expect(codes).to.include.members(['invalid_field', 'invalid_unit_factor']);",
+                  "    pm.expect(e.code).to.eql(codes[0]);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/products/{{catBadId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "products",
+                "{{catBadId}}"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"code\": \"{{catCode}}Y\",\n  \"name\": \" \",\n  \"type\": \"stock\",\n  \"tax_class_id\": \"00000000-0000-7000-8000-000000000101\",\n  \"units\": [{ \"id\": \"{{catOtherPcs}}\", \"name\": \"pcs\", \"kind\": \"integer\", \"factor_thousandths\": 1500 }],\n  \"base_unit_id\": \"{{catOtherPcs}}\",\n  \"variants\": [{ \"id\": \"{{catOtherV}}\" }]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "43 Lookup by barcode (device token)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('the variant + unit, at the register\\'s branch', () => {",
+                  "    pm.response.to.have.status(200);",
+                  "    const r = pm.response.json();",
+                  "    pm.expect(r.variant_id).to.eql(pm.collectionVariables.get('catV2'));",
+                  "    pm.expect(r.unit_id).to.eql(pm.collectionVariables.get('catPcsId'));",
+                  "    pm.expect(r.name).to.eql('Kaos Polos – Small / Blue');",
+                  "    pm.expect(r.source).to.eql('barcode');",
+                  "    pm.expect(r.qty_thousandths).to.eql(1000);",
+                  "    pm.expect(r.branch_id).to.eql(pm.collectionVariables.get('branchId'));",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Register-Token",
+                "value": "{{deviceToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/catalog/lookup?code={{catEan2}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "catalog",
+                "lookup"
+              ],
+              "query": [
+                {
+                  "key": "code",
+                  "value": "{{catEan2}}"
+                }
+              ]
+            },
+            "description": "Spec 2.2 §6. The branch comes from the device token."
+          }
+        },
+        {
+          "name": "44 Lookup the box barcode",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('the box unit', () => {",
+                  "    pm.response.to.have.status(200);",
+                  "    pm.expect(pm.response.json().unit_id).to.eql(pm.collectionVariables.get('catBoxId'));",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Register-Token",
+                "value": "{{deviceToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/catalog/lookup?code={{catBoxCode}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "catalog",
+                "lookup"
+              ],
+              "query": [
+                {
+                  "key": "code",
+                  "value": "{{catBoxCode}}"
+                }
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "45 Search (device token)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('every variant of the product', () => {",
+                  "    pm.response.to.have.status(200);",
+                  "    const mine = pm.response.json().items.filter((i) => i.product_id === pm.collectionVariables.get('catProductId'));",
+                  "    pm.expect(mine).to.have.lengthOf(4);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Register-Token",
+                "value": "{{deviceToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/catalog/search?q=kaos polos&limit=50",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "catalog",
+                "search"
+              ],
+              "query": [
+                {
+                  "key": "q",
+                  "value": "kaos polos"
+                },
+                {
+                  "key": "limit",
+                  "value": "50"
+                }
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "46 Block the product at the register's branch",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 with the stored set', () => {",
+                  "    pm.response.to.have.status(200);",
+                  "    pm.expect(pm.response.json().branch_ids).to.eql([pm.collectionVariables.get('branchId')]);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/products/{{catProductId}}/branch-blocks",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "products",
+                "{{catProductId}}",
+                "branch-blocks"
+              ]
+            },
+            "description": "Spec 2.2 §10.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"branch_ids\": [\"{{branchId}}\"]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "47 Get branch blocks",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('the blocked branch', () => {",
+                  "    pm.response.to.have.status(200);",
+                  "    pm.expect(pm.response.json().branch_ids).to.eql([pm.collectionVariables.get('branchId')]);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/products/{{catProductId}}/branch-blocks",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "products",
+                "{{catProductId}}",
+                "branch-blocks"
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "48 Lookup at the blocked branch",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('422 not_sold_here', () => {",
+                  "    pm.response.to.have.status(422);",
+                  "    pm.expect(pm.response.json().code).to.eql('not_sold_here');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Register-Token",
+                "value": "{{deviceToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/catalog/lookup?code={{catEan2}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "catalog",
+                "lookup"
+              ],
+              "query": [
+                {
+                  "key": "code",
+                  "value": "{{catEan2}}"
+                }
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "49 Search hides the blocked product",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('no variant of it', () => {",
+                  "    pm.response.to.have.status(200);",
+                  "    const mine = pm.response.json().items.filter((i) => i.product_id === pm.collectionVariables.get('catProductId'));",
+                  "    pm.expect(mine).to.have.lengthOf(0);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Register-Token",
+                "value": "{{deviceToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/catalog/search?q=kaos polos&limit=50",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "catalog",
+                "search"
+              ],
+              "query": [
+                {
+                  "key": "q",
+                  "value": "kaos polos"
+                },
+                {
+                  "key": "limit",
+                  "value": "50"
+                }
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "50 Unblock",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200, sold everywhere again', () => {",
+                  "    pm.response.to.have.status(200);",
+                  "    pm.expect(pm.response.json().branch_ids).to.eql([]);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/products/{{catProductId}}/branch-blocks",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "products",
+                "{{catProductId}}",
+                "branch-blocks"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"branch_ids\": []\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "51 Archive the product (Idempotency-Key)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200, archived with a time', () => {",
+                  "    pm.response.to.have.status(200);",
+                  "    const p = pm.response.json();",
+                  "    pm.expect(p.archived).to.eql(true);",
+                  "    pm.expect(p.archived_at).to.be.a('number');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{catArchiveKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/products/{{catProductId}}/archive",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "products",
+                "{{catProductId}}",
+                "archive"
+              ]
+            },
+            "description": "Spec 2.2 §9."
+          }
+        },
+        {
+          "name": "52 Lookup the archived product",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('422 archived', () => {",
+                  "    pm.response.to.have.status(422);",
+                  "    pm.expect(pm.response.json().code).to.eql('archived');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Register-Token",
+                "value": "{{deviceToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/catalog/lookup?code={{catEan2}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "catalog",
+                "lookup"
+              ],
+              "query": [
+                {
+                  "key": "code",
+                  "value": "{{catEan2}}"
+                }
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "53 List archived products (owner)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('the archived product is listed', () => {",
+                  "    pm.response.to.have.status(200);",
+                  "    const ids = pm.response.json().items.map((p) => p.id);",
+                  "    pm.expect(ids).to.include(pm.collectionVariables.get('catProductId'));",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/products?archived=true",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "products"
+              ],
+              "query": [
+                {
+                  "key": "archived",
+                  "value": "true"
+                }
+              ]
+            },
+            "description": "Needs catalog.view_archived for all branches."
+          }
+        },
+        {
+          "name": "54 Archived list needs catalog.view_archived",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('403 permission_denied for a device token', () => {",
+                  "    pm.response.to.have.status(403);",
+                  "    const e = pm.response.json();",
+                  "    pm.expect(e.code).to.eql('permission_denied');",
+                  "    pm.expect(e.permission).to.eql('catalog.view_archived');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Register-Token",
+                "value": "{{deviceToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/products?archived=true",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "products"
+              ],
+              "query": [
+                {
+                  "key": "archived",
+                  "value": "true"
+                }
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "55 Unarchive",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200, active again', () => {",
+                  "    pm.response.to.have.status(200);",
+                  "    pm.expect(pm.response.json().archived_at).to.eql(null);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/products/{{catProductId}}/unarchive",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "products",
+                "{{catProductId}}",
+                "unarchive"
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "56 Upload a product image (800x400 PNG)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201: resized to fit 512x512, stored as JPEG <= 256 KB', () => {",
+                  "    pm.response.to.have.status(201);",
+                  "    const i = pm.response.json();",
+                  "    pm.expect(i.mime).to.eql('image/jpeg');",
+                  "    pm.expect([i.width, i.height]).to.eql([512, 256]);",
+                  "    pm.expect(i.bytes).to.be.at.most(256 * 1024);",
+                  "    pm.collectionVariables.set('catImageEtag', i.etag);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "image/png"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/products/{{catProductId}}/image",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "products",
+                "{{catProductId}}",
+                "image"
+              ]
+            },
+            "description": "Spec 2.2 §8. Raw image bytes as the body.",
+            "body": {
+              "mode": "file",
+              "file": {
+                "src": "fixtures/product-800x400.png"
+              }
+            }
+          }
+        },
+        {
+          "name": "57 Download the image (device token)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('JPEG bytes with the ETag', () => {",
+                  "    pm.response.to.have.status(200);",
+                  "    pm.expect(pm.response.headers.get('Content-Type')).to.eql('image/jpeg');",
+                  "    pm.expect(pm.response.headers.get('ETag')).to.eql(pm.collectionVariables.get('catImageEtag'));",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Register-Token",
+                "value": "{{deviceToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/products/{{catProductId}}/image",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "products",
+                "{{catProductId}}",
+                "image"
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "58 Download again with If-None-Match",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('304 Not Modified', () => {",
+                  "    pm.response.to.have.status(304);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Register-Token",
+                "value": "{{deviceToken}}"
+              },
+              {
+                "key": "If-None-Match",
+                "value": "{{catImageEtag}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/products/{{catProductId}}/image",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "products",
+                "{{catProductId}}",
+                "image"
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "59 A non-image upload is rejected",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('422 invalid_image', () => {",
+                  "    pm.response.to.have.status(422);",
+                  "    pm.expect(pm.response.json().code).to.eql('invalid_image');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "text/plain"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/products/{{catProductId}}/image",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "products",
+                "{{catProductId}}",
+                "image"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "this is not an image"
+            }
+          }
+        },
+        {
+          "name": "60 Catalog settings",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('prefixes and the default scale layouts', () => {",
+                  "    pm.response.to.have.status(200);",
+                  "    const s = pm.response.json();",
+                  "    pm.expect(s.product_code_prefix).to.be.a('string');",
+                  "    pm.expect(s.internal_barcode_prefix).to.eql('29');",
+                  "    pm.expect(s.scale_layouts.map((l) => l.prefix)).to.include.members([21, 22]);",
+                  "    pm.collectionVariables.set('catSettingsJson', JSON.stringify(s));",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/settings/catalog",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "settings",
+                "catalog"
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "61 Overlapping scale prefix is rejected",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('422 scale_prefix_overlap', () => {",
+                  "    pm.response.to.have.status(422);",
+                  "    pm.expect(pm.response.json().code).to.eql('scale_prefix_overlap');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/settings/catalog",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "settings",
+                "catalog"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"product_code_prefix\": \"P\",\n  \"internal_barcode_prefix\": \"21\",\n  \"scale_layouts\": [{ \"prefix\": 21, \"plu_digits\": 5, \"value_digits\": 5, \"kind\": \"weight\" }],\n  \"unit_names\": []\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "62 Generate a product code (Idempotency-Key)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 with the next free code', () => {",
+                  "    pm.response.to.have.status(200);",
+                  "    const v = pm.response.json().value;",
+                  "    pm.expect(v).to.match(/^[A-Z0-9._-]+\\d{6}$/);",
+                  "    pm.collectionVariables.set('catGenerated', v);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{catGenKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/catalog/generate/product-code",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "catalog",
+                "generate",
+                "product-code"
+              ]
+            },
+            "description": "Spec 2.2 §7. Reserves the value."
+          }
+        },
+        {
+          "name": "63 Retried generate replays the first value",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('the same value, replayed', () => {",
+                  "    pm.response.to.have.status(200);",
+                  "    pm.expect(pm.response.json().value).to.eql(pm.collectionVariables.get('catGenerated'));",
+                  "    pm.expect(pm.response.headers.get('Idempotency-Replayed')).to.eql('true');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{catGenKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/catalog/generate/product-code",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "catalog",
+                "generate",
+                "product-code"
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "64 Generate an internal barcode",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('an EAN-13 with the internal prefix', () => {",
+                  "    pm.response.to.have.status(200);",
+                  "    pm.expect(pm.response.json().value).to.match(/^29\\d{11}$/);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/catalog/generate/barcode",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "catalog",
+                "generate",
+                "barcode"
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "65 A device token cannot write the catalog",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('401 invalid_session', () => {",
+                  "    pm.response.to.have.status(401);",
+                  "    pm.expect(pm.response.json().code).to.eql('invalid_session');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "X-Register-Token",
+                "value": "{{deviceToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/brands/{{catBrandId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "brands",
+                "{{catBrandId}}"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Nope\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "66 Delete the image",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('204', () => {",
+                  "    pm.response.to.have.status(204);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/products/{{catProductId}}/image",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "products",
+                "{{catProductId}}",
+                "image"
+              ]
+            },
+            "description": ""
+          }
+        }
+      ]
     }
   ],
   "variable": [
