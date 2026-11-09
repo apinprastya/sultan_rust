@@ -566,7 +566,7 @@ pub async fn current(
     caller: RegisterSession,
 ) -> Result<Json<SessionDto>, ApiError> {
     let access = Caller::load(&state.db, &caller.user).await?;
-    let mut tx = state.db.begin().await?;
+    let mut tx = state.db.begin_read().await?;
     let record = cashier_sessions::open_for_register(&mut tx, caller.register.register)
         .await?
         .ok_or_else(|| ApiError::not_found("open cashier session"))?;
@@ -592,7 +592,7 @@ pub async fn get(
 ) -> Result<Json<SessionDetailDto>, ApiError> {
     let id: CashierSessionId = parse_id(&id, "id")?;
     let access = Caller::load(&state.db, &caller).await?;
-    let mut tx = state.db.begin().await?;
+    let mut tx = state.db.begin_read().await?;
     let record = cashier_sessions::get(&mut tx, id)
         .await?
         .ok_or_else(|| ApiError::not_found("cashier session"))?;
@@ -670,7 +670,7 @@ pub async fn list(
         before_id: parse_opt_id(query.before_id.as_deref(), "before_id")?,
         limit,
     };
-    let mut tx = state.db.begin().await?;
+    let mut tx = state.db.begin_read().await?;
     let records = cashier_sessions::list(&mut tx, &filter).await?;
     let mut items = Vec::with_capacity(records.len());
     for record in &records {
@@ -838,11 +838,53 @@ mod tests {
         let conflict = Attempt::from(DbError::Conflict("index".into()));
         assert!(matches!(conflict, Attempt::Retry(_)));
         assert_eq!(answer(conflict), (409, "session_already_open".into()));
-        let busy = Attempt::Retry(DbError::Sqlx(sqlx::Error::PoolTimedOut));
+        let busy = Attempt::from(DbError::sqlite_busy());
+        assert!(matches!(busy, Attempt::Retry(_)));
         assert_eq!(answer(busy), (409, "conflict".into()));
         let fail = Attempt::from(DbError::Corrupt("x".into()));
         assert!(matches!(fail, Attempt::Fail(_)));
         assert_eq!(answer(fail), (500, "internal".into()));
+        let timed_out = Attempt::from(DbError::Sqlx(sqlx::Error::PoolTimedOut));
+        assert!(matches!(timed_out, Attempt::Fail(_)));
+    }
+
+    /// The open loop as `open` runs it: `SQLITE_BUSY` on every attempt is retried
+    /// [`retry::ATTEMPTS`] times and answered `409 conflict`; an error that is not a lost race
+    /// is answered after one attempt.
+    #[tokio::test]
+    async fn open_retries_busy_and_answers_other_errors_at_once() {
+        use std::cell::Cell;
+
+        async fn open_loop(calls: &Cell<u32>, error: fn() -> DbError) -> (u32, u16, String) {
+            calls.set(0);
+            let failure = retry::run(
+                "test open",
+                || async move {
+                    calls.set(calls.get() + 1);
+                    Result::<(), Attempt>::Err(error().into())
+                },
+                |attempt| matches!(attempt, Attempt::Retry(_)),
+            )
+            .await
+            .unwrap_err();
+            let (Failure::Final(attempt) | Failure::Exhausted(attempt)) = failure;
+            let error = attempt.into_answer();
+            (
+                calls.get(),
+                error.status().as_u16(),
+                error.code().to_owned(),
+            )
+        }
+
+        let calls = Cell::new(0);
+        assert_eq!(
+            open_loop(&calls, DbError::sqlite_busy).await,
+            (retry::ATTEMPTS, 409, "conflict".into())
+        );
+        assert_eq!(
+            open_loop(&calls, || DbError::Sqlx(sqlx::Error::PoolTimedOut)).await,
+            (1, 500, "internal".into())
+        );
     }
 
     fn body(counted: i64, counts: Option<Vec<(i64, u32)>>) -> CloseSession {

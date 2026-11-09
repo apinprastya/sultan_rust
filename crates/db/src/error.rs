@@ -56,6 +56,67 @@ impl DbError {
     }
 }
 
+/// `SQLITE_BUSY` (primary result code 5), as `sqlx`'s `SqliteError::code` reports it.
+#[cfg(any(test, feature = "test-util"))]
+const SQLITE_BUSY: &str = "5";
+
+#[cfg(any(test, feature = "test-util"))]
+impl DbError {
+    /// A `SQLite` "database is locked" error (`SQLITE_BUSY`) as a lost write-lock race produces
+    /// it: a database error whose code is `5`, which [`DbError::is_retryable`] accepts. For tests
+    /// of retry handling that cannot easily provoke a real lock race (`sqlx` does not let other
+    /// crates build its `SqliteError`). The `tests` module checks that a real busy error has the
+    /// same code.
+    #[must_use]
+    pub fn sqlite_busy() -> Self {
+        Self::Sqlx(sqlx::Error::Database(Box::new(SqliteBusy)))
+    }
+}
+
+/// The database error behind [`DbError::sqlite_busy`].
+#[cfg(any(test, feature = "test-util"))]
+#[derive(Debug)]
+struct SqliteBusy;
+
+#[cfg(any(test, feature = "test-util"))]
+impl std::fmt::Display for SqliteBusy {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // Like `SqliteError`'s own message.
+        let message = sqlx::error::DatabaseError::message(self);
+        write!(f, "(code: {SQLITE_BUSY}) {message}")
+    }
+}
+
+#[cfg(any(test, feature = "test-util"))]
+impl std::error::Error for SqliteBusy {}
+
+#[cfg(any(test, feature = "test-util"))]
+impl sqlx::error::DatabaseError for SqliteBusy {
+    fn message(&self) -> &'static str {
+        "database is locked"
+    }
+
+    fn code(&self) -> Option<std::borrow::Cow<'_, str>> {
+        Some(SQLITE_BUSY.into())
+    }
+
+    fn as_error(&self) -> &(dyn std::error::Error + Send + Sync + 'static) {
+        self
+    }
+
+    fn as_error_mut(&mut self) -> &mut (dyn std::error::Error + Send + Sync + 'static) {
+        self
+    }
+
+    fn into_error(self: Box<Self>) -> Box<dyn std::error::Error + Send + Sync + 'static> {
+        self
+    }
+
+    fn kind(&self) -> sqlx::error::ErrorKind {
+        sqlx::error::ErrorKind::Other
+    }
+}
+
 impl From<sqlx::Error> for DbError {
     fn from(error: sqlx::Error) -> Self {
         match &error {
@@ -92,5 +153,65 @@ mod tests {
         );
         let other: DbError = sqlx::Error::RowNotFound.into();
         assert!(matches!(other, DbError::Sqlx(sqlx::Error::RowNotFound)));
+    }
+
+    #[test]
+    fn retryable_errors() {
+        assert!(DbError::Conflict("x".into()).is_retryable());
+        let busy = DbError::sqlite_busy();
+        assert!(busy.is_retryable());
+        assert_eq!(
+            busy.to_string(),
+            "error returned from database: (code: 5) database is locked"
+        );
+        let DbError::Sqlx(sqlx::Error::Database(db)) = &busy else {
+            panic!("{busy:?}");
+        };
+        assert_eq!(db.kind(), sqlx::error::ErrorKind::Other);
+        assert!(std::error::Error::source(db.as_error()).is_none());
+        for other in [
+            DbError::Sqlx(sqlx::Error::PoolTimedOut),
+            DbError::NotFound("x"),
+            DbError::Corrupt("x".into()),
+        ] {
+            assert!(!other.is_retryable(), "{other:?}");
+        }
+    }
+
+    /// [`DbError::sqlite_busy`] looks like what `SQLite` really answers when the write lock is
+    /// taken and the busy timeout is zero.
+    #[tokio::test]
+    async fn sqlite_busy_matches_a_real_lock_race() {
+        use sqlx::ConnectOptions;
+        use sqlx::sqlite::SqliteConnectOptions;
+        use std::str::FromStr;
+
+        let dir = std::env::temp_dir().join(format!("sultan-db-busy-{}", uuid::Uuid::now_v7()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let url = format!("sqlite://{}", dir.join("t.db").display());
+        let options = SqliteConnectOptions::from_str(&url)
+            .unwrap()
+            .create_if_missing(true)
+            .busy_timeout(std::time::Duration::ZERO);
+        let mut holder = options.connect().await.unwrap();
+        let mut loser = options.connect().await.unwrap();
+        sqlx::query("BEGIN IMMEDIATE")
+            .execute(&mut holder)
+            .await
+            .unwrap();
+        let real: DbError = sqlx::query("BEGIN IMMEDIATE")
+            .execute(&mut loser)
+            .await
+            .unwrap_err()
+            .into();
+        assert!(real.is_retryable(), "{real:?}");
+        let code = |e: &DbError| match e {
+            DbError::Sqlx(sqlx::Error::Database(db)) => db.code().map(std::borrow::Cow::into_owned),
+            _ => None,
+        };
+        assert_eq!(code(&real), code(&DbError::sqlite_busy()));
+        assert_eq!(real.to_string(), DbError::sqlite_busy().to_string());
+        drop((holder, loser));
+        std::fs::remove_dir_all(dir).unwrap();
     }
 }

@@ -16,16 +16,20 @@
 //! `401` problem and no upgrade.
 //!
 //! # Messages
-//! Text frames `{"type": "<event>", "data": {...}}`:
+//! Text frames `{"type": "<event>", "data": {...}}`. Each type with its data and who receives
+//! it:
 //!
-//! | Type | Data | Who receives it |
-//! |---|---|---|
-//! | `session.revoked` | `user_id`, `reason` (`logout` / `user_deactivated`), `this_session` | sockets of that user; a socket whose own session was revoked is closed after the message |
-//! | `cashier_session.opened` | `session_id`, `register_id`, `branch_id`, `user_id` | callers who may see the branch (spec 2.1 §3) |
-//! | `cashier_session.closed` | same, plus `forced` | callers who may see the branch |
-//! | `user.changed` | `user_id` | the user, and callers who may see a branch where the user has (or had) a role |
-//! | `catalog.changed` | `scope` (`product` / `category` / `brand` / `settings`), plus `product_id`, `category_id` or `brand_id` | every socket: the catalog is company-wide (spec 2.2 §11), so registers drop cached lookups |
-//! | `events.lagged` | `missed` | a socket that fell behind; refetch everything |
+//! - `session.revoked`: `user_id`, `reason` (`logout` / `user_deactivated`), `this_session`.
+//!   Sockets of that user; a socket whose own session was revoked is closed after the message.
+//! - `cashier_session.opened`: `session_id`, `register_id`, `branch_id`, `user_id`. Callers who
+//!   may see the branch (spec 2.1 §3).
+//! - `cashier_session.closed`: the same, plus `forced`. Callers who may see the branch.
+//! - `user.changed`: `user_id`. The user, and callers who may see a branch where the user has
+//!   (or had) a role.
+//! - `catalog.changed`: `scope` (`product` / `category` / `brand` / `settings`), plus
+//!   `product_id`, `category_id` or `brand_id`. Every socket: the catalog is company-wide
+//!   (spec 2.2 §11), so registers drop cached lookups.
+//! - `events.lagged`: `missed`. A socket that fell behind; refetch everything.
 //!
 //! Before each delivery the socket's own login session is checked again; once it is revoked,
 //! expired or its user deactivated, the socket is closed. Branch visibility is evaluated per

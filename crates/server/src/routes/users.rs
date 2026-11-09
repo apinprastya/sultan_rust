@@ -197,7 +197,7 @@ pub async fn get(
         .await?
         .require(Permission::UserManage)?;
     let id: UserId = parse_id(&id, "id")?;
-    let mut tx = state.db.begin().await?;
+    let mut tx = state.db.begin_read().await?;
     let user = users::get_user(&mut tx, id)
         .await?
         .ok_or_else(|| ApiError::not_found("user"))?;

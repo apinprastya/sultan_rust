@@ -27,6 +27,8 @@ utoipa.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]
+# Tests build a retryable `SQLITE_BUSY` error (`DbError::sqlite_busy`).
+sultan-db = { path = "../db", features = ["test-util"] }
 http-body-util.workspace = true
 sqlx.workspace = true
 # `examples/dev_server.rs` listens on a TCP port.

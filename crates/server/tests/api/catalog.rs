@@ -23,8 +23,8 @@ api_tests!(
     racing_catalog_writes,
 );
 
-/// §14 item 15 + 20: create → replay → no duplicates; the update diff is applied atomically, with
-/// one audit row and one outbox row per write.
+/// §14 item 15 + 20: create → replay → no duplicates; the update diff is applied atomically,
+/// with one audit row and one outbox row per write.
 async fn product_create_replay_update(h: &Harness) {
     let owner = h.owner_token().await;
     let doc = kaos("KAOS01", "899100");

@@ -10,6 +10,10 @@ license.workspace = true
 [lib]
 name = "sultan_db"
 
+[features]
+# `DbError::sqlite_busy` for other crates' tests (a retryable error without a real lock race).
+test-util = []
+
 [dependencies]
 serde_json.workspace = true
 sqlx.workspace = true

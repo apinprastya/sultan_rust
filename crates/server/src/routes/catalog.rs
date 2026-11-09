@@ -21,8 +21,8 @@
 //! catalog is company-wide, so a grant at one branch is not enough; `403 permission_denied`).
 //! The repository writes the change, its audit row and its outbox row in one transaction; a
 //! transaction that loses a race is run again with a short backoff ([`retrying`], at most
-//! [`crate::retry::ATTEMPTS`] times; `409 conflict` when every attempt lost). Every write that changed something publishes `catalog.changed` to
-//! every event socket.
+//! [`crate::retry::ATTEMPTS`] times; `409 conflict` when every attempt lost). Every write that
+//! changed something publishes `catalog.changed` to every event socket.
 
 use axum::Json;
 use axum::extract::State;
@@ -650,11 +650,32 @@ mod tests {
         assert_eq!(err.detail(), "race");
     }
 
-    #[test]
-    fn a_busy_database_to_the_end_is_a_conflict() {
-        let busy = CatalogDbError::Db(DbError::Sqlx(sqlx::Error::PoolTimedOut));
-        let err = gave_up(busy);
+    #[tokio::test]
+    async fn a_busy_database_to_the_end_is_a_conflict() {
+        // `SQLITE_BUSY` on every attempt: retried all the way, then `409 conflict`.
+        let calls = Cell::new(0);
+        let calls = &calls;
+        let err = retrying(|| async move {
+            calls.set(calls.get() + 1);
+            CatalogResult::<()>::Err(CatalogDbError::Db(DbError::sqlite_busy()))
+        })
+        .await
+        .unwrap_err();
+        assert_eq!(calls.get(), retry::ATTEMPTS);
         assert_eq!((err.status().as_u16(), err.code()), (409, "conflict"));
+
+        // A database error that is not a lost race (here a pool timeout) is not retried: it
+        // is the answer after one attempt.
+        calls.set(0);
+        let err = retrying(|| async move {
+            calls.set(calls.get() + 1);
+            CatalogResult::<()>::Err(CatalogDbError::Db(DbError::Sqlx(sqlx::Error::PoolTimedOut)))
+        })
+        .await
+        .unwrap_err();
+        assert_eq!(calls.get(), 1);
+        assert_eq!(err.status().as_u16(), 500);
+
         let err = gave_up(CatalogDbError::Db(DbError::Conflict("dup".into())));
         assert_eq!((err.status().as_u16(), err.code()), (409, "conflict"));
     }

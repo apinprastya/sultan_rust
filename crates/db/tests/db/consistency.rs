@@ -17,7 +17,22 @@ db_tests!(
     idempotency_keys_are_case_sensitive,
     audit_filters_match_exactly,
     trailing_spaces_are_significant,
+    read_transactions_read_one_snapshot,
 );
+
+/// `Db::begin_read` reads like any transaction; on `MySQL` it refuses writes (`READ ONLY`).
+async fn read_transactions_read_one_snapshot(db: &Db) {
+    let o = org(db).await;
+    let mut tx = db.begin_read().await.unwrap();
+    let ani = users::find_by_username(&mut tx, "ani").await.unwrap();
+    assert_eq!(ani.map(|u| u.username).as_deref(), Some("ani"));
+    let write = org::save_branch(&mut tx, &branch(o.company.id, "RO01"), t(1)).await;
+    match db {
+        Db::MySql(_) => assert!(write.is_err(), "a read-only transaction wrote"),
+        Db::Sqlite(_) => assert!(write.is_ok(), "{write:?}"),
+    }
+    tx.rollback().await.unwrap();
+}
 
 async fn usernames_are_case_and_accent_sensitive(db: &Db) {
     org(db).await; // creates `ani` and `budi`

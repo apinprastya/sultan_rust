@@ -1,11 +1,20 @@
 //! Rerunning a write transaction that lost a race (a unique key or counter taken by a concurrent
-//! transaction, a `MySQL` deadlock, a busy `SQLite` database: `sultan_db::DbError::is_retryable`).
+//! transaction, a `MySQL` deadlock or lock wait timeout, a busy `SQLite` database:
+//! `sultan_db::DbError::is_retryable`).
 //!
-//! [`run`] tries the whole operation at most [`ATTEMPTS`] times. Between attempts it sleeps a
-//! short, growing, jittered delay ([`backoff`]: up to 5, 10, 20, 40, then 50 ms), so racing
-//! writers spread out instead of colliding again at once. When every attempt lost a race the
-//! caller gets [`Failure::Exhausted`] and answers `409` ([`conflict`]), never `500`: the request
-//! itself was fine and may simply be sent again.
+//! [`run`] tries the whole operation at most [`ATTEMPTS`] (5) times, so there are at most 4
+//! waits. Before retry `n` (after attempt `n` lost) it sleeps a jittered [`backoff`] in
+//! `[ceiling / 2, ceiling]`, with ceilings of 5, 10, 20 and 40 ms for the 4 retries (75 ms of
+//! sleep at most in total), so racing writers spread out instead of colliding again at once.
+//!
+//! Worst case: on `SQLite` each attempt can also wait up to the 5 s busy timeout for the write
+//! lock (`BEGIN IMMEDIATE`, see `sultan_db::Db::begin`), so a request gives up after about
+//! 5 × 5 s + 75 ms ≈ 25 s. On `MySQL` an attempt is bounded by `innodb_lock_wait_timeout`.
+//!
+//! When every attempt lost a race the caller gets [`Failure::Exhausted`] and answers `409`
+//! ([`conflict`] or a more specific conflict), never `500`: the request itself was fine and may
+//! simply be sent again. A non-retryable error ends the loop after that attempt
+//! ([`Failure::Final`]).
 
 use std::fmt;
 use std::future::Future;
@@ -16,11 +25,11 @@ use uuid::Uuid;
 
 use crate::error::ApiError;
 
-/// How often a write transaction runs when it keeps losing races.
-pub const ATTEMPTS: u32 = 8;
+/// How often a write transaction runs when it keeps losing races (spec 2.2 §12: at most 5).
+pub const ATTEMPTS: u32 = 5;
 /// Upper bound of the delay after the first lost race.
 const BASE_DELAY: Duration = Duration::from_millis(5);
-/// Largest delay between two attempts.
+/// Largest delay between two attempts (only reached if [`ATTEMPTS`] grows beyond 5).
 const MAX_DELAY: Duration = Duration::from_millis(50);
 
 /// Why [`run`] gave up.
@@ -129,6 +138,21 @@ mod tests {
         // The jitter really varies.
         let delays: std::collections::HashSet<_> = (0..32).map(|_| backoff(3, entropy())).collect();
         assert!(delays.len() > 1);
+    }
+
+    /// The module docs promise 4 waits of at most 5, 10, 20 and 40 ms (75 ms in total).
+    #[test]
+    fn retry_waits_match_the_documented_sequence() {
+        assert_eq!(ATTEMPTS, 5);
+        let mut total = Duration::ZERO;
+        for (attempt, ceiling_ms) in (1..ATTEMPTS).zip([5_u64, 10, 20, 40]) {
+            // `backoff` lies in `[ceiling / 2, ceiling]`; this entropy picks the ceiling itself.
+            let longest = backoff(attempt, ceiling_ms * 500);
+            assert_eq!(longest, Duration::from_millis(ceiling_ms), "{attempt}");
+            assert!(backoff(attempt, u64::MAX) <= longest);
+            total += longest;
+        }
+        assert_eq!(total, Duration::from_millis(75));
     }
 
     #[tokio::test]
