@@ -1,12 +1,14 @@
 //! Sultan POS register UI (plan Phase 8; spec 2.1 §4–§6): lock screen with user tiles and PIN
-//! pad, opening a cashier session, the session home, blind close with its report, and the
-//! manager-override dialog. Built with Slint (`fluent-dark` style, the `sultan-spike` theme
+//! pad, opening a cashier session, the session home with the barcode lookup (spec 2.2 §6, phase
+//! C5), blind close with its report, and the manager-override dialog. Built with Slint (`fluent-dark` style, the `sultan-spike` theme
 //! tokens) and keyboard-first, as proven by the spike.
 //!
 //! - [`controller`]: the screen flow as a plain state machine (all decisions, unit-tested).
 //! - [`app`]: the glue to the Slint window; depends on [`sultan_client::Service`] only.
 //! - [`amount`], [`count`], [`input`]: Rupiah formatting, the denomination count, keys, PIN and
 //!   time texts.
+//! - [`scan`]: the session home's barcode field (phase C5): typed code, waiting lookup, shown
+//!   item.
 //! - [`setup`] and [`setup_app`]: the first-run setup wizard (single app, HQ server, branch
 //!   server (not available yet), terminal), a separate window with its own controller.
 //! - [`backoffice`] and [`backoffice_app`]: the back office (phase C4, spec 2.2): login,
@@ -24,6 +26,7 @@ pub mod backoffice_app;
 pub mod controller;
 pub mod count;
 pub mod input;
+pub mod scan;
 pub mod setup;
 pub mod setup_app;
 

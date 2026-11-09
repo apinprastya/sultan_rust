@@ -11,6 +11,9 @@
 //! retry). [`FakeService::fail_next`] injects one error; [`FakeService::emit`] pushes an event to
 //! the sink given to [`Service::watch_events`].
 //!
+//! [`Service::lookup`] resolves codes against the same in-memory catalog as the back office
+//! (seed it with [`FakeService::seed_product`]), at the fake register's branch [`BRANCH_ID`].
+//!
 //! The fake also implements [`crate::BackOffice`] with an in-memory catalog ([`backoffice`]):
 //! password users `owner` / `owner-pass-1` (all permissions) and `budi` / `budi-pass-1`
 //! (read-only in the catalog), the core catalog rules and the server's error shapes.
@@ -664,6 +667,14 @@ impl Service for FakeService {
         }
         s.sink = Some(sink);
         ready(Ok(()))
+    }
+
+    fn lookup(&self, token: &str, code: &str) -> crate::BoxFuture<crate::Lookup> {
+        let (s, failure) = self.begin("lookup", code.to_owned());
+        if let Some(e) = failure {
+            return ready(Err(e));
+        }
+        ready(s.lookup(token, code))
     }
 }
 

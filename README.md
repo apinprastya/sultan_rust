@@ -59,7 +59,7 @@ The register window is keyboard-first; every key is also a button on screen:
 |---|---|
 | Lock | ←/→/↑/↓ or Tab pick a user · a digit or Enter opens the PIN pad · digits, Backspace, Enter log in · Esc closes the pad · F5 reloads the users |
 | Open session | digits / Backspace type the opening cash (shown as Rupiah) · Enter opens · Esc locks. If another cashier's session is open here: Esc back to lock |
-| Session home | F2 test a manager override · F10 close the session · F12 lock (the session stays open) |
+| Session home | type or scan into the barcode field (digits, letters, `-`, `.`; Backspace) · Enter looks the code up · Esc clears the field and the item · F2 test a manager override · F10 close the session · F12 lock (the session stays open) |
 | Blind close | ↑/↓ or Tab move between the total and the denominations · digits / Backspace · Enter, then Enter again to confirm · Esc back |
 | Close report | Enter: done (logs out to the lock screen) |
 | Manager override | ↑/↓ pick the manager · digits / Backspace PIN · Enter approve (the action is retried with the token) · Esc cancel |
@@ -122,8 +122,10 @@ Every setting is taken from, in order: **command-line flag > environment variabl
 - `--role branch` answers master-data writes with `403 read_only_replica`, but HQ↔branch sync is
   not implemented yet: a branch node serves its local database only.
 - The server speaks plain HTTP (no TLS yet); keep it on the shop LAN.
-- The register window has no selling yet (spec 2.6): the session home is a placeholder with
-  the override test. It needs a display (Slint picks Wayland, X11 or another backend; set
+- The register window has no selling yet (spec 2.6): the session home looks up a scanned or
+  typed barcode, scale label, SKU or PLU (`GET /catalog/lookup`) and shows the item, its unit,
+  quantity and how it matched, or why it cannot be sold here; there is no cart and no price yet
+  (spec 2.3), except the amount printed on a price scale label. The override test is still there. It needs a display (Slint picks Wayland, X11 or another backend; set
   `SLINT_BACKEND`, e.g. `winit-software`, to force one).
 - The register does not reconnect the events WebSocket after a network drop; it reconnects at
   the next login. The back office behaves the same.

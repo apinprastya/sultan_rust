@@ -792,7 +792,7 @@ msgid "Short name"
 msgstr "Nama singkat"
 
 msgid "Quantities"
-msgstr "Jumlah"
+msgstr "Jenis"
 
 msgid "Whole pieces (pcs, box)"
 msgstr "Bilangan bulat (pcs, box)"
@@ -1087,3 +1087,73 @@ msgstr "Semua merek"
 
 msgid "(Top level)"
 msgstr "(Tingkat utama)"
+
+# Register barcode lookup (phase C5).
+msgid "No item has the code {}."
+msgstr "Tidak ada barang dengan kode {}."
+
+msgid "{} is not sold at this branch."
+msgstr "{} tidak dijual di cabang ini."
+
+msgid "{} is archived and can no longer be sold."
+msgstr "{} sudah diarsipkan dan tidak bisa dijual lagi."
+
+msgid "{} is not for sale."
+msgstr "{} tidak untuk dijual."
+
+msgid "The scale label {} shows 0. Weigh the item again."
+msgstr "Label timbangan {} menunjukkan 0. Timbang ulang barangnya."
+
+msgid "Look up"
+msgstr "Cari"
+
+msgid "Clear"
+msgstr "Hapus"
+
+msgid "Barcode (UPC/EAN form)"
+msgstr "Barcode (bentuk UPC/EAN)"
+
+msgid "Scale label (weight)"
+msgstr "Label timbangan (berat)"
+
+msgid "Scale label (price)"
+msgstr "Label timbangan (harga)"
+
+msgid "Barcode, SKU or PLU"
+msgstr "Barcode, SKU, atau PLU"
+
+msgid "BARCODE · SKU · PLU"
+msgstr "BARCODE · SKU · PLU"
+
+msgid "Scan or type a code, then press Enter"
+msgstr "Pindai atau ketik kode, lalu tekan Enter"
+
+msgid "Looking up {}…"
+msgstr "Mencari {}…"
+
+msgid "Scan an item to see it here."
+msgstr "Pindai barang untuk menampilkannya di sini."
+
+msgid "Check the item or the label and scan again. Esc clears."
+msgstr "Periksa barang atau labelnya, lalu pindai lagi. Esc untuk menghapus."
+
+msgid "Open price"
+msgstr "Harga bebas"
+
+msgid "Needs a note"
+msgstr "Perlu catatan"
+
+msgid "Quantity"
+msgstr "Jumlah"
+
+msgid "Found by"
+msgstr "Ditemukan lewat"
+
+msgid "Amount on the label"
+msgstr "Nominal di label"
+
+msgid "Price"
+msgstr "Harga"
+
+msgid "Prices and the cart arrive in a later version."
+msgstr "Harga dan keranjang belanja hadir di versi berikutnya."

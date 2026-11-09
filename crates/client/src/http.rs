@@ -27,7 +27,7 @@ use tokio_tungstenite::tungstenite::http::HeaderValue;
 
 use crate::catalog::{
     Brand, BrandBody, CatalogSettings, Category, CategoryBody, CategoryNode, Generate, ImageInfo,
-    Me, Product, ProductPage, ProductQuery, SearchHit, TaxClass,
+    Lookup, Me, Product, ProductPage, ProductQuery, SearchHit, TaxClass,
 };
 use crate::{
     BackOffice, Branch, CashierSession, ClientError, CloseReport, CloseRequest, EventSink,
@@ -300,6 +300,13 @@ impl Service for HttpService {
             }
             Ok(())
         })
+    }
+
+    fn lookup(&self, token: &str, code: &str) -> crate::BoxFuture<Lookup> {
+        let request = self
+            .request(Method::GET, "/catalog/lookup", Some(token))
+            .query(&[("code", code)]);
+        Box::pin(send(request))
     }
 }
 

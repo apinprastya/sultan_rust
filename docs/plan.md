@@ -203,6 +203,10 @@ audit log viewer · light/dark theme · i18n ID/EN.
   **per product** (shared by its variants) · P1 types: stock, weighed + scale barcodes, service,
   bundle/kit · **max 3 option attributes** per product · **per-branch assortment** (HQ can block a
   product for a branch) · product codes and SKUs are stored upper case.
+- **2026-11-09 UI only, except HQ:** shop users are not familiar with the command line. Only the
+  **HQ server** may need it (`sultan serve`, scripts). On a single app, terminal or branch machine
+  everything is reachable from a window: choosing register or back office, setup, pairing,
+  language. CLI subcommands stay for scripts but are never the only way.
 
 ## 4. Release phases
 | Phase | Content |

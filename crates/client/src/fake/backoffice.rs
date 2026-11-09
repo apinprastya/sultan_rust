@@ -8,11 +8,15 @@
 //!   empty SKUs become `<code>-<value codes>`, a replay of the same body changes nothing.
 //! - Writes need `catalog.manage` for all branches (`403 permission_denied`); archived products
 //!   need `catalog.view_archived`. Every write that changed something emits `catalog.changed`.
-//! - Categories (core tree rules), brands, tax classes, settings, generators (with idempotency
-//!   keys), branch blocks, images (PNG/JPEG/WebP magic bytes only, stored as sent) and search.
+//! - Categories (core tree rules), brands, tax classes, settings (scale layouts seeded like the
+//!   server: 21 weight, 22 price), generators (with idempotency keys), branch blocks, images
+//!   (PNG/JPEG/WebP magic bytes only, stored as sent) and search.
+//! - The register's lookup ([`crate::Service::lookup`], phase C5) in `lookup`.
 //!
 //! Users: `owner` / `owner-pass-1` (all-branches Owner) and `budi` / `budi-pass-1` (Manager at
 //! one branch: `catalog.manage` there only, so the catalog is read-only for him).
+
+mod lookup;
 
 use std::collections::{BTreeMap, HashMap};
 
@@ -123,7 +127,20 @@ impl Default for Catalog {
             settings: CatalogSettings {
                 product_code_prefix: "P".to_owned(),
                 internal_barcode_prefix: "29".to_owned(),
-                scale_layouts: Vec::new(),
+                // The server's seed: 21 PPPPP WWWWW C (weight), 22 PPPPP $$$$$ C (price).
+                scale_layouts: ScaleLayout::default_layouts()
+                    .into_iter()
+                    .map(|l| crate::catalog::ScaleLayout {
+                        prefix: l.prefix,
+                        plu_digits: l.plu_digits,
+                        value_digits: l.value_digits,
+                        kind: match l.kind {
+                            sultan_core::catalog::ScaleValueKind::Weight => "weight",
+                            sultan_core::catalog::ScaleValueKind::Price => "price",
+                        }
+                        .to_owned(),
+                    })
+                    .collect(),
                 unit_names: ["pcs", "box", "pack", "renteng", "kg", "gram", "liter"]
                     .map(str::to_owned)
                     .to_vec(),

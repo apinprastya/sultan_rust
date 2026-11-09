@@ -2158,6 +2158,11 @@
                   "    pm.expect(r.name).to.eql('Kaos Polos – Small / Blue');",
                   "    pm.expect(r.source).to.eql('barcode');",
                   "    pm.expect(r.qty_thousandths).to.eql(1000);",
+                  "    pm.expect(r.product_name).to.eql('Kaos Polos');",
+                  "    pm.expect(r.variant_label).to.eql('Small / Blue');",
+                  "    pm.expect(r.unit_name).to.eql('pcs');",
+                  "    pm.expect(r.matched_code).to.eql(pm.collectionVariables.get('catEan2'));",
+                  "    pm.expect(r.plu).to.eql(null);",
                   "    pm.expect(r.branch_id).to.eql(pm.collectionVariables.get('branchId'));",
                   "});"
                 ]
@@ -2202,6 +2207,7 @@
                   "pm.test('the box unit', () => {",
                   "    pm.response.to.have.status(200);",
                   "    pm.expect(pm.response.json().unit_id).to.eql(pm.collectionVariables.get('catBoxId'));",
+                  "    pm.expect(pm.response.json().unit_name).to.eql('box');",
                   "});"
                 ]
               }

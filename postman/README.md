@@ -28,7 +28,8 @@ tax classes (device token) → `PUT` a product with Size × Color options, units
 EAN-13 barcodes (default SKUs `<code>-S-RED`…, `factor_thousandths`) → replay (`200`, same body) →
 read it with the device token → duplicate barcode on another product (`409 duplicate_barcode` with
 the conflicting `product_id` / `variant_id`) → an invalid product lists every error (`422`,
-`errors`) → lookup by barcode with the device token (branch from the token) → lookup the box
+`errors`) → lookup by barcode with the device token (branch from the token; with the register's display
+fields `product_name`, `variant_label`, `unit_name`, `matched_code`, `plu`, phase C5) → lookup the box
 barcode → search → block the product at the register's branch → read the blocks → lookup
 `not_sold_here` → search hides it → unblock → archive (`Idempotency-Key`) → lookup `archived` →
 the owner lists archived products → a device token may not (`403`, `catalog.view_archived`) →

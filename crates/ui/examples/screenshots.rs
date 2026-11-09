@@ -1,4 +1,5 @@
-//! Renders every register screen and every back-office screen (phase C4, files `bo-*`) to PNG
+//! Renders every register screen (with the barcode lookup of phase C5, files `5a`–`5c`) and
+//! every back-office screen (phase C4, files `bo-*`) to PNG
 //! with Slint's software renderer (no display needed), driven by keys against the fake service,
 //! like the headless tests.
 //!
@@ -16,7 +17,7 @@ use slint::platform::software_renderer::{
 };
 use slint::platform::{Key, Platform, WindowAdapter, WindowEvent};
 use slint::{ComponentHandle, PhysicalSize, PlatformError, SharedString};
-use sultan_client::fake::{FakeService, STANDARD_TAX_CLASS};
+use sultan_client::fake::{BRANCH_ID, FakeService, STANDARD_TAX_CLASS};
 use sultan_client::{BackOffice, CategoryBody, Product};
 use sultan_core::catalog::gtin_check_digit;
 use sultan_ui::{
@@ -97,6 +98,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .build()?;
     let fake = Arc::new(FakeService::default());
     fake.set_cash_sales(1_250_000);
+    // The register looks codes up in the same demo catalog; Aqua 600 ml is not sold here.
+    let (aqua600, _) = demo_catalog(&fake);
+    let owner = runtime
+        .block_on(fake.password_login("owner", "owner-pass-1"))?
+        .token;
+    runtime.block_on(fake.put_branch_blocks(&owner, &aqua600, &[BRANCH_ID.to_owned()]))?;
     let mut options = Options::new("R1 · Kasir 1");
     options.language = Some(language.clone());
     let app = build_app(
@@ -127,6 +134,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     shot("4-open-session")?;
     press(&app, Key::Return);
     shot("5-home")?;
+    // The barcode field (phase C5): a variant's barcode, a weight scale label, a blocked item.
+    digits(&app, &ean13("8992000100000"));
+    press(&app, Key::Return);
+    shot("5a-scan-item")?;
+    digits(&app, &ean13("210012301250"));
+    press(&app, Key::Return);
+    shot("5b-scan-weight")?;
+    digits(&app, &ean13("899100000001"));
+    press(&app, Key::Return);
+    shot("5c-scan-not-sold-here")?;
+    press(&app, Key::Escape);
     press(&app, Key::F2);
     press(&app, Key::DownArrow);
     digits(&app, "5555");
