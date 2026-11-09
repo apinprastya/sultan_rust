@@ -8,6 +8,7 @@
 //!   device token of *its* register, so a revoked device is `401` even with a valid session.
 //! - [`RegisterSession`]: a PIN session at the register that sends the request (cashier sessions,
 //!   overrides; spec 2.1 §5, §6). A back-office session is `403 register_session_required`.
+//! - [`CatalogReader`]: catalog reads (spec 2.2 §11): a user session **or** a device token alone.
 //! - [`RequireHq`]: refuses master-data writes on a branch node (`403 read_only_replica`).
 //! - [`ApiJson`] / [`ApiQuery`]: `axum::Json` / `axum::extract::Query` whose rejections are
 //!   problem+json.
@@ -174,6 +175,57 @@ impl FromRequestParts<AppState> for RegisterSession {
             },
             user,
         })
+    }
+}
+
+/// Who reads the catalog (spec 2.2 §11, §12): any user session, or a paired register's device
+/// token without a session. A bearer token, when sent, must be valid (`401 invalid_session`);
+/// without one, `X-Register-Token` must be (`401 invalid_device_token`). Neither is
+/// `401 invalid_session`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CatalogReader {
+    /// A register with its device token only.
+    Device(RegisterCtx),
+    /// A user session (at a register or in back office); boxed, it is much larger.
+    User(Box<UserSession>),
+}
+
+impl CatalogReader {
+    /// The branch of the register behind the request (from the device token), if any: the
+    /// branch whose assortment applies (spec 2.2 §10).
+    #[must_use]
+    pub fn register_branch(&self) -> Option<BranchId> {
+        match self {
+            Self::Device(ctx) => Some(ctx.branch),
+            Self::User(user) => user.session.register.map(|_| user.session.branch),
+        }
+    }
+
+    /// The user session, if any.
+    #[must_use]
+    pub fn user(&self) -> Option<&UserSession> {
+        match self {
+            Self::Device(_) => None,
+            Self::User(user) => Some(user.as_ref()),
+        }
+    }
+}
+
+impl FromRequestParts<AppState> for CatalogReader {
+    type Rejection = ApiError;
+
+    async fn from_request_parts(parts: &mut Parts, state: &AppState) -> Result<Self, ApiError> {
+        if parts.headers.contains_key(AUTHORIZATION) {
+            return Ok(Self::User(Box::new(
+                UserSession::from_request_parts(parts, state).await?,
+            )));
+        }
+        if parts.headers.contains_key(REGISTER_TOKEN_HEADER) {
+            return Ok(Self::Device(
+                RegisterCtx::from_request_parts(parts, state).await?,
+            ));
+        }
+        Err(ApiError::invalid_session())
     }
 }
 

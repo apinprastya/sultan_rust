@@ -107,6 +107,20 @@ pub struct Response {
     pub body: Value,
 }
 
+/// A response whose body is kept as bytes (images).
+pub struct RawResponse {
+    pub status: StatusCode,
+    pub headers: HeaderMap,
+    pub bytes: Vec<u8>,
+}
+
+impl RawResponse {
+    /// The body as JSON (a problem or metadata).
+    pub fn json(&self) -> Value {
+        serde_json::from_slice(&self.bytes).unwrap()
+    }
+}
+
 impl Response {
     /// Asserts a problem+json error with this status and code.
     #[track_caller]
@@ -335,6 +349,43 @@ impl Harness {
         body: Option<Value>,
     ) -> Response {
         Self::send_to(self.app(), method, uri, headers, body).await
+    }
+
+    /// Sends `body` as raw bytes to `app` and keeps the response body as bytes.
+    pub async fn send_raw_to(
+        app: Router,
+        method: Method,
+        uri: &str,
+        headers: &[(&str, &str)],
+        body: Vec<u8>,
+    ) -> RawResponse {
+        let mut request = Request::builder().method(method).uri(uri);
+        for (name, value) in headers {
+            request = request.header(*name, *value);
+        }
+        let response = app
+            .oneshot(request.body(Body::from(body)).unwrap())
+            .await
+            .unwrap();
+        let status = response.status();
+        let headers = response.headers().clone();
+        let bytes = response.into_body().collect().await.unwrap().to_bytes();
+        RawResponse {
+            status,
+            headers,
+            bytes: bytes.to_vec(),
+        }
+    }
+
+    /// [`Harness::send_raw_to`] this harness's app.
+    pub async fn send_raw(
+        &self,
+        method: Method,
+        uri: &str,
+        headers: &[(&str, &str)],
+        body: Vec<u8>,
+    ) -> RawResponse {
+        Self::send_raw_to(self.app(), method, uri, headers, body).await
     }
 
     /// `POST /auth/pin` from `device`.

@@ -5,6 +5,8 @@
 //!   codes and unpairing, the permission catalog and the audit log.
 //! - Phase 6: cashier sessions, manager overrides (and the demo endpoint for the `X-Override`
 //!   guard).
+//! - C3 (spec 2.2): the catalog: products, branch blocks, images, categories, brands, tax
+//!   classes, lookup and search, catalog settings and code generators ([`catalog`]).
 //!
 //! Master-data writes follow one pattern (`docs/plan.md` §1, spec 2.1 §1, §7):
 //! - `PUT /{resource}/{uuid}` creates (`201`) or overwrites (`200`) the record with a
@@ -18,11 +20,15 @@ pub mod audit;
 pub mod auth;
 pub mod branches;
 pub mod cashier_sessions;
+pub mod catalog;
 pub mod locations;
 pub mod overrides;
 pub mod permissions;
+pub mod product_images;
+pub mod products;
 pub mod registers;
 pub mod roles;
+pub mod taxonomy;
 pub mod users;
 
 use std::str::FromStr;

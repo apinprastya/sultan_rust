@@ -18,7 +18,8 @@
 //! | 403 | `invalid_override` | `X-Override` token unknown, used, expired or bound to something else (§6) |
 //! | 403 | `register_session_required` | the endpoint needs a PIN session at a register (§4, §5) |
 //! | 403 | `read_only_replica` | master-data write on a branch node (§1) |
-//! | 404 | `not_found` | unknown route or resource |
+//! | 403 | `branch_not_assigned` | back-office catalog lookup/search for a `branch_id` the user is not assigned to (spec 2.2 §10) |
+//! | 404 | `not_found` | unknown route or resource; a catalog lookup that matches nothing (with `errors`) |
 //! | 405 | `method_not_allowed` | known route, wrong method |
 //! | 409 | `conflict` | duplicate code, username or role name |
 //! | 409 | `last_owner` | the change would leave no active Owner for all branches (§3) |
@@ -26,11 +27,16 @@
 //! | 409 | `session_closed` | the cashier session is already closed (§5) |
 //! | 409 | `no_open_session` | no open cashier session of this user on this register (§5) |
 //! | 409 | `idempotency_in_progress` | the first request with this `Idempotency-Key` is still running |
+//! | 409 | `duplicate_code` / `duplicate_sku` / `duplicate_barcode` / `duplicate_plu` | the value is used by another product (spec 2.2 §12); `product_id`, `variant_id` (null for a product code) and `value` |
 //! | 422 | `invalid_field` | a field fails validation; `field` names it |
 //! | 422 | `invalid_reference` | a referenced record (branch, role, location) does not exist |
 //! | 422 | `invalid_pin` / `weak_password` / `invalid_grant` | credential or grant rules (§3, §4) |
 //! | 422 | `idempotency_key_reused` | the `Idempotency-Key` was used for a different request (§9 case 17) |
 //! | 422 | `amount_overflow` | a cash total does not fit in 64 bits |
+//! | 422 | catalog rule codes | a product, category, brand or settings write breaks a catalog rule (spec 2.2 §12): `invalid_field`, `invalid_code`, `invalid_check_digit`, `frozen_after_use`, `bundle_nesting`, `invalid_unit_factor`, `scale_prefix_overlap`, … `code` is the first failure; `errors` lists all of them as `{code, field?, message}`; `field` is the first one's field |
+//! | 422 | `archived` / `not_sold_here` / `not_sellable` / `scale_value_zero` | catalog lookup found the code but it cannot be sold here (spec 2.2 §6); with `errors` like above |
+//! | 422 | `invalid_image` | the image body is not a PNG, JPEG or WebP image (spec 2.2 §8) |
+//! | 413 | `payload_too_large` | the request body is over the endpoint's limit (product images: 10 MB) |
 //! | 423 | `locked_out` | too many failures; `locked_until` (unix ms) is included (§4) |
 //! | 500 | `internal` | database or other unexpected error (details are not exposed) |
 
@@ -40,7 +46,9 @@ use axum::response::{IntoResponse, Response};
 use serde_json::{Map, Value, json};
 use sultan_core::access::{AccessError, Limit};
 use sultan_core::cashier_session::{OpenConflict, SessionError};
+use sultan_core::catalog::{CatalogError, CodeKind};
 use sultan_db::DbError;
+use sultan_db::catalog::{CatalogDbError, Duplicate};
 
 /// The media type of every error body.
 pub const PROBLEM_JSON: &str = "application/problem+json";
@@ -320,6 +328,148 @@ impl From<DbError> for ApiError {
     }
 }
 
+/// The field a catalog rule error is about, in the names of the request bodies (`variants.sku`,
+/// `units.factor_thousandths`, …), when there is one.
+#[must_use]
+pub fn catalog_field(error: &CatalogError) -> Option<&'static str> {
+    Some(match error {
+        CatalogError::InvalidField { field, .. }
+        | CatalogError::NonPositive { field }
+        | CatalogError::FrozenAfterUse { field } => field,
+        CatalogError::InvalidCode { kind, .. } => match kind {
+            CodeKind::ProductCode | CodeKind::CategoryCode => "code",
+            CodeKind::Sku => "variants.sku",
+            CodeKind::OptionValueCode => "options.values.code",
+            CodeKind::Barcode => "barcodes.code",
+            CodeKind::Plu => "variants.plu",
+            CodeKind::ProductCodePrefix => "product_code_prefix",
+            CodeKind::BarcodePrefix => "internal_barcode_prefix",
+        },
+        CatalogError::InvalidCheckDigit { .. } | CatalogError::DuplicateBarcode { .. } => {
+            "barcodes.code"
+        }
+        CatalogError::DuplicateCode { .. } => "code",
+        CatalogError::DuplicateSku { .. } => "variants.sku",
+        CatalogError::DuplicatePlu { .. } => "variants.plu",
+        CatalogError::InvalidUnitFactor { .. } => "units.factor_thousandths",
+        CatalogError::DuplicateUnitName { .. } => "units.name",
+        CatalogError::TooManyUnits { .. } | CatalogError::UnknownUnit => "units",
+        CatalogError::InvalidDefaultUnit { which, .. } => {
+            if *which == "sale" {
+                "default_sale_unit_id"
+            } else {
+                "default_purchase_unit_id"
+            }
+        }
+        CatalogError::TooManyOptions { .. }
+        | CatalogError::DuplicateOption { .. }
+        | CatalogError::DuplicateOptionValue { .. } => "options",
+        CatalogError::TooManyVariants { .. }
+        | CatalogError::VariantCount { .. }
+        | CatalogError::VariantValuesMismatch
+        | CatalogError::DuplicateCombination => "variants",
+        CatalogError::TrackingNotSupported { .. } => "tracking",
+        CatalogError::ProductTypeRule { .. } => "type",
+        CatalogError::BundleComponentCount { .. }
+        | CatalogError::BundleNesting { .. }
+        | CatalogError::BundleComponentArchived { .. }
+        | CatalogError::BundleComponentSelf { .. }
+        | CatalogError::DuplicateBundleComponent { .. }
+        | CatalogError::UnknownBundleComponent { .. } => "components",
+        CatalogError::InvalidScaleLayout { .. } | CatalogError::ScalePrefixOverlap { .. } => {
+            "scale_layouts"
+        }
+        CatalogError::CategoryCycle
+        | CatalogError::CategoryTooDeep { .. }
+        | CatalogError::UnknownCategory => "parent_id",
+        CatalogError::DuplicateCategoryName { .. } | CatalogError::DuplicateBrandName { .. } => {
+            "name"
+        }
+        _ => return None,
+    })
+}
+
+impl ApiError {
+    /// Catalog rule errors (never empty): `404 not_found` when the first is
+    /// [`CatalogError::NotFound`], otherwise `422`. `code` and `field` are the first error's;
+    /// `errors` lists every error as `{code, field?, message}` (spec 2.2 §12).
+    #[must_use]
+    pub fn catalog_rules(errors: &[CatalogError]) -> Self {
+        let first = errors.first();
+        let status = if matches!(first, Some(CatalogError::NotFound)) {
+            StatusCode::NOT_FOUND
+        } else {
+            StatusCode::UNPROCESSABLE_ENTITY
+        };
+        let detail = errors
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join("; ");
+        let items: Vec<Value> = errors
+            .iter()
+            .map(|e| {
+                let mut item = json!({ "code": e.code(), "message": e.to_string() });
+                if let Some(field) = catalog_field(e) {
+                    item["field"] = field.into();
+                }
+                item
+            })
+            .collect();
+        let mut api = Self::new(
+            status,
+            first.map_or("invalid_field", CatalogError::code),
+            detail,
+        );
+        if let Some(field) = first.and_then(catalog_field) {
+            api = api.with("field", field);
+        }
+        api.with("errors", items)
+    }
+
+    /// `409` for a company-wide duplicate: the code (`duplicate_barcode`, …), the conflicting
+    /// `product_id` and `variant_id` (null for a product code) and the `value`.
+    #[must_use]
+    pub fn catalog_duplicate(duplicate: &Duplicate) -> Self {
+        let value: Value = match &duplicate.error {
+            CatalogError::DuplicateCode { code } | CatalogError::DuplicateBarcode { code } => {
+                code.as_str().into()
+            }
+            CatalogError::DuplicateSku { sku } => sku.as_str().into(),
+            CatalogError::DuplicatePlu { plu } => (*plu).into(),
+            _ => Value::Null,
+        };
+        let api = Self::new(
+            StatusCode::CONFLICT,
+            duplicate.error.code(),
+            duplicate.to_string(),
+        )
+        .with("product_id", duplicate.product.to_string())
+        .with(
+            "variant_id",
+            duplicate
+                .variant
+                .map_or(Value::Null, |v| v.to_string().into()),
+        )
+        .with("value", value);
+        match catalog_field(&duplicate.error) {
+            Some(field) => api.with("field", field),
+            None => api,
+        }
+    }
+}
+
+impl From<CatalogDbError> for ApiError {
+    fn from(error: CatalogDbError) -> Self {
+        match error {
+            CatalogDbError::Rule(errors) => Self::catalog_rules(&errors),
+            CatalogDbError::Duplicate(duplicate) => Self::catalog_duplicate(&duplicate),
+            CatalogDbError::NotFound(what) => Self::not_found(what),
+            CatalogDbError::Db(error) => error.into(),
+        }
+    }
+}
+
 impl From<JsonRejection> for ApiError {
     fn from(rejection: JsonRejection) -> Self {
         Self::new(rejection.status(), "invalid_body", rejection.body_text())
@@ -528,6 +678,286 @@ mod tests {
         assert_eq!(user.extensions["session_id"], id.to_string());
         let closed = ApiError::from(SessionError::AlreadyClosed { session: id });
         assert_eq!(closed.extensions["session_id"], id.to_string());
+    }
+
+    #[test]
+    fn catalog_errors_map_to_status_code_and_fields() {
+        use sultan_core::ids::{ProductId, VariantId};
+        let rules = ApiError::from(CatalogDbError::Rule(vec![
+            CatalogError::FrozenAfterUse { field: "type" },
+            CatalogError::InvalidCheckDigit { code: "1".into() },
+            CatalogError::CategoryCycle,
+        ]));
+        assert_eq!(
+            (rules.status().as_u16(), rules.code()),
+            (422, "frozen_after_use")
+        );
+        assert_eq!(rules.extensions["field"], "type");
+        assert_eq!(
+            rules.extensions["errors"],
+            json!([
+                { "code": "frozen_after_use", "field": "type",
+                  "message": "`type` cannot change after the product has been used" },
+                { "code": "invalid_check_digit", "field": "barcodes.code",
+                  "message": "barcode `1` has an invalid check digit" },
+                { "code": "category_cycle", "field": "parent_id",
+                  "message": "category move would create a cycle" },
+            ])
+        );
+        let missing = ApiError::from(CatalogDbError::rule(CatalogError::NotFound));
+        assert_eq!(
+            (missing.status().as_u16(), missing.code()),
+            (404, "not_found")
+        );
+        assert!(!missing.extensions.contains_key("field"));
+        let blocked = ApiError::from(CatalogDbError::rule(CatalogError::NotSoldHere));
+        assert_eq!(
+            (blocked.status().as_u16(), blocked.code()),
+            (422, "not_sold_here")
+        );
+        assert_eq!(ApiError::catalog_rules(&[]).code(), "invalid_field");
+        assert_eq!(
+            ApiError::from(CatalogDbError::NotFound("brand")).code(),
+            "not_found"
+        );
+        assert_eq!(
+            ApiError::from(CatalogDbError::Db(DbError::Corrupt("x".into()))).code(),
+            "internal"
+        );
+
+        let product = ProductId::generate();
+        let variant = VariantId::generate();
+        let cases = [
+            (
+                CatalogError::DuplicateBarcode { code: "B".into() },
+                Some(variant),
+                json!("B"),
+            ),
+            (
+                CatalogError::DuplicateSku { sku: "S".into() },
+                Some(variant),
+                json!("S"),
+            ),
+            (
+                CatalogError::DuplicatePlu { plu: 7 },
+                Some(variant),
+                json!(7),
+            ),
+            (
+                CatalogError::DuplicateCode { code: "P".into() },
+                None,
+                json!("P"),
+            ),
+            (CatalogError::NotFound, None, Value::Null),
+        ];
+        for (error, variant, value) in cases {
+            let code = error.code();
+            let api = ApiError::from(CatalogDbError::Duplicate(Duplicate {
+                error,
+                product,
+                variant,
+            }));
+            assert_eq!((api.status().as_u16(), api.code()), (409, code));
+            assert_eq!(api.extensions["product_id"], product.to_string());
+            assert_eq!(
+                api.extensions["variant_id"],
+                variant.map_or(Value::Null, |v| v.to_string().into())
+            );
+            assert_eq!(api.extensions["value"], value);
+        }
+    }
+
+    #[test]
+    #[allow(clippy::too_many_lines)] // one table row per error variant
+    fn every_catalog_error_has_a_sensible_field() {
+        use sultan_core::catalog::{ProductType, Tracking};
+        use sultan_core::ids::VariantId;
+        let v = VariantId::generate();
+        let s = String::new;
+        let cases = [
+            (
+                CatalogError::InvalidField {
+                    field: "name",
+                    reason: "x",
+                },
+                Some("name"),
+            ),
+            (CatalogError::NonPositive { field: "qty" }, Some("qty")),
+            (
+                CatalogError::InvalidCode {
+                    kind: CodeKind::ProductCode,
+                    value: s(),
+                },
+                Some("code"),
+            ),
+            (
+                CatalogError::InvalidCode {
+                    kind: CodeKind::CategoryCode,
+                    value: s(),
+                },
+                Some("code"),
+            ),
+            (
+                CatalogError::InvalidCode {
+                    kind: CodeKind::Sku,
+                    value: s(),
+                },
+                Some("variants.sku"),
+            ),
+            (
+                CatalogError::InvalidCode {
+                    kind: CodeKind::OptionValueCode,
+                    value: s(),
+                },
+                Some("options.values.code"),
+            ),
+            (
+                CatalogError::InvalidCode {
+                    kind: CodeKind::Barcode,
+                    value: s(),
+                },
+                Some("barcodes.code"),
+            ),
+            (
+                CatalogError::InvalidCode {
+                    kind: CodeKind::Plu,
+                    value: s(),
+                },
+                Some("variants.plu"),
+            ),
+            (
+                CatalogError::InvalidCode {
+                    kind: CodeKind::ProductCodePrefix,
+                    value: s(),
+                },
+                Some("product_code_prefix"),
+            ),
+            (
+                CatalogError::InvalidCode {
+                    kind: CodeKind::BarcodePrefix,
+                    value: s(),
+                },
+                Some("internal_barcode_prefix"),
+            ),
+            (
+                CatalogError::DuplicateBarcode { code: s() },
+                Some("barcodes.code"),
+            ),
+            (CatalogError::DuplicateCode { code: s() }, Some("code")),
+            (
+                CatalogError::DuplicateSku { sku: s() },
+                Some("variants.sku"),
+            ),
+            (CatalogError::DuplicatePlu { plu: 1 }, Some("variants.plu")),
+            (
+                CatalogError::InvalidUnitFactor {
+                    unit: s(),
+                    reason: "x",
+                },
+                Some("units.factor_thousandths"),
+            ),
+            (
+                CatalogError::DuplicateUnitName { name: s() },
+                Some("units.name"),
+            ),
+            (CatalogError::TooManyUnits { max: 5 }, Some("units")),
+            (CatalogError::UnknownUnit, Some("units")),
+            (
+                CatalogError::InvalidDefaultUnit {
+                    which: "sale",
+                    reason: "x",
+                },
+                Some("default_sale_unit_id"),
+            ),
+            (
+                CatalogError::InvalidDefaultUnit {
+                    which: "purchase",
+                    reason: "x",
+                },
+                Some("default_purchase_unit_id"),
+            ),
+            (CatalogError::TooManyOptions { max: 3 }, Some("options")),
+            (CatalogError::DuplicateOption { name: s() }, Some("options")),
+            (
+                CatalogError::DuplicateOptionValue {
+                    option: s(),
+                    value: s(),
+                },
+                Some("options"),
+            ),
+            (
+                CatalogError::TooManyVariants { count: 1, max: 1 },
+                Some("variants"),
+            ),
+            (CatalogError::VariantCount { reason: "x" }, Some("variants")),
+            (CatalogError::VariantValuesMismatch, Some("variants")),
+            (CatalogError::DuplicateCombination, Some("variants")),
+            (
+                CatalogError::TrackingNotSupported {
+                    tracking: Tracking::Batch,
+                },
+                Some("tracking"),
+            ),
+            (
+                CatalogError::ProductTypeRule {
+                    product_type: ProductType::Bundle,
+                    reason: "x",
+                },
+                Some("type"),
+            ),
+            (
+                CatalogError::BundleComponentCount { count: 0, max: 50 },
+                Some("components"),
+            ),
+            (
+                CatalogError::BundleNesting { variant: v },
+                Some("components"),
+            ),
+            (
+                CatalogError::BundleComponentArchived { variant: v },
+                Some("components"),
+            ),
+            (
+                CatalogError::BundleComponentSelf { variant: v },
+                Some("components"),
+            ),
+            (
+                CatalogError::DuplicateBundleComponent { variant: v },
+                Some("components"),
+            ),
+            (
+                CatalogError::UnknownBundleComponent { variant: v },
+                Some("components"),
+            ),
+            (
+                CatalogError::InvalidScaleLayout {
+                    prefix: 1,
+                    reason: "x",
+                },
+                Some("scale_layouts"),
+            ),
+            (
+                CatalogError::ScalePrefixOverlap { prefix: 21 },
+                Some("scale_layouts"),
+            ),
+            (CatalogError::CategoryCycle, Some("parent_id")),
+            (
+                CatalogError::CategoryTooDeep { depth: 5, max: 4 },
+                Some("parent_id"),
+            ),
+            (CatalogError::UnknownCategory, Some("parent_id")),
+            (
+                CatalogError::DuplicateCategoryName { name: s() },
+                Some("name"),
+            ),
+            (CatalogError::DuplicateBrandName { name: s() }, Some("name")),
+            (CatalogError::NotFound, None),
+            (CatalogError::Archived, None),
+            (CatalogError::ScaleValueZero, None),
+        ];
+        for (error, field) in cases {
+            assert_eq!(catalog_field(&error), field, "{error:?}");
+        }
     }
 
     #[test]

@@ -97,12 +97,37 @@ impl Db {
 
     /// Starts a transaction.
     ///
+    /// On `SQLite` it is `BEGIN IMMEDIATE`: the write lock is taken up front, waiting up to the
+    /// busy timeout for another writer. A deferred transaction that reads first and writes later
+    /// would instead fail at once with `SQLITE_BUSY_SNAPSHOT` when another connection committed
+    /// in between (WAL cannot upgrade a stale read snapshot, and the busy timeout does not apply).
+    /// Readers are not blocked (WAL); transactions are serialized, as `SQLite` writers are anyway.
+    /// `MySQL` uses a plain `BEGIN`. A read that needs one snapshot uses [`Db::begin_read`]; a
+    /// single read query goes through the pool.
+    ///
     /// # Errors
     /// The database error.
     pub async fn begin(&self) -> Result<Tx> {
         Ok(match self {
-            Self::Sqlite(pool) => Tx::Sqlite(pool.begin().await?),
+            Self::Sqlite(pool) => Tx::Sqlite(pool.begin_with("BEGIN IMMEDIATE").await?),
             Self::MySql(pool) => Tx::MySql(pool.begin().await?),
+        })
+    }
+
+    /// Starts a read-only transaction: one consistent snapshot for a read that runs several
+    /// queries (e.g. a cashier session and its close report), without the write lock.
+    ///
+    /// On `SQLite` it is a deferred `BEGIN`, so it neither waits for nor blocks writers (WAL), and
+    /// since it never writes it cannot hit `SQLITE_BUSY_SNAPSHOT`. `MySQL` uses
+    /// `START TRANSACTION READ ONLY`. It is for reads only (on `MySQL` a write through it fails);
+    /// use [`Db::begin`] to write.
+    ///
+    /// # Errors
+    /// The database error.
+    pub async fn begin_read(&self) -> Result<Tx> {
+        Ok(match self {
+            Self::Sqlite(pool) => Tx::Sqlite(pool.begin_with("BEGIN").await?),
+            Self::MySql(pool) => Tx::MySql(pool.begin_with("START TRANSACTION READ ONLY").await?),
         })
     }
 
@@ -332,6 +357,84 @@ mod tests {
         tx.rollback().await.unwrap();
         db.close().await;
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// `SQLite` transactions start with `BEGIN IMMEDIATE`: a second one waits for the first
+    /// instead of starting a read snapshot that could not be upgraded to a write later.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn sqlite_transactions_take_the_write_lock_up_front() {
+        let dir = std::env::temp_dir().join(format!("sultan-db-imm-{}", uuid::Uuid::now_v7()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let url = format!("sqlite://{}", dir.join("t.db").display());
+        let db = Db::connect(&url).await.unwrap();
+        db.migrate().await.unwrap();
+        let first = db.begin().await.unwrap();
+        let waiting = tokio::time::timeout(Duration::from_millis(200), db.begin()).await;
+        assert!(
+            waiting.is_err(),
+            "a second transaction started beside the first"
+        );
+        first.commit().await.unwrap();
+        let second = tokio::time::timeout(Duration::from_secs(5), db.begin())
+            .await
+            .expect("the write lock was released")
+            .unwrap();
+        second.rollback().await.unwrap();
+        db.close().await;
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// A read transaction neither waits for a writer's lock nor holds one, and still sees one
+    /// snapshot.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn sqlite_read_transactions_do_not_take_the_write_lock() {
+        let dir = std::env::temp_dir().join(format!("sultan-db-read-{}", uuid::Uuid::now_v7()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let url = format!("sqlite://{}", dir.join("t.db").display());
+        let db = Db::connect(&url).await.unwrap();
+        db.migrate().await.unwrap();
+        sqlx_test_table(&db).await;
+        let mut writer = db.begin().await.unwrap();
+        let mut reader = tokio::time::timeout(Duration::from_millis(500), db.begin_read())
+            .await
+            .expect("a read transaction waited for the writer")
+            .unwrap();
+        assert_eq!(count(&mut reader).await, 0);
+        let Tx::Sqlite(w) = &mut writer else {
+            unreachable!()
+        };
+        sqlx::query("INSERT INTO t VALUES (1)")
+            .execute(&mut **w)
+            .await
+            .unwrap();
+        writer.commit().await.unwrap();
+        // Same snapshot as the first read, although the writer committed meanwhile.
+        assert_eq!(count(&mut reader).await, 0);
+        // A writer is not held up by the open reader.
+        let next = tokio::time::timeout(Duration::from_millis(500), db.begin())
+            .await
+            .expect("a writer waited for a reader")
+            .unwrap();
+        next.rollback().await.unwrap();
+        reader.commit().await.unwrap();
+        db.close().await;
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    async fn count(tx: &mut Tx) -> i64 {
+        let Tx::Sqlite(tx) = tx else { unreachable!() };
+        sqlx::query_scalar("SELECT COUNT(*) FROM t")
+            .fetch_one(&mut **tx)
+            .await
+            .unwrap()
+    }
+
+    async fn sqlx_test_table(db: &Db) {
+        let Db::Sqlite(pool) = db else { unreachable!() };
+        sqlx::query("CREATE TABLE t (x INTEGER)")
+            .execute(pool)
+            .await
+            .unwrap();
     }
 
     #[cfg(unix)]

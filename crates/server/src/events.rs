@@ -16,15 +16,20 @@
 //! `401` problem and no upgrade.
 //!
 //! # Messages
-//! Text frames `{"type": "<event>", "data": {...}}`:
+//! Text frames `{"type": "<event>", "data": {...}}`. Each type with its data and who receives
+//! it:
 //!
-//! | Type | Data | Who receives it |
-//! |---|---|---|
-//! | `session.revoked` | `user_id`, `reason` (`logout` / `user_deactivated`), `this_session` | sockets of that user; a socket whose own session was revoked is closed after the message |
-//! | `cashier_session.opened` | `session_id`, `register_id`, `branch_id`, `user_id` | callers who may see the branch (spec 2.1 §3) |
-//! | `cashier_session.closed` | same, plus `forced` | callers who may see the branch |
-//! | `user.changed` | `user_id` | the user, and callers who may see a branch where the user has (or had) a role |
-//! | `events.lagged` | `missed` | a socket that fell behind; refetch everything |
+//! - `session.revoked`: `user_id`, `reason` (`logout` / `user_deactivated`), `this_session`.
+//!   Sockets of that user; a socket whose own session was revoked is closed after the message.
+//! - `cashier_session.opened`: `session_id`, `register_id`, `branch_id`, `user_id`. Callers who
+//!   may see the branch (spec 2.1 §3).
+//! - `cashier_session.closed`: the same, plus `forced`. Callers who may see the branch.
+//! - `user.changed`: `user_id`. The user, and callers who may see a branch where the user has
+//!   (or had) a role.
+//! - `catalog.changed`: `scope` (`product` / `category` / `brand` / `settings`), plus
+//!   `product_id`, `category_id` or `brand_id`. Every socket: the catalog is company-wide
+//!   (spec 2.2 §11), so registers drop cached lookups.
+//! - `events.lagged`: `missed`. A socket that fell behind; refetch everything.
 //!
 //! Before each delivery the socket's own login session is checked again; once it is revoked,
 //! expired or its user deactivated, the socket is closed. Branch visibility is evaluated per
@@ -66,6 +71,8 @@ pub enum Audience {
     },
     /// Callers who may see this branch.
     Branch(BranchId),
+    /// Every socket whose session is still valid (company-wide data such as the catalog).
+    Everyone,
     /// `user.changed`: the user themselves, and callers who may see any of `scopes`.
     User {
         /// The changed user.
@@ -104,6 +111,17 @@ impl Event {
             kind: "user.changed",
             data: json!({ "user_id": user.to_string() }),
             audience: Audience::User { user, scopes },
+        }
+    }
+
+    /// `catalog.changed` (spec 2.2 §11) for every socket. `data` carries the `scope` and the
+    /// changed entity's ID.
+    #[must_use]
+    pub const fn catalog_changed(data: Value) -> Self {
+        Self {
+            kind: "catalog.changed",
+            data,
+            audience: Audience::Everyone,
         }
     }
 
@@ -197,7 +215,7 @@ impl FromRequestParts<AppState> for EventsAuth {
     security(("bearer" = []), ("bearer" = [], "register_token" = [])),
     responses((status = 101, description = "Switching to the WebSocket protocol; text frames \
         `{\"type\", \"data\"}`: session.revoked, cashier_session.opened, cashier_session.closed, \
-        user.changed, events.lagged"),
+        user.changed, catalog.changed, events.lagged"),
         (status = 401, body = crate::openapi::Problem)))]
 pub async fn events(
     State(state): State<AppState>,
@@ -256,11 +274,16 @@ fn revoked(me: &UserSession, event: &Event, user: UserId, session: Option<TokenH
 }
 
 /// Whether the socket's caller may see an event for `scopes` (spec 2.1 §3 branch visibility).
+/// A company-wide scope ([`BranchScope::All`], e.g. [`Audience::Everyone`]) is seen by every
+/// valid session, so the caller's permissions are not loaded for it.
 async fn sees_any(
     state: &AppState,
     me: &UserSession,
     scopes: &[BranchScope],
 ) -> Result<bool, ApiError> {
+    if scopes.contains(&BranchScope::All) {
+        return Ok(true);
+    }
     let view = Caller::load(&state.db, me).await?.branch_view();
     Ok(scopes.iter().any(|s| match s {
         BranchScope::All => true,
@@ -272,6 +295,7 @@ async fn decide(state: &AppState, me: &UserSession, event: &Event) -> Result<Del
     let scopes = match &event.audience {
         Audience::Sessions { user, session } => return Ok(revoked(me, event, *user, *session)),
         Audience::Branch(branch) => vec![BranchScope::Branch(*branch)],
+        Audience::Everyone => vec![BranchScope::All],
         Audience::User { scopes, .. } => scopes.clone(),
     };
     if !still_valid(state, me).await? {
@@ -371,6 +395,49 @@ mod tests {
         let event = Event::for_branch("x", BranchId::generate(), json!({}));
         hub.clone().publish(event.clone());
         assert_eq!(rx.try_recv().unwrap(), event);
+    }
+
+    /// A session for an unknown user (no database row is needed: nothing is looked up).
+    fn session() -> UserSession {
+        let now = sultan_core::time::Timestamp::from_unix_millis(0);
+        let user = UserId::generate();
+        UserSession {
+            token_hash: [7; 32],
+            session: auth::AuthSession {
+                token_hash: [7; 32],
+                user,
+                register: None,
+                branch: BranchId::generate(),
+                created_at: now,
+                last_seen: now,
+                expires_at: now,
+                revoked_at: None,
+            },
+            user: users::User {
+                id: user,
+                username: "x".into(),
+                display_name: "X".into(),
+                pin_hash: None,
+                password_hash: None,
+                active: true,
+            },
+        }
+    }
+
+    #[tokio::test]
+    async fn company_wide_scopes_skip_the_permission_lookup() {
+        // No migrations: any permission query fails, so `Ok(true)` proves none ran.
+        let db = sultan_db::Db::connect("sqlite::memory:").await.unwrap();
+        let clock =
+            crate::state::ManualClock::new(sultan_core::time::Timestamp::from_unix_millis(0));
+        let state = AppState::new(db, crate::state::NodeRole::Hq, std::sync::Arc::new(clock));
+        let me = session();
+        assert!(sees_any(&state, &me, &[BranchScope::All]).await.unwrap());
+        let mixed = [BranchScope::Branch(BranchId::generate()), BranchScope::All];
+        assert!(sees_any(&state, &me, &mixed).await.unwrap());
+        // A branch scope does look the permissions up (and fails here).
+        let branch = [BranchScope::Branch(BranchId::generate())];
+        assert!(sees_any(&state, &me, &branch).await.is_err());
     }
 
     #[test]

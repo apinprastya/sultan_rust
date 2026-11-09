@@ -21,6 +21,11 @@
 //! WebSocket `GET /events` ([`events`]), `Idempotency-Key` on action `POST`s ([`idempotency`];
 //! §9 case 17) and the sales seam of the close report ([`movements`]).
 //!
+//! Phase C3 (spec 2.2) adds the catalog: `/products`, `/products/{id}/branch-blocks`,
+//! `/products/{id}/image` ([`product_image`]), `/categories`, `/brands`, `/tax-classes`,
+//! `/catalog/lookup`, `/catalog/search`, `/settings/catalog` and `/catalog/generate/…`, with
+//! `catalog.changed` events ([`routes::catalog`]).
+//!
 //! Phase 7 adds request logging to [`router`]: one `tracing` span per request with the method and
 //! the path only, and the status and latency when it finishes. Header values (`Authorization`,
 //! `X-Register-Token`, `X-Override`), query strings and bodies are never logged.
@@ -34,6 +39,8 @@ pub mod idempotency;
 pub mod movements;
 pub mod openapi;
 pub mod overrides;
+pub mod product_image;
+pub mod retry;
 pub mod routes;
 pub mod state;
 pub mod token;
@@ -46,8 +53,8 @@ use tower_http::trace::{DefaultOnRequest, DefaultOnResponse, TraceLayer};
 use tracing::Level;
 
 use routes::{
-    audit, auth, branches, cashier_sessions, locations, overrides as override_routes, permissions,
-    registers, roles, users,
+    audit, auth, branches, cashier_sessions, catalog, locations, overrides as override_routes,
+    permissions, product_images, products, registers, roles, taxonomy, users,
 };
 
 pub use error::ApiError;
@@ -77,6 +84,7 @@ pub fn routes(state: &AppState) -> Router<AppState> {
             "/demo/override-protected",
             post(override_routes::demo_protected),
         )
+        .merge(catalog_actions())
         .route_layer(from_fn_with_state(state.clone(), idempotency::middleware));
     let api = Router::new()
         .route("/openapi.json", get(openapi::openapi_json))
@@ -126,11 +134,58 @@ pub fn routes(state: &AppState) -> Router<AppState> {
         .route("/cashier-sessions/current", get(cashier_sessions::current))
         .route("/cashier-sessions/{id}", get(cashier_sessions::get))
         .route("/overrides", post(override_routes::approve))
+        .merge(catalog_routes())
         .merge(idempotent)
         .method_not_allowed_fallback(async || ApiError::method_not_allowed());
     Router::new()
         .nest("/api/v1", api)
         .fallback(async || ApiError::not_found("resource"))
+}
+
+/// The catalog's action `POST`s (spec 2.2 §12); they get the `Idempotency-Key` middleware.
+fn catalog_actions() -> Router<AppState> {
+    Router::new()
+        .route("/products/{id}/archive", post(products::archive))
+        .route("/products/{id}/unarchive", post(products::unarchive))
+        .route(
+            "/catalog/generate/product-code",
+            post(catalog::generate_product_code),
+        )
+        .route("/catalog/generate/barcode", post(catalog::generate_barcode))
+}
+
+/// The catalog's resources (spec 2.2 §12).
+fn catalog_routes() -> Router<AppState> {
+    Router::new()
+        .route("/products", get(products::list))
+        .route("/products/{id}", get(products::get).put(products::put))
+        .route(
+            "/products/{id}/branch-blocks",
+            get(products::get_branch_blocks).put(products::put_branch_blocks),
+        )
+        .route(
+            "/products/{id}/image",
+            get(product_images::get)
+                .put(product_images::put)
+                .delete(product_images::delete),
+        )
+        .route("/categories", get(taxonomy::list_categories))
+        .route(
+            "/categories/{id}",
+            get(taxonomy::get_category).put(taxonomy::put_category),
+        )
+        .route("/brands", get(taxonomy::list_brands))
+        .route(
+            "/brands/{id}",
+            get(taxonomy::get_brand).put(taxonomy::put_brand),
+        )
+        .route("/tax-classes", get(catalog::tax_classes))
+        .route("/catalog/lookup", get(catalog::lookup))
+        .route("/catalog/search", get(catalog::search))
+        .route(
+            "/settings/catalog",
+            get(catalog::get_settings).put(catalog::put_settings),
+        )
 }
 
 /// The span of one request: method and path only. The query string is left out because it is

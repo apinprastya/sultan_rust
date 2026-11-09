@@ -14,8 +14,8 @@ use std::collections::{HashMap, HashSet};
 
 use sultan_core::catalog::{
     Barcode, BundleComponent, CatalogError, ComponentInfo, OptionValue, Plu, ProductDraft,
-    ProductOption, ProductType, ProductUnits, Qty, Unit, Variant, check_frozen, product_search_key,
-    search_key, validate_bundle_components, validate_product,
+    ProductOption, ProductType, ProductUnits, Qty, Unit, Variant, check_frozen, default_sku,
+    product_search_key, search_key, validate_bundle_components, validate_product,
 };
 use sultan_core::ids::{
     BarcodeId, BrandId, CategoryId, OptionId, OptionValueId, ProductId, TaxClassId, UnitId,
@@ -216,6 +216,7 @@ async fn save(
             None => settings::next_product_code_in(tx).await?,
         };
     }
+    fill_default_skus(&mut doc.draft);
     if let Some(s) = &stored {
         check_frozen(s.draft(), &doc.draft, s.used()).map_err(CatalogDbError::rule)?;
         for v in &s.draft().variants {
@@ -265,6 +266,28 @@ async fn save(
         Written::Created
     };
     Ok((written, doc))
+}
+
+/// Gives every variant with an empty SKU the default `<product code>-<value codes>` (spec 2.2 §3),
+/// after the product code is known (possibly generated). Unknown value IDs contribute nothing;
+/// `core::validate_variants` rejects them afterwards.
+fn fill_default_skus(draft: &mut ProductDraft) {
+    for variant in &mut draft.variants {
+        if !variant.sku.is_empty() {
+            continue;
+        }
+        let codes: Vec<&str> = variant
+            .values
+            .iter()
+            .filter_map(|id| {
+                draft
+                    .options
+                    .iter()
+                    .find_map(|o| o.value(*id).map(|v| v.code.as_str()))
+            })
+            .collect();
+        variant.sku = default_sku(&draft.code, &codes);
+    }
 }
 
 fn invalid(field: &'static str, reason: &'static str) -> CatalogDbError {

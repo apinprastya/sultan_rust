@@ -6,6 +6,7 @@ use crate::common::{Harness, api_tests};
 
 api_tests!(openapi_lists_the_routes);
 
+#[allow(clippy::too_many_lines)] // one table row per route and schema
 async fn openapi_lists_the_routes(h: &Harness) {
     // No authentication needed.
     let r = h.send(Method::GET, "/api/v1/openapi.json", &[], None).await;
@@ -44,6 +45,22 @@ async fn openapi_lists_the_routes(h: &Harness) {
         ("/api/v1/cashier-sessions/{id}/force-close", "post"),
         ("/api/v1/overrides", "post"),
         ("/api/v1/demo/override-protected", "post"),
+        ("/api/v1/products", "get"),
+        ("/api/v1/products/{id}", "get"), ("/api/v1/products/{id}", "put"),
+        ("/api/v1/products/{id}/archive", "post"), ("/api/v1/products/{id}/unarchive", "post"),
+        ("/api/v1/products/{id}/branch-blocks", "get"), ("/api/v1/products/{id}/branch-blocks", "put"),
+        ("/api/v1/products/{id}/image", "get"), ("/api/v1/products/{id}/image", "put"),
+        ("/api/v1/products/{id}/image", "delete"),
+        ("/api/v1/categories", "get"),
+        ("/api/v1/categories/{id}", "get"), ("/api/v1/categories/{id}", "put"),
+        ("/api/v1/brands", "get"),
+        ("/api/v1/brands/{id}", "get"), ("/api/v1/brands/{id}", "put"),
+        ("/api/v1/tax-classes", "get"),
+        ("/api/v1/catalog/lookup", "get"),
+        ("/api/v1/catalog/search", "get"),
+        ("/api/v1/settings/catalog", "get"), ("/api/v1/settings/catalog", "put"),
+        ("/api/v1/catalog/generate/product-code", "post"),
+        ("/api/v1/catalog/generate/barcode", "post"),
         ("/api/v1/events", "get"),
         ("/api/v1/openapi.json", "get"),
     ];
@@ -69,6 +86,22 @@ async fn openapi_lists_the_routes(h: &Harness) {
         "SessionDetailDto",
         "SessionPage",
         "OverrideResponse",
+        "ProductBody",
+        "ProductDto",
+        "ProductPage",
+        "UnitDto",
+        "VariantDto",
+        "BarcodeDto",
+        "ComponentDto",
+        "BranchBlocksDto",
+        "ImageDto",
+        "CategoryTreeDto",
+        "BrandDto",
+        "LookupDto",
+        "SearchResult",
+        "CatalogSettingsDto",
+        "GeneratedDto",
+        "ProblemItem",
     ] {
         assert!(components["schemas"].get(schema).is_some(), "{schema}");
     }
@@ -78,6 +111,28 @@ async fn openapi_lists_the_routes(h: &Harness) {
             "{scheme}"
         );
     }
+    // The problem body documents its optional members, e.g. `limit` and `permission` of
+    // `override_limit_exceeded` and the catalog's `errors` list.
+    let problem = &components["schemas"]["Problem"]["properties"];
+    for member in [
+        "permission",
+        "limit",
+        "reason",
+        "field",
+        "errors",
+        "product_id",
+        "variant_id",
+        "value",
+    ] {
+        assert!(problem.get(member).is_some(), "Problem.{member}");
+    }
+    // Quantities are documented as thousandths.
+    assert!(
+        components["schemas"]["UnitDto"]["properties"]
+            .get("factor_thousandths")
+            .is_some()
+    );
+
     // Every $ref points at a defined schema.
     let text = doc.to_string();
     for part in text.split("\"$ref\":\"#/components/schemas/").skip(1) {
