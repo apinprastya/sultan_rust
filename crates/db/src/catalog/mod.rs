@@ -37,7 +37,8 @@ pub use assortment::{
     put_product_image,
 };
 pub use lookup::{
-    DbCatalogIndex, LookupItem, MAX_SEARCH_LIMIT, SearchHit, load_index, lookup, search,
+    DbCatalogIndex, LookupItem, MAX_SEARCH_LIMIT, SearchHit, VariantLabel, load_index, lookup,
+    search, variant_labels,
 };
 pub use product::{
     MAX_LIST_LIMIT, ProductDoc, ProductFilter, ProductRecord, ProductSummary, archive_product,

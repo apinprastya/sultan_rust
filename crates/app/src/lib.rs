@@ -13,6 +13,9 @@
 //! - [`register`]: register pairing (spec 2.1 §2); the device token lives in `register.token`.
 //!   `sultan register` opens the register window (`sultan-ui`, plan Phase 8) for the paired
 //!   register through [`Context::open_ui`]; [`open_register_window`] is the real one.
+//! - `sultan backoffice` opens the back-office window (`sultan-ui`, phase C4) against the server
+//!   of [`config::resolve_server`] through [`Context::open_backoffice`];
+//!   [`open_backoffice_window`] is the real one.
 //! - [`prompt`]: hidden prompts for the Owner's password and PIN.
 //! - [`logging`]: `tracing` subscriber with a `RUST_LOG` filter.
 //!
@@ -35,7 +38,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use cli::{Cli, Command, InitArgs, RegisterAction, ServeArgs};
+use cli::{BackofficeArgs, Cli, Command, InitArgs, RegisterAction, ServeArgs};
 use config::{FileConfig, Mode};
 use sultan_server::{Clock, SystemClock};
 
@@ -72,6 +75,31 @@ pub fn open_register_window(ui: RegisterUi) -> Result<()> {
     ));
     options.language = ui.language;
     sultan_ui::run(service, tokio::runtime::Handle::current(), options)
+        .map_err(|e| AppError::Ui(e.to_string()))
+}
+
+/// What the back-office window needs.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BackofficeUi {
+    /// The server URL.
+    pub server: String,
+    /// The username to start with (empty: none).
+    pub username: String,
+    /// `SULTAN_LANG`, if set.
+    pub language: Option<String>,
+}
+
+/// Opens the back-office window against `ui.server` and blocks until it is closed. Must be
+/// called on the main thread, inside the tokio runtime (service calls are spawned on it).
+///
+/// # Errors
+/// [`AppError::Ui`] when the window cannot be opened (no display) or fails.
+pub fn open_backoffice_window(ui: BackofficeUi) -> Result<()> {
+    let service = Arc::new(sultan_client::HttpService::user(&ui.server));
+    let mut options = sultan_ui::BackOfficeOptions::new(register::root_of(&ui.server));
+    options.username = ui.username;
+    options.language = ui.language;
+    sultan_ui::run_backoffice(service, tokio::runtime::Handle::current(), options)
         .map_err(|e| AppError::Ui(e.to_string()))
 }
 
@@ -135,6 +163,9 @@ pub struct Context<'a, S> {
     /// Opens the setup wizard and returns when it is closed ([`open_setup_window`] in the
     /// binary).
     pub open_setup: &'a mut dyn FnMut(SetupUi) -> Result<Option<Mode>>,
+    /// Opens the back-office window and returns when it is closed
+    /// ([`open_backoffice_window`] in the binary).
+    pub open_backoffice: &'a mut dyn FnMut(BackofficeUi) -> Result<()>,
 }
 
 fn say(out: &mut dyn Write, text: &str) -> Result<()> {
@@ -190,6 +221,13 @@ where
             say(ctx.out, &server.banner())?;
             server.run(ctx.shutdown).await?;
             say(ctx.out, "sultan serve: stopped")
+        }
+        Some(Command::Backoffice(BackofficeArgs { server, user })) => {
+            (ctx.open_backoffice)(BackofficeUi {
+                server: config::resolve_server(server.as_deref(), ctx.env, &file),
+                username: user.unwrap_or_default(),
+                language: (ctx.env)(ENV_LANG),
+            })
         }
         Some(Command::Register(args)) => match args.action {
             None => open_paired(&config_path, ctx.env, ctx.open_ui),
@@ -304,6 +342,8 @@ mod tests {
         let mut out = Vec::new();
         let mut no_window = |_: RegisterUi| -> Result<()> { panic!("no window expected") };
         let mut no_setup = |_: SetupUi| -> Result<Option<Mode>> { panic!("no wizard expected") };
+        let mut no_backoffice =
+            |_: BackofficeUi| -> Result<()> { panic!("no back office expected") };
         let ctx = Context {
             env,
             prompter,
@@ -311,6 +351,7 @@ mod tests {
             shutdown,
             open_ui: &mut no_window,
             open_setup: &mut no_setup,
+            open_backoffice: &mut no_backoffice,
         };
         let result = run(cli, ctx).await;
         (result, String::from_utf8(out).unwrap())
@@ -459,6 +500,8 @@ mod tests {
         ])
         .unwrap();
         let mut no_setup = |_: SetupUi| -> Result<Option<Mode>> { panic!("no wizard expected") };
+        let mut no_backoffice =
+            |_: BackofficeUi| -> Result<()> { panic!("no back office expected") };
         let ctx = Context {
             env: &env,
             prompter: &mut quiet,
@@ -466,6 +509,7 @@ mod tests {
             shutdown: async {},
             open_ui: &mut window,
             open_setup: &mut no_setup,
+            open_backoffice: &mut no_backoffice,
         };
         run(cli, ctx).await.unwrap();
         assert_eq!(
@@ -477,6 +521,60 @@ mod tests {
             }]
         );
         assert!(out.is_empty());
+    }
+
+    #[tokio::test]
+    async fn backoffice_opens_its_window_with_the_resolved_server() {
+        let dir = TempDir::new("backoffice");
+        let config_path = dir.0.join("sultan.toml");
+        config::update(&config_path, |t| {
+            t.insert("listen".into(), "0.0.0.0:9090".into());
+        })
+        .unwrap();
+        let mut opened = Vec::new();
+        let mut backoffice = |ui: BackofficeUi| -> Result<()> {
+            opened.push(ui);
+            Ok(())
+        };
+        let env = |k: &str| (k == ENV_LANG).then(|| "en".to_owned());
+        for args in [
+            vec!["backoffice", "--user", "owner"],
+            vec!["backoffice", "--server", "http://hq:8080/api/v1"],
+        ] {
+            let mut all = vec!["sultan", "--config", config_path.to_str().unwrap()];
+            all.extend(args);
+            let cli = Cli::try_parse_from(all).unwrap();
+            let mut out = Vec::new();
+            let mut quiet = FakePrompter::default();
+            let mut no_window = |_: RegisterUi| -> Result<()> { panic!("no register expected") };
+            let mut no_setup =
+                |_: SetupUi| -> Result<Option<Mode>> { panic!("no wizard expected") };
+            let ctx = Context {
+                env: &env,
+                prompter: &mut quiet,
+                out: &mut out,
+                shutdown: async {},
+                open_ui: &mut no_window,
+                open_setup: &mut no_setup,
+                open_backoffice: &mut backoffice,
+            };
+            run(cli, ctx).await.unwrap();
+        }
+        assert_eq!(
+            opened,
+            [
+                BackofficeUi {
+                    server: "http://127.0.0.1:9090".into(),
+                    username: "owner".into(),
+                    language: Some("en".into()),
+                },
+                BackofficeUi {
+                    server: "http://hq:8080/api/v1".into(),
+                    username: String::new(),
+                    language: Some("en".into()),
+                }
+            ]
+        );
     }
 
     #[test]
@@ -513,6 +611,8 @@ mod tests {
             windows.push(ui);
             Ok(())
         };
+        let mut no_backoffice =
+            |_: BackofficeUi| -> Result<()> { panic!("no back office expected") };
         let mut setup = |ui: SetupUi| -> Result<Option<Mode>> {
             let mode = wizard(&ui);
             wizards.push(ui);
@@ -527,6 +627,7 @@ mod tests {
             shutdown: async {},
             open_ui: &mut window,
             open_setup: &mut setup,
+            open_backoffice: &mut no_backoffice,
         };
         let result = run(cli, ctx).await;
         (result, String::from_utf8(out).unwrap(), windows, wizards)

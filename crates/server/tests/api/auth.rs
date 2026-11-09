@@ -249,6 +249,27 @@ async fn password_login(h: &Harness) {
     // budi is assigned to JKT01 only.
     let r = password_login_as(h, json!({ "username": "budi", "password": BUDI_PASSWORD })).await;
     assert_eq!(r.body["branch_id"], h.jkt.id.to_string());
+
+    // `GET /auth/me`: the Owner holds the catalog permissions everywhere; budi (Manager at JKT01)
+    // holds `catalog.manage` at the branch only.
+    let owner = h.owner_token().await;
+    let me = h.call(&owner, Method::GET, "/api/v1/auth/me", None).await;
+    assert_eq!(me.status, StatusCode::OK, "{}", me.body);
+    assert_eq!(me.body["username"], "owner");
+    assert_eq!(me.body["register_id"], serde_json::Value::Null);
+    let has = |body: &serde_json::Value, list: &str, key: &str| {
+        body[list].as_array().unwrap().iter().any(|p| p == key)
+    };
+    assert!(has(&me.body, "permissions_everywhere", "catalog.manage"));
+    assert!(has(&me.body, "permissions", "catalog.view_archived"));
+    let budi = r.token();
+    let me = h.call(&budi, Method::GET, "/api/v1/auth/me", None).await;
+    assert_eq!(me.body["display_name"], "BUDI");
+    assert!(has(&me.body, "permissions", "catalog.manage"));
+    assert!(!has(&me.body, "permissions_everywhere", "catalog.manage"));
+    h.send(Method::GET, "/api/v1/auth/me", &[], None)
+        .await
+        .assert_problem(401, "invalid_session");
 }
 
 async fn password_login_failures(h: &Harness) {

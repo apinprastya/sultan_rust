@@ -10,6 +10,7 @@
 //! | listen address | `--listen` | `SULTAN_LISTEN` | `listen` | `127.0.0.1:8080` |
 //! | node role | `--role` | `SULTAN_ROLE` | `role` | `standalone` |
 //! | app type (bare `sultan`) | – | – | `mode` | the setup wizard |
+//! | back-office server (`sultan backoffice`) | `--server` | `SULTAN_SERVER` | `[register] server`, else `listen` | `http://127.0.0.1:8080` |
 //!
 //! The database defaults to `sultan.db` **next to the config file**, so one directory holds a
 //! node: `sultan.toml`, `sultan.db` and, on a register, `register.token`. The listen address
@@ -52,6 +53,8 @@ pub const DEFAULT_CONFIG: &str = "sultan.toml";
 pub const DEFAULT_DB_FILE: &str = "sultan.db";
 /// Default listen address: loopback only.
 pub const DEFAULT_LISTEN: &str = "127.0.0.1:8080";
+/// Environment variable: the server the back office talks to.
+pub const ENV_SERVER: &str = "SULTAN_SERVER";
 
 /// Reads an environment variable. Injected so tests never touch the process environment.
 pub type Env<'a> = &'a dyn Fn(&str) -> Option<String>;
@@ -236,6 +239,27 @@ pub fn resolve_db(flag: Option<&str>, env: Env<'_>, file: &FileConfig, config: &
 #[must_use]
 pub fn resolve_listen(flag: Option<&str>, env: Env<'_>, file: &FileConfig) -> String {
     pick(flag, env(ENV_LISTEN), file.listen.as_deref()).unwrap_or_else(|| DEFAULT_LISTEN.to_owned())
+}
+
+/// The server URL of the back office (`sultan backoffice`): `--server` > `SULTAN_SERVER` > the
+/// paired register's server (`[register]`) > this machine's listen address (a wildcard such as
+/// `0.0.0.0` becomes `127.0.0.1`) > `http://127.0.0.1:8080`.
+#[must_use]
+pub fn resolve_server(flag: Option<&str>, env: Env<'_>, file: &FileConfig) -> String {
+    if let Some(server) = pick(flag, env(ENV_SERVER), None).filter(|s| !s.trim().is_empty()) {
+        return server.trim().to_owned();
+    }
+    if let Some(register) = &file.register {
+        return register.server.clone();
+    }
+    let listen = file.listen.as_deref().unwrap_or(DEFAULT_LISTEN);
+    let port = ["0.0.0.0:", "[::]:"]
+        .iter()
+        .find_map(|wildcard| listen.strip_prefix(wildcard));
+    match port {
+        Some(port) => format!("http://127.0.0.1:{port}"),
+        None => format!("http://{listen}"),
+    }
 }
 
 /// The node role (see the module table).
@@ -429,6 +453,60 @@ mod tests {
                 resolve_listen(flag, &env, &file_with(None, file, None)),
                 expected,
                 "{flag:?} {pairs:?} {file:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn back_office_server_precedence() {
+        let paired = FileConfig {
+            register: Some(RegisterConfig {
+                server: "http://hq:8080".into(),
+                register_id: "r".into(),
+                branch_id: "b".into(),
+                register_code: "R1".into(),
+                register_name: "Kasir".into(),
+            }),
+            ..FileConfig::default()
+        };
+        let env = env_of(&[(ENV_SERVER, "http://env:1")]);
+        let none = env_of(&[]);
+        let blank = env_of(&[(ENV_SERVER, " ")]);
+        let cases = [
+            (
+                Some(" http://flag:1 "),
+                &env as Env<'_>,
+                paired.clone(),
+                "http://flag:1",
+            ),
+            (None, &env, paired.clone(), "http://env:1"),
+            (None, &blank, paired.clone(), "http://hq:8080"),
+            (None, &none, paired, "http://hq:8080"),
+            (
+                None,
+                &none,
+                file_with(None, Some("0.0.0.0:9000"), None),
+                "http://127.0.0.1:9000",
+            ),
+            (
+                None,
+                &none,
+                file_with(None, Some("[::]:9001"), None),
+                "http://127.0.0.1:9001",
+            ),
+            (
+                None,
+                &none,
+                file_with(None, Some("10.0.0.5:80"), None),
+                "http://10.0.0.5:80",
+            ),
+            (None, &none, FileConfig::default(), "http://127.0.0.1:8080"),
+        ];
+        for (flag, env, file, expected) in cases {
+            assert_eq!(
+                resolve_server(flag, env, &file),
+                expected,
+                "{flag:?} {file:?}"
             );
         }
     }

@@ -254,6 +254,12 @@ async fn frozen_after_use_and_bundles(h: &Harness) {
     assert_eq!(r.body["code"], "P000001", "generated code");
     assert_eq!(r.body["purchasable"], false);
     assert_eq!(r.body["components"][0]["qty_thousandths"], 2000);
+    // Component lines carry labels for the back office (ignored in a body).
+    let line = &r.body["components"][0];
+    assert_eq!(line["product_id"], doc.id);
+    assert_eq!(line["name"], "Teh Botol");
+    assert_eq!(line["sku"], "TEH01");
+    assert_eq!(line["unit_name"], "pcs");
     let inner_variant = r.body["variants"][0]["id"].as_str().unwrap().to_owned();
     let inner_unit = r.body["base_unit_id"].as_str().unwrap().to_owned();
     let nested = put_product(
@@ -304,6 +310,7 @@ async fn list_products_filters_and_pages(h: &Harness) {
     assert_eq!(items.len(), 2);
     assert_eq!(items[0]["id"], ids[2], "newest first");
     assert_eq!(items[0]["type"], "stock");
+    assert_eq!(items[0]["variant_count"], 1);
     let next = page.body["next_before_id"].as_str().unwrap();
     let rest = h
         .call(

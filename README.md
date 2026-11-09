@@ -39,7 +39,19 @@ sultan serve --role standalone --listen 0.0.0.0:8080   # Ctrl+C or SIGTERM stops
 sultan register pair --server http://<server-ip>:8080 --code ABCD-1234
 sultan register status
 sultan register                  # SULTAN_LANG=id or en to force the language
+
+# Back office (catalog): log in with a back-office username and password.
+sultan backoffice                # server: --server, SULTAN_SERVER, the paired register's server,
+                                 # else this machine's listen address (0.0.0.0 → 127.0.0.1)
+sultan backoffice --server http://192.168.1.10:8080 --user owner
 ```
+
+The back-office window manages the catalog (spec 2.2): products with their variants, units,
+barcodes, bundle components, image and branch assortment, plus categories and brands. Editing
+needs `catalog.manage` from a role assigned for **all branches** (the seeded Owner has it); other
+users can browse read-only and the window says why. Archived products are listed only with
+`catalog.view_archived`. Changes made elsewhere arrive as `catalog.changed` events: the list
+refreshes and an open product shows a warning with "reload".
 
 The register window is keyboard-first; every key is also a button on screen:
 
@@ -51,6 +63,17 @@ The register window is keyboard-first; every key is also a button on screen:
 | Blind close | ↑/↓ or Tab move between the total and the denominations · digits / Backspace · Enter, then Enter again to confirm · Esc back |
 | Close report | Enter: done (logs out to the lock screen) |
 | Manager override | ↑/↓ pick the manager · digits / Backspace PIN · Enter approve (the action is retried with the token) · Esc cancel |
+
+The back-office window is keyboard-first too; shortcuts work while a text field has the focus:
+
+| Screen | Keys |
+|---|---|
+| Everywhere (after login) | F2 products · F3 categories · F4 brands · F12 log out |
+| Login | Enter in the username moves to the password · Enter logs in |
+| Products | `/` or Ctrl+F search (typing filters after a short pause) · ↑/↓ move (past the last row loads more) · Enter open · Ctrl+N new product · F5 refresh · Esc back from the search to the list |
+| Product form | Ctrl+S save · Ctrl+1 / Ctrl+2 / Ctrl+3 tabs General / Variants / Units & barcodes · Esc back (asks first when there are unsaved changes) · Ctrl+Shift+A archive / unarchive (asks first) |
+| Categories / Brands | ↑/↓ pick · Ctrl+S save · Ctrl+N add (a child of the picked category / a brand) · Ctrl+Shift+A archive / unarchive · F5 refresh · Esc back to products |
+| Confirmation | Enter or Y yes · Esc or N no |
 
 Screenshots of every screen: `docs/screenshots/` (regenerate with
 `cargo run -p sultan-ui --example screenshots -- docs/screenshots 1366x768 en`).
@@ -73,7 +96,8 @@ Every setting is taken from, in order: **command-line flag > environment variabl
 | Owner password (`init`) | `--owner-password` | `SULTAN_OWNER_PASSWORD` | – | hidden prompt |
 | Owner PIN (`init`) | `--owner-pin` | `SULTAN_OWNER_PIN` | – | hidden prompt |
 | log filter | – | `RUST_LOG` | – | `warn,sultan=info,sultan_app=info,sultan_server=info,tower_http=info` |
-| register window language (`id`, `en`) | – | `SULTAN_LANG` | – | system locale |
+| register / back-office window language (`id`, `en`) | – | `SULTAN_LANG` | – | system locale |
+| back-office server (`sultan backoffice`) | `--server` | `SULTAN_SERVER` | `[register] server`, else `listen` | `http://127.0.0.1:8080` |
 
 - One directory holds a node: `sultan.toml`, `sultan.db` and, on a register, `register.token`.
   The wizard writes `mode` (and `db`, `listen`, `role`, `[register]` as needed); a file without
@@ -102,7 +126,9 @@ Every setting is taken from, in order: **command-line flag > environment variabl
   the override test. It needs a display (Slint picks Wayland, X11 or another backend; set
   `SLINT_BACKEND`, e.g. `winit-software`, to force one).
 - The register does not reconnect the events WebSocket after a network drop; it reconnects at
-  the next login.
+  the next login. The back office behaves the same.
+- Back office: the product image is picked by typing the file path (no file dialog yet); prices
+  are not edited here (spec 2.3); categories, brands and products are archived, never deleted.
 
 ## Development
 

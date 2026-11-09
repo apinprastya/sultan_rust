@@ -207,6 +207,75 @@ pub struct LookupItem {
     pub amount: Option<Money>,
 }
 
+/// What the back office shows for a variant of another product (bundle component lines):
+/// its product, display name `<product> – <values>`, SKU and the product's active units.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VariantLabel {
+    /// The product.
+    pub product: ProductId,
+    /// Display name.
+    pub name: String,
+    /// SKU.
+    pub sku: String,
+    /// The product's units (archived ones included) as `(id, name)`, in position order.
+    pub units: Vec<(UnitId, String)>,
+}
+
+/// Labels of `variants` (unknown IDs are left out).
+///
+/// # Errors
+/// The database error.
+pub async fn variant_labels<'c>(
+    conn: impl Into<Conn<'c>>,
+    variants: &[VariantId],
+) -> Result<HashMap<VariantId, VariantLabel>> {
+    let mut conn = conn.into();
+    let mut labels: HashMap<VariantId, VariantLabel> = HashMap::new();
+    if variants.is_empty() {
+        return Ok(labels);
+    }
+    let sql = format!(
+        "SELECT v.id AS variant_id, v.sku, p.id AS product_id, p.name, u.id AS unit_id, \
+         u.name AS unit_name FROM variant v JOIN product p ON p.id = v.product_id \
+         JOIN product_unit u ON u.product_id = p.id WHERE v.id IN ({}) \
+         ORDER BY v.id, u.position",
+        in_list(variants.len())
+    );
+    let rows = sql::fetch_all(
+        conn.reborrow(),
+        &sql,
+        variants.iter().map(|v| Arg::from(*v)).collect(),
+        |row| {
+            Ok((
+                sql::id::<VariantId>(row, "variant_id")?,
+                sql::id::<ProductId>(row, "product_id")?,
+                row.text("name")?,
+                row.text("sku")?,
+                (sql::id::<UnitId>(row, "unit_id")?, row.text("unit_name")?),
+            ))
+        },
+    )
+    .await?;
+    for (variant, product, name, sku, unit) in rows {
+        labels
+            .entry(variant)
+            .or_insert_with(|| VariantLabel {
+                product,
+                name,
+                sku,
+                units: Vec::new(),
+            })
+            .units
+            .push(unit);
+    }
+    let found: Vec<VariantId> = labels.keys().copied().collect();
+    let names = value_names(conn, &found).await?;
+    for (variant, label) in &mut labels {
+        label.name = display_name(&label.name, names.get(variant));
+    }
+    Ok(labels)
+}
+
 /// Value names of `variants`, in option order.
 async fn value_names(
     conn: Conn<'_>,

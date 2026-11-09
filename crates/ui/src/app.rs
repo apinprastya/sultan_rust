@@ -44,7 +44,7 @@ pub enum Runner {
 }
 
 impl Runner {
-    const fn handle(&self) -> &Handle {
+    pub(crate) const fn handle(&self) -> &Handle {
         match self {
             Self::Spawn(h) | Self::Block(h) => h,
         }

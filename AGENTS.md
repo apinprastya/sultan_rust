@@ -17,8 +17,8 @@ Toolchain: Rust 1.95, edition 2024 (`rust-toolchain.toml`).
 | `sultan-core` | `crates/core` | Pure domain logic (access, catalog, money, doc numbers, time). **No IO.** |
 | `sultan-db` | `crates/db` | sqlx migrations and repositories for SQLite and MySQL. See [crates/db/README.md](crates/db/README.md). |
 | `sultan-server` | `crates/server` | axum REST API, auth, idempotency, outbox, WebSocket events, OpenAPI (`utoipa`). |
-| `sultan-client` | `crates/client` | The register's `Service` trait, its HTTP implementation, and a fake for UI tests. |
-| `sultan-ui` | `crates/ui` | Slint register UI (`ui/*.slint`, controllers in `src/`). |
+| `sultan-client` | `crates/client` | The register's `Service` trait and the back office's `BackOffice` trait, their HTTP implementation, and a fake for UI tests. |
+| `sultan-ui` | `crates/ui` | Slint register, setup wizard and back office (`ui/*.slint`, controllers in `src/`). |
 | `sultan-app` | `crates/app` | The binary: CLI, config, setup wizard, `serve`, `init`, `register`. |
 
 Dependencies point one way: `core` ← `db` ← `server`; `core` ← `client` ← `ui` ← `app`.

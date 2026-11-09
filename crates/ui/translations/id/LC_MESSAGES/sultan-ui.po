@@ -528,3 +528,562 @@ msgstr "Komputer ini sekarang kasir {} ({}) di {}."
 
 msgid "Start the server with this command, then register terminals:"
 msgstr "Jalankan server dengan perintah ini, lalu daftarkan terminal:"
+
+# Back office (phase C4): crates/ui/ui/backoffice.slint, bo_form.slint, bo_widgets.slint.
+msgid "Back office"
+msgstr "Back office"
+
+msgid "Products"
+msgstr "Produk"
+
+msgid "Categories"
+msgstr "Kategori"
+
+msgid "Brands"
+msgstr "Merek"
+
+msgid "Log out"
+msgstr "Keluar"
+
+msgid "Sultan back office"
+msgstr "Back office Sultan"
+
+msgid "Log in with your back-office username and password."
+msgstr "Masuk dengan nama pengguna dan kata sandi back office Anda."
+
+msgid "Server: {}"
+msgstr "Server: {}"
+
+msgid "Username"
+msgstr "Nama pengguna"
+
+msgid "Logging in…"
+msgstr "Sedang masuk…"
+
+msgid "Search name, code or brand  ( / )"
+msgstr "Cari nama, kode atau merek  ( / )"
+
+msgid "Category"
+msgstr "Kategori"
+
+msgid "Brand"
+msgstr "Merek"
+
+msgid "All types"
+msgstr "Semua jenis"
+
+msgid "Stock"
+msgstr "Stok"
+
+msgid "Weighed"
+msgstr "Timbang"
+
+msgid "Service"
+msgstr "Jasa"
+
+msgid "Bundle"
+msgstr "Paket"
+
+msgid "Type"
+msgstr "Jenis"
+
+msgid "Archived"
+msgstr "Diarsipkan"
+
+msgid "New product"
+msgstr "Produk baru"
+
+msgid "Code"
+msgstr "Kode"
+
+msgid "Name"
+msgstr "Nama"
+
+msgid "Variants"
+msgstr "Varian"
+
+msgid "archived"
+msgstr "diarsipkan"
+
+msgid "No products found."
+msgstr "Tidak ada produk."
+
+msgid "Loading…"
+msgstr "Memuat…"
+
+msgid "Load more"
+msgstr "Muat lagi"
+
+msgid "Move"
+msgstr "Pindah"
+
+msgid "Open"
+msgstr "Buka"
+
+msgid "Search"
+msgstr "Cari"
+
+msgid "New category"
+msgstr "Kategori baru"
+
+msgid "Edit category"
+msgstr "Ubah kategori"
+
+msgid "Short code (optional)"
+msgstr "Kode singkat (opsional)"
+
+msgid "Parent (move)"
+msgstr "Induk (pindahkan)"
+
+msgid "Save"
+msgstr "Simpan"
+
+msgid "Unarchive"
+msgstr "Aktifkan lagi"
+
+msgid "Archive"
+msgstr "Arsipkan"
+
+msgid "Add child"
+msgstr "Tambah sub-kategori"
+
+msgid "Add top-level"
+msgstr "Tambah kategori utama"
+
+msgid "New brand"
+msgstr "Merek baru"
+
+msgid "Edit brand"
+msgstr "Ubah merek"
+
+msgid "Add brand"
+msgstr "Tambah merek"
+
+msgid "Sultan POS · Back office"
+msgstr "Sultan POS · Back office"
+
+msgid "Discard your changes?"
+msgstr "Buang perubahan Anda?"
+
+msgid "Archive this product?"
+msgstr "Arsipkan produk ini?"
+
+msgid "Unarchive this product?"
+msgstr "Aktifkan lagi produk ini?"
+
+msgid "The product has unsaved changes. They are lost if you leave now."
+msgstr "Produk ini punya perubahan yang belum disimpan. Perubahan hilang jika Anda keluar sekarang."
+
+msgid "Archived products cannot be sold or bought; they stay in history and reports."
+msgstr "Produk yang diarsipkan tidak bisa dijual atau dibeli; tetap ada di riwayat dan laporan."
+
+msgid "The product can be sold and bought again."
+msgstr "Produk bisa dijual dan dibeli lagi."
+
+msgid "No"
+msgstr "Tidak"
+
+msgid "Discard"
+msgstr "Buang"
+
+msgid "Yes"
+msgstr "Ya"
+
+msgid "Generate"
+msgstr "Buat otomatis"
+
+msgid "Receipt name (max. 32)"
+msgstr "Nama di struk (maks. 32)"
+
+msgid "Tax class"
+msgstr "Kelas pajak"
+
+msgid "Tags (comma separated)"
+msgstr "Tag (pisahkan dengan koma)"
+
+msgid "e.g. promo, new"
+msgstr "mis. promo, baru"
+
+msgid "Selling"
+msgstr "Penjualan"
+
+msgid "Sellable"
+msgstr "Bisa dijual"
+
+msgid "Purchasable"
+msgstr "Bisa dibeli"
+
+msgid "Open price (the cashier types the price)"
+msgstr "Harga bebas (kasir mengetik harganya)"
+
+msgid "Requires a note on the receipt line"
+msgstr "Wajib catatan di baris struk"
+
+msgid "Image"
+msgstr "Gambar"
+
+msgid "No image"
+msgstr "Tanpa gambar"
+
+msgid "Path of a PNG, JPEG or WebP file"
+msgstr "Lokasi file PNG, JPEG atau WebP"
+
+msgid "Use this file"
+msgstr "Pakai file ini"
+
+msgid "Remove image"
+msgstr "Hapus gambar"
+
+msgid "Sold at"
+msgstr "Dijual di"
+
+msgid "Options (at most 3, e.g. Size, Color)"
+msgstr "Pilihan (maks. 3, mis. Ukuran, Warna)"
+
+msgid "Add option"
+msgstr "Tambah pilihan"
+
+msgid "Option"
+msgstr "Pilihan"
+
+msgid "e.g. Size"
+msgstr "mis. Ukuran"
+
+msgid "Value, e.g. Medium"
+msgstr "Nilai, mis. Sedang"
+
+msgid "Code, e.g. M"
+msgstr "Kode, mis. M"
+
+msgid "Add value"
+msgstr "Tambah nilai"
+
+msgid "Remove option"
+msgstr "Hapus pilihan"
+
+msgid "Variants: switch off the combinations you do not sell"
+msgstr "Varian: matikan kombinasi yang tidak Anda jual"
+
+msgid "This product has one variant"
+msgstr "Produk ini punya satu varian"
+
+msgid "Sold"
+msgstr "Dijual"
+
+msgid "Variant"
+msgstr "Varian"
+
+msgid "SKU (empty = default)"
+msgstr "SKU (kosong = bawaan)"
+
+msgid "PLU (scale)"
+msgstr "PLU (timbangan)"
+
+msgid "(single variant)"
+msgstr "(varian tunggal)"
+
+msgid "new"
+msgstr "baru"
+
+msgid "Base unit (stock is counted in it)"
+msgstr "Satuan dasar (stok dihitung dalam satuan ini)"
+
+msgid "Short name"
+msgstr "Nama singkat"
+
+msgid "Quantities"
+msgstr "Jumlah"
+
+msgid "Whole pieces (pcs, box)"
+msgstr "Bilangan bulat (pcs, box)"
+
+msgid "Decimals (kg, liter)"
+msgstr "Desimal (kg, liter)"
+
+msgid "Other units (at most 5)"
+msgstr "Satuan lain (maks. 5)"
+
+msgid "Add unit"
+msgstr "Tambah satuan"
+
+msgid "Factor (× base unit)"
+msgstr "Faktor (× satuan dasar)"
+
+msgid "e.g. box"
+msgstr "mis. box"
+
+msgid "× base, e.g. 24"
+msgstr "× dasar, mis. 24"
+
+msgid "Sell"
+msgstr "Jual"
+
+msgid "Buy"
+msgstr "Beli"
+
+msgid "Remove"
+msgstr "Hapus"
+
+msgid "Default sale unit"
+msgstr "Satuan jual bawaan"
+
+msgid "Default purchase unit"
+msgstr "Satuan beli bawaan"
+
+msgid "Barcodes"
+msgstr "Barcode"
+
+msgid "Unit"
+msgstr "Satuan"
+
+msgid "Barcode"
+msgstr "Barcode"
+
+msgid "Scan or type"
+msgstr "Pindai atau ketik"
+
+msgid "Add barcode"
+msgstr "Tambah barcode"
+
+msgid "Generate internal barcode"
+msgstr "Buat barcode internal"
+
+msgid "Bundle components"
+msgstr "Isi paket"
+
+msgid "Search a product to add (name or SKU)"
+msgstr "Cari produk untuk ditambahkan (nama atau SKU)"
+
+msgid "Qty"
+msgstr "Jml"
+
+msgid "Used: some fields are locked"
+msgstr "Sudah dipakai: sebagian isian terkunci"
+
+msgid "Unsaved changes"
+msgstr "Belum disimpan"
+
+msgid "Saving…"
+msgstr "Menyimpan…"
+
+msgid "This product was changed elsewhere since you opened it."
+msgstr "Produk ini diubah di tempat lain sejak Anda membukanya."
+
+msgid "Reload (drops your changes)"
+msgstr "Muat ulang (perubahan Anda dibuang)"
+
+msgid "General"
+msgstr "Umum"
+
+msgid "Units & barcodes"
+msgstr "Satuan & barcode"
+
+msgid "Too many wrong tries. Wait a few minutes and try again."
+msgstr "Terlalu banyak percobaan salah. Tunggu beberapa menit lalu coba lagi."
+
+msgid "Type your username and password."
+msgstr "Ketik nama pengguna dan kata sandi Anda."
+
+msgid "Read-only: changing the catalog needs the permission catalog.manage from a role for all branches. Ask the owner."
+msgstr "Hanya baca: mengubah katalog butuh izin catalog.manage dari peran untuk semua cabang. Tanyakan pemilik."
+
+msgid "Read-only: you hold catalog.manage at this branch only. The catalog is shared by all branches, so the permission must come from a role assigned for all branches. Ask the owner."
+msgstr "Hanya baca: Anda punya catalog.manage di cabang ini saja. Katalog dipakai bersama oleh semua cabang, jadi izinnya harus dari peran untuk semua cabang. Tanyakan pemilik."
+
+msgid "Not allowed: this needs the permission {} from a role for all branches."
+msgstr "Tidak diizinkan: ini butuh izin {} dari peran untuk semua cabang."
+
+msgid "This is a branch server. Change the catalog at the HQ server."
+msgstr "Ini server cabang. Ubah katalog di server pusat."
+
+msgid "Not saved: please fix the marked fields."
+msgstr "Belum tersimpan: perbaiki isian yang ditandai."
+
+msgid "Saved."
+msgstr "Tersimpan."
+
+msgid "The product is archived. It cannot be sold or bought any more."
+msgstr "Produk diarsipkan. Produk tidak bisa dijual atau dibeli lagi."
+
+msgid "The product is active again."
+msgstr "Produk aktif lagi."
+
+msgid "Cannot read the file: {}"
+msgstr "File tidak bisa dibaca: {}"
+
+msgid "This file is not a PNG, JPEG or WebP image."
+msgstr "File ini bukan gambar PNG, JPEG atau WebP."
+
+msgid "The image is too large (at most 10 MB)."
+msgstr "Gambar terlalu besar (maks. 10 MB)."
+
+msgid "Someone else saved at the same moment. Try again."
+msgstr "Orang lain menyimpan pada saat yang sama. Coba lagi."
+
+msgid "Not found. It may have been removed; refresh the list."
+msgstr "Tidak ditemukan. Mungkin sudah dihapus; muat ulang daftar."
+
+msgid "This name is already used."
+msgstr "Nama ini sudah dipakai."
+
+msgid "A category cannot be moved under itself."
+msgstr "Kategori tidak bisa dipindahkan ke bawah dirinya sendiri."
+
+msgid "Categories go at most 4 levels deep."
+msgstr "Kategori paling dalam 4 tingkat."
+
+msgid "Type a name."
+msgstr "Ketik nama."
+
+msgid "Not a number: {}"
+msgstr "Bukan angka: {}"
+
+msgid "Use a whole number: the base unit counts whole pieces."
+msgstr "Pakai bilangan bulat: satuan dasar dihitung per buah."
+
+msgid "The factor must be more than 1."
+msgstr "Faktor harus lebih dari 1."
+
+msgid "A PLU has 1 to 6 digits."
+msgstr "PLU terdiri dari 1 sampai 6 angka."
+
+msgid "A code has 1 to 24 letters, digits, dots, dashes or underscores."
+msgstr "Kode terdiri dari 1 sampai 24 huruf, angka, titik, tanda hubung atau garis bawah."
+
+msgid "An SKU has 1 to 32 letters, digits, dots, dashes or underscores."
+msgstr "SKU terdiri dari 1 sampai 32 huruf, angka, titik, tanda hubung atau garis bawah."
+
+msgid "A short code has 1 to 8 letters or digits."
+msgstr "Kode singkat terdiri dari 1 sampai 8 huruf atau angka."
+
+msgid "A barcode has 1 to 64 characters without spaces."
+msgstr "Barcode terdiri dari 1 sampai 64 karakter tanpa spasi."
+
+msgid "The check digit of {} is wrong."
+msgstr "Digit pemeriksa {} salah."
+
+msgid "The factor of {} is not valid."
+msgstr "Faktor {} tidak valid."
+
+msgid "The unit name {} is used twice."
+msgstr "Nama satuan {} dipakai dua kali."
+
+msgid "The option {} is there twice."
+msgstr "Pilihan {} ada dua kali."
+
+msgid "The value {} is there twice."
+msgstr "Nilai {} ada dua kali."
+
+msgid "The code {} is used by another product."
+msgstr "Kode {} sudah dipakai produk lain."
+
+msgid "The SKU {} is used by another product."
+msgstr "SKU {} sudah dipakai produk lain."
+
+msgid "The barcode {} is used by another product."
+msgstr "Barcode {} sudah dipakai produk lain."
+
+msgid "The PLU {} is used by another product."
+msgstr "PLU {} sudah dipakai produk lain."
+
+msgid "A weighed product needs a decimal base unit, e.g. kg."
+msgstr "Produk timbang butuh satuan dasar desimal, mis. kg."
+
+msgid "This type has only its base unit."
+msgstr "Jenis ini hanya punya satuan dasar."
+
+msgid "A bundle has no options."
+msgstr "Paket tidak punya pilihan."
+
+msgid "A bundle is counted in whole pieces."
+msgstr "Paket dihitung per buah."
+
+msgid "Only a bundle has components."
+msgstr "Hanya paket yang punya isi."
+
+msgid "Type a name (at most 120 characters)."
+msgstr "Ketik nama (maks. 120 karakter)."
+
+msgid "At most 32 characters."
+msgstr "Maks. 32 karakter."
+
+msgid "At most 20 tags of up to 40 characters."
+msgstr "Maks. 20 tag, masing-masing sampai 40 karakter."
+
+msgid "Every option and value needs a name."
+msgstr "Setiap pilihan dan nilai butuh nama."
+
+msgid "An option needs at least one value."
+msgstr "Pilihan butuh paling sedikit satu nilai."
+
+msgid "Every unit needs a name (at most 24 characters)."
+msgstr "Setiap satuan butuh nama (maks. 24 karakter)."
+
+msgid "A short name has at most 8 characters."
+msgstr "Nama singkat maks. 8 karakter."
+
+msgid "At most 5 units besides the base unit."
+msgstr "Maks. 5 satuan selain satuan dasar."
+
+msgid "At most 3 options."
+msgstr "Maks. 3 pilihan."
+
+msgid "Too many variants (at most 500)."
+msgstr "Terlalu banyak varian (maks. 500)."
+
+msgid "Switch on at least one variant."
+msgstr "Nyalakan paling sedikit satu varian."
+
+msgid "Two variants have the same values."
+msgstr "Dua varian punya nilai yang sama."
+
+msgid "A bundle needs 1 to 50 components of other products."
+msgstr "Paket butuh 1 sampai 50 isi dari produk lain."
+
+msgid "A bundle cannot contain another bundle."
+msgstr "Paket tidak boleh berisi paket lain."
+
+msgid "An archived variant cannot be a component."
+msgstr "Varian yang diarsipkan tidak bisa jadi isi paket."
+
+msgid "The same variant and unit is there twice."
+msgstr "Varian dan satuan yang sama ada dua kali."
+
+msgid "Type a quantity above zero."
+msgstr "Ketik jumlah lebih dari nol."
+
+msgid "The default unit must be active and allowed for selling or buying."
+msgstr "Satuan bawaan harus aktif dan boleh dipakai untuk jual atau beli."
+
+msgid "A category, brand or tax class no longer exists. Refresh and pick again."
+msgstr "Kategori, merek atau kelas pajak sudah tidak ada. Muat ulang lalu pilih lagi."
+
+msgid "The type cannot change after the product was used."
+msgstr "Jenis tidak bisa diubah setelah produk dipakai."
+
+msgid "The base unit cannot change after the product was used."
+msgstr "Satuan dasar tidak bisa diubah setelah produk dipakai."
+
+msgid "A used unit cannot change: archive it and add a new one."
+msgstr "Satuan yang sudah dipakai tidak bisa diubah: arsipkan lalu tambah yang baru."
+
+msgid "Options cannot be added or removed after the product was used."
+msgstr "Pilihan tidak bisa ditambah atau dihapus setelah produk dipakai."
+
+msgid "Please check this field ({})."
+msgstr "Periksa isian ini ({})."
+
+msgid "(No category)"
+msgstr "(Tanpa kategori)"
+
+msgid "(No brand)"
+msgstr "(Tanpa merek)"
+
+msgid "All categories"
+msgstr "Semua kategori"
+
+msgid "All brands"
+msgstr "Semua merek"
+
+msgid "(Top level)"
+msgstr "(Tingkat utama)"

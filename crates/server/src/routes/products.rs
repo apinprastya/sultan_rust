@@ -42,7 +42,7 @@ use sultan_core::catalog::{
     Barcode, BundleComponent, OptionValue, Plu, ProductDraft, ProductOption, ProductUnits, Qty,
     Tracking, Unit, UnitKind, Variant,
 };
-use sultan_core::ids::{BranchId, ProductId};
+use sultan_core::ids::{BranchId, ProductId, VariantId};
 use sultan_core::time::Timestamp;
 use sultan_db::catalog::{
     self, MAX_LIST_LIMIT, ProductDoc, ProductFilter, ProductRecord, ProductSummary, Written,
@@ -153,6 +153,18 @@ pub struct ComponentDto {
     pub unit_id: String,
     /// Quantity in thousandths (`1000` = 1, `500` = 0.5 kg).
     pub qty_thousandths: i64,
+    /// Answer only (ignored in a body): the component's product, for the back office.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub product_id: Option<String>,
+    /// Answer only: the variant's display name `<product> – <values>`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// Answer only: the variant's SKU.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sku: Option<String>,
+    /// Answer only: the unit's name.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unit_name: Option<String>,
 }
 
 /// Body of `PUT /products/{id}`: the whole product document.
@@ -369,6 +381,10 @@ impl From<&ProductRecord> for ProductDto {
                     variant_id: c.variant.to_string(),
                     unit_id: c.unit.to_string(),
                     qty_thousandths: c.qty.thousandths(),
+                    product_id: None,
+                    name: None,
+                    sku: None,
+                    unit_name: None,
                 })
                 .collect(),
             archived: d.archived,
@@ -378,6 +394,36 @@ impl From<&ProductRecord> for ProductDto {
             updated_at: r.updated_at.unix_millis(),
         }
     }
+}
+
+/// The answer for a stored product: the document with its component lines labelled (product,
+/// display name, SKU and unit name of each component, for the back office).
+async fn product_answer(state: &AppState, record: &ProductRecord) -> Result<ProductDto, ApiError> {
+    let mut dto = ProductDto::from(record);
+    let variants: Vec<VariantId> = record
+        .doc
+        .draft
+        .components
+        .iter()
+        .map(|c| c.variant)
+        .collect();
+    if variants.is_empty() {
+        return Ok(dto);
+    }
+    let labels = catalog::variant_labels(&state.db, &variants).await?;
+    for (line, c) in dto.components.iter_mut().zip(&record.doc.draft.components) {
+        if let Some(label) = labels.get(&c.variant) {
+            line.product_id = Some(label.product.to_string());
+            line.name = Some(label.name.clone());
+            line.sku = Some(label.sku.clone());
+            line.unit_name = label
+                .units
+                .iter()
+                .find(|(id, _)| *id == c.unit)
+                .map(|(_, name)| name.clone());
+        }
+    }
+    Ok(dto)
 }
 
 fn parse_kind(value: &str) -> Result<UnitKind, ApiError> {
@@ -571,6 +617,8 @@ pub struct ProductSummaryDto {
     pub sellable: bool,
     /// When archived (unix ms).
     pub archived_at: Option<i64>,
+    /// Number of active variants.
+    pub variant_count: u32,
 }
 
 impl From<ProductSummary> for ProductSummaryDto {
@@ -584,6 +632,7 @@ impl From<ProductSummary> for ProductSummaryDto {
             brand_id: p.brand.map(|b| b.to_string()),
             sellable: p.sellable,
             archived_at: p.archived_at.map(Timestamp::unix_millis),
+            variant_count: p.variant_count,
         }
     }
 }
@@ -666,7 +715,7 @@ pub async fn get(
     if record.archived_at.is_some() {
         require_view_archived(&state, &reader).await?;
     }
-    Ok(Json(ProductDto::from(&record)))
+    Ok(Json(product_answer(&state, &record).await?))
 }
 
 /// A product write.
@@ -731,7 +780,10 @@ pub async fn put(
     require_manage(&state, &session).await?;
     let doc = body.into_doc(id)?;
     let (written, record) = write_product(&state, &session, id, ProductWrite::Put(&doc)).await?;
-    Ok((written_status(written), Json(ProductDto::from(&record))))
+    Ok((
+        written_status(written),
+        Json(product_answer(&state, &record).await?),
+    ))
 }
 
 /// `POST /api/v1/products/{id}/archive`: archives the product and all its variants (§9).
@@ -787,7 +839,7 @@ async fn set_archived(
         ProductWrite::Unarchive
     };
     let (_, record) = write_product(state, session, id, op).await?;
-    Ok(Json(ProductDto::from(&record)))
+    Ok(Json(product_answer(state, &record).await?))
 }
 
 /// The branches where a product is not sold (spec 2.2 §10).

@@ -5413,11 +5413,13 @@ version = "0.1.0"
 dependencies = [
  "chrono",
  "i-slint-backend-testing",
+ "image",
  "png",
  "serde_json",
  "slint",
  "slint-build",
  "sultan-client",
+ "sultan-core",
  "tokio",
  "uuid",
 ]
