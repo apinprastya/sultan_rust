@@ -21,6 +21,9 @@
 //! `language` is written by the Start screen's settings ([`set_language`]); `SULTAN_LANG`
 //! overrides it ([`resolve_language`]).
 //!
+//! `language` is written by the Start screen's settings ([`set_language`]); `SULTAN_LANG`
+//! overrides it ([`resolve_language`]).
+//!
 //! `mode` is written by the setup wizard and decides what a bare `sultan` does ([`Mode`]); an
 //! older file without it is read as `client` when it has a `[register]` table and as `server`
 //! when it has a `db` ([`resolve_mode`]).
