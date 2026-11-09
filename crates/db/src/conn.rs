@@ -97,11 +97,18 @@ impl Db {
 
     /// Starts a transaction.
     ///
+    /// On `SQLite` it is `BEGIN IMMEDIATE`: the write lock is taken up front, waiting up to the
+    /// busy timeout for another writer. A deferred transaction that reads first and writes later
+    /// would instead fail at once with `SQLITE_BUSY_SNAPSHOT` when another connection committed
+    /// in between (WAL cannot upgrade a stale read snapshot, and the busy timeout does not apply).
+    /// Readers are not blocked (WAL); transactions are serialized, as `SQLite` writers are anyway.
+    /// `MySQL` uses a plain `BEGIN`.
+    ///
     /// # Errors
     /// The database error.
     pub async fn begin(&self) -> Result<Tx> {
         Ok(match self {
-            Self::Sqlite(pool) => Tx::Sqlite(pool.begin().await?),
+            Self::Sqlite(pool) => Tx::Sqlite(pool.begin_with("BEGIN IMMEDIATE").await?),
             Self::MySql(pool) => Tx::MySql(pool.begin().await?),
         })
     }
@@ -330,6 +337,31 @@ mod tests {
         assert_eq!(tx.backend(), Backend::Sqlite);
         assert_eq!(Conn::from(&mut tx).backend(), Backend::Sqlite);
         tx.rollback().await.unwrap();
+        db.close().await;
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// `SQLite` transactions start with `BEGIN IMMEDIATE`: a second one waits for the first
+    /// instead of starting a read snapshot that could not be upgraded to a write later.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn sqlite_transactions_take_the_write_lock_up_front() {
+        let dir = std::env::temp_dir().join(format!("sultan-db-imm-{}", uuid::Uuid::now_v7()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let url = format!("sqlite://{}", dir.join("t.db").display());
+        let db = Db::connect(&url).await.unwrap();
+        db.migrate().await.unwrap();
+        let first = db.begin().await.unwrap();
+        let waiting = tokio::time::timeout(Duration::from_millis(200), db.begin()).await;
+        assert!(
+            waiting.is_err(),
+            "a second transaction started beside the first"
+        );
+        first.commit().await.unwrap();
+        let second = tokio::time::timeout(Duration::from_secs(5), db.begin())
+            .await
+            .expect("the write lock was released")
+            .unwrap();
+        second.rollback().await.unwrap();
         db.close().await;
         std::fs::remove_dir_all(dir).unwrap();
     }

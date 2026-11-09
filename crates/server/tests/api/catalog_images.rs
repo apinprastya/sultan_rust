@@ -124,6 +124,20 @@ async fn bad_uploads_are_rejected(h: &Harness) {
     assert_eq!(r.status.as_u16(), 422);
     assert_eq!(r.headers["content-type"], "application/problem+json");
     assert_eq!(r.json()["code"], "invalid_image");
+    // Wider than the 8000 px decode limit: refused before decoding.
+    let wide = {
+        let image = DynamicImage::ImageLuma8(image::GrayImage::new(8_001, 1));
+        let mut out = Vec::new();
+        image
+            .write_to(&mut Cursor::new(&mut out), ImageFormat::Png)
+            .unwrap();
+        out
+    };
+    let r = h.send_raw(Method::PUT, &uri, &auth, wide).await;
+    assert_eq!(
+        (r.status.as_u16(), r.json()["code"].as_str()),
+        (422, Some("invalid_image"))
+    );
     let r = h
         .send_raw(Method::PUT, &uri, &auth, vec![0; 10 * 1024 * 1024 + 1])
         .await;

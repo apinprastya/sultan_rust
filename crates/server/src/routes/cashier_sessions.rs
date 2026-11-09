@@ -7,8 +7,10 @@
 //!   The session gets its **number** `<BRANCH>-<REGISTER>-S-<YYMMDD>-<NN>` in the same
 //!   transaction: the branch-local open date and the register's sequence of that day
 //!   (`sultan_db::cashier_sessions::insert`). A lost race on the number or the open-session index
-//!   reruns the whole transaction (at most [`OPEN_ATTEMPTS`] times), so the loser gets the
-//!   proper `409` from the `core` check instead of a database error.
+//!   reruns the whole transaction with a short jittered backoff ([`crate::retry::run`], at most
+//!   [`crate::retry::ATTEMPTS`] times), so the loser gets the proper `409` from the `core` check
+//!   instead of a database error; if every attempt still lost a race the answer is `409` too
+//!   (`session_already_open` after a unique-key race, `conflict` otherwise), never `500`.
 //! - `GET /cashier-sessions/current`: the open session on this register (whoever it belongs to,
 //!   so the lock screen can show it), or `404 not_found`.
 //! - `POST /cashier-sessions/{id}/close {counted_cash, counts?}` → the **close report**. A blind
@@ -71,10 +73,9 @@ use crate::access::Caller;
 use crate::error::ApiError;
 use crate::events::Event;
 use crate::extract::{ApiJson, ApiQuery, RegisterSession, UserSession};
+use crate::retry::{self, Failure};
 use crate::state::AppState;
 
-/// How often an open is tried when it loses a race (see the module docs).
-pub const OPEN_ATTEMPTS: u32 = 3;
 /// Default page size of `GET /cashier-sessions`.
 pub const DEFAULT_LIMIT: u32 = 100;
 /// Largest page size of `GET /cashier-sessions`.
@@ -431,9 +432,26 @@ fn event_data(record: &SessionRecord) -> Value {
 }
 
 /// The outcome of one open attempt: run again after a lost race, or answer.
+#[derive(Debug)]
 enum Attempt {
     Retry(DbError),
     Fail(ApiError),
+}
+
+impl Attempt {
+    /// The answer once no more attempts are made. A race still lost is a `409`: the open-session
+    /// index is the safety net (spec 2.1 §5), anything else (a busy database) is `conflict`.
+    fn into_answer(self) -> ApiError {
+        match self {
+            Self::Fail(error) => error,
+            Self::Retry(DbError::Conflict(_)) => ApiError::new(
+                StatusCode::CONFLICT,
+                "session_already_open",
+                "a cashier session is already open on this register or for this user",
+            ),
+            Self::Retry(_) => retry::conflict(),
+        }
+    }
 }
 
 impl From<ApiError> for Attempt {
@@ -519,28 +537,15 @@ pub async fn open(
     access.require(Permission::SessionOpenClose)?;
     let opening = amount("opening_cash", body.opening_cash)?;
     let now = state.now();
-    let mut attempt = 1;
-    let (dto, record) = loop {
-        match try_open(&state, &caller, &access, opening, now).await {
-            Ok(opened) => break opened,
-            Err(Attempt::Fail(error)) => return Err(error),
-            Err(Attempt::Retry(error)) if attempt >= OPEN_ATTEMPTS => {
-                return Err(match error {
-                    // The index is the safety net (spec 2.1 §5).
-                    DbError::Conflict(_) => ApiError::new(
-                        StatusCode::CONFLICT,
-                        "session_already_open",
-                        "a cashier session is already open on this register or for this user",
-                    ),
-                    other => other.into(),
-                });
-            }
-            Err(Attempt::Retry(error)) => {
-                tracing::debug!(%error, attempt, "cashier session open lost a race; retrying");
-                attempt += 1;
-            }
-        }
-    };
+    let (dto, record) = retry::run(
+        "cashier session open",
+        || try_open(&state, &caller, &access, opening, now),
+        |attempt| matches!(attempt, Attempt::Retry(_)),
+    )
+    .await
+    .map_err(|failure| match failure {
+        Failure::Final(attempt) | Failure::Exhausted(attempt) => attempt.into_answer(),
+    })?;
     state.events.publish(Event::for_branch(
         "cashier_session.opened",
         record.branch,
@@ -823,6 +828,22 @@ pub async fn force_close(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_race_lost_to_the_end_is_a_conflict() {
+        let answer = |attempt: Attempt| {
+            let error = attempt.into_answer();
+            (error.status().as_u16(), error.code().to_owned())
+        };
+        let conflict = Attempt::from(DbError::Conflict("index".into()));
+        assert!(matches!(conflict, Attempt::Retry(_)));
+        assert_eq!(answer(conflict), (409, "session_already_open".into()));
+        let busy = Attempt::Retry(DbError::Sqlx(sqlx::Error::PoolTimedOut));
+        assert_eq!(answer(busy), (409, "conflict".into()));
+        let fail = Attempt::from(DbError::Corrupt("x".into()));
+        assert!(matches!(fail, Attempt::Fail(_)));
+        assert_eq!(answer(fail), (500, "internal".into()));
+    }
 
     fn body(counted: i64, counts: Option<Vec<(i64, u32)>>) -> CloseSession {
         CloseSession {

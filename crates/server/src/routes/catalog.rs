@@ -20,8 +20,8 @@
 //! `catalog.manage` held through a role assigned for **all branches** (decided in C3: the
 //! catalog is company-wide, so a grant at one branch is not enough; `403 permission_denied`).
 //! The repository writes the change, its audit row and its outbox row in one transaction; a
-//! transaction that loses a uniqueness race is run again ([`retrying`], at most
-//! [`WRITE_ATTEMPTS`] times). Every write that changed something publishes `catalog.changed` to
+//! transaction that loses a race is run again with a short backoff ([`retrying`], at most
+//! [`crate::retry::ATTEMPTS`] times; `409 conflict` when every attempt lost). Every write that changed something publishes `catalog.changed` to
 //! every event socket.
 
 use axum::Json;
@@ -34,6 +34,7 @@ use sultan_core::catalog::{
     CatalogError, MatchSource, ProductType, ScaleLayout, ScaleValueKind, UnitKind,
 };
 use sultan_core::ids::BranchId;
+use sultan_db::DbError;
 use sultan_db::catalog::{
     self, Actor, CatalogDbError, CatalogResult, CatalogSettings, LookupItem, SearchHit, Written,
 };
@@ -45,34 +46,38 @@ use crate::access::Caller;
 use crate::error::ApiError;
 use crate::events::Event;
 use crate::extract::{ApiJson, ApiQuery, CatalogReader, RequireHq, UserSession};
+use crate::retry::{self, Failure};
 use crate::state::AppState;
 
-/// How often a catalog write transaction runs when it keeps losing races.
-pub const WRITE_ATTEMPTS: u32 = 5;
 /// Default page size of `GET /catalog/search`.
 pub const DEFAULT_SEARCH_LIMIT: u32 = 20;
 
 /// Runs a whole write transaction again while it fails with a retryable error (a lost race on a
-/// unique key or a counter, a deadlock, a busy `SQLite` database), at most [`WRITE_ATTEMPTS`]
-/// times; any other error, or the last retryable one, is the answer.
+/// unique key or a counter, a deadlock, a busy `SQLite` database), with a short jittered backoff,
+/// at most [`retry::ATTEMPTS`] times ([`retry::run`]). Any other error is the answer; when every
+/// attempt lost a race the answer is `409 conflict`.
 ///
 /// # Errors
 /// The operation's error as problem+json.
-pub async fn retrying<T, F, Fut>(mut op: F) -> Result<T, ApiError>
+pub async fn retrying<T, F, Fut>(op: F) -> Result<T, ApiError>
 where
     F: FnMut() -> Fut,
     Fut: Future<Output = CatalogResult<T>>,
 {
-    let mut attempt = 1;
-    loop {
-        match op().await {
-            Ok(value) => return Ok(value),
-            Err(error) if error.is_retryable() && attempt < WRITE_ATTEMPTS => {
-                tracing::debug!(%error, attempt, "catalog write lost a race; retrying");
-                attempt += 1;
-            }
-            Err(error) => return Err(error.into()),
-        }
+    retry::run("catalog write", op, CatalogDbError::is_retryable)
+        .await
+        .map_err(|failure| match failure {
+            Failure::Final(error) => error.into(),
+            Failure::Exhausted(error) => gave_up(error),
+        })
+}
+
+/// The answer after every attempt lost a race: `409 conflict` (with the database's detail for
+/// a unique-key race).
+fn gave_up(error: CatalogDbError) -> ApiError {
+    match error {
+        CatalogDbError::Db(error @ DbError::Conflict(_)) => error.into(),
+        _ => retry::conflict(),
     }
 }
 
@@ -568,7 +573,8 @@ pub async fn generate_product_code(
     session: UserSession,
 ) -> Result<Json<GeneratedDto>, ApiError> {
     require_manage(&state, &session).await?;
-    let value = catalog::generate_product_code(&state.db, &actor(&session), state.now()).await?;
+    let (state, actor, now) = (&state, &actor(&session), state.now());
+    let value = retrying(|| catalog::generate_product_code(&state.db, actor, now)).await?;
     Ok(Json(GeneratedDto { value }))
 }
 
@@ -588,8 +594,8 @@ pub async fn generate_barcode(
     session: UserSession,
 ) -> Result<Json<GeneratedDto>, ApiError> {
     require_manage(&state, &session).await?;
-    let value =
-        catalog::generate_internal_barcode(&state.db, &actor(&session), state.now()).await?;
+    let (state, actor, now) = (&state, &actor(&session), state.now());
+    let value = retrying(|| catalog::generate_internal_barcode(&state.db, actor, now)).await?;
     Ok(Json(GeneratedDto { value }))
 }
 
@@ -603,7 +609,6 @@ mod tests {
     use std::cell::Cell;
 
     use super::*;
-    use sultan_db::DbError;
 
     #[tokio::test]
     async fn retrying_reruns_retryable_errors_only() {
@@ -632,7 +637,7 @@ mod tests {
         .unwrap_err();
         assert_eq!((calls.get(), err.code()), (1, "archived"));
 
-        // A race lost every time gives up after WRITE_ATTEMPTS with `409 conflict`.
+        // A race lost every time gives up after all attempts with `409 conflict`.
         calls.set(0);
         let err = retrying(|| async move {
             calls.set(calls.get() + 1);
@@ -640,7 +645,17 @@ mod tests {
         })
         .await
         .unwrap_err();
-        assert_eq!(calls.get(), WRITE_ATTEMPTS);
+        assert_eq!(calls.get(), retry::ATTEMPTS);
+        assert_eq!((err.status().as_u16(), err.code()), (409, "conflict"));
+        assert_eq!(err.detail(), "race");
+    }
+
+    #[test]
+    fn a_busy_database_to_the_end_is_a_conflict() {
+        let busy = CatalogDbError::Db(DbError::Sqlx(sqlx::Error::PoolTimedOut));
+        let err = gave_up(busy);
+        assert_eq!((err.status().as_u16(), err.code()), (409, "conflict"));
+        let err = gave_up(CatalogDbError::Db(DbError::Conflict("dup".into())));
         assert_eq!((err.status().as_u16(), err.code()), (409, "conflict"));
     }
 

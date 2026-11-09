@@ -34,9 +34,9 @@ pub const QUALITIES: [u8; 6] = [85, 75, 65, 55, 45, 35];
 /// Media type of every stored image.
 pub const STORED_MIME: &str = "image/jpeg";
 /// Largest decoded side accepted (larger images are refused before decoding).
-const MAX_DECODED_SIDE: u32 = 12_000;
-/// Largest decoder allocation.
-const MAX_DECODE_ALLOC: u64 = 512 * 1024 * 1024;
+pub const MAX_DECODED_SIDE: u32 = 8_000;
+/// Largest decoder allocation: 256 MB.
+pub const MAX_DECODE_ALLOC: u64 = 256 * 1024 * 1024;
 
 /// A processed image, ready to store.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -107,6 +107,19 @@ pub fn process(bytes: &[u8]) -> Result<Processed, ApiError> {
             .resize(side, side, FilterType::Triangle)
             .to_rgb8();
     }
+}
+
+/// [`process`] on the blocking thread pool: decoding and re-encoding are CPU-heavy and must not
+/// stall the async runtime.
+///
+/// # Errors
+/// As [`process`]; `500 internal` if the blocking task panicked.
+pub async fn process_blocking(
+    bytes: impl AsRef<[u8]> + Send + 'static,
+) -> Result<Processed, ApiError> {
+    tokio::task::spawn_blocking(move || process(bytes.as_ref()))
+        .await
+        .map_err(|_| ApiError::internal())?
 }
 
 /// Scales `image` down to fit within `side`×`side`, keeping the aspect ratio; never up.
@@ -228,6 +241,32 @@ mod tests {
             assert_eq!((err.status().as_u16(), err.code()), (422, "invalid_image"));
         }
         assert_eq!(too_large().status().as_u16(), 413);
+    }
+
+    #[test]
+    fn images_over_the_decode_limits_are_rejected() {
+        for (width, height) in [(MAX_DECODED_SIDE + 1, 1), (1, MAX_DECODED_SIDE + 1)] {
+            let bytes = png(&DynamicImage::ImageLuma8(image::GrayImage::new(
+                width, height,
+            )));
+            let err = process(&bytes).unwrap_err();
+            assert_eq!((err.status().as_u16(), err.code()), (422, "invalid_image"));
+        }
+        // At the side limit the image is decoded and scaled down.
+        let edge = png(&DynamicImage::ImageLuma8(image::GrayImage::new(
+            MAX_DECODED_SIDE,
+            1,
+        )));
+        assert_eq!(process(&edge).unwrap().width, MAX_SIDE);
+    }
+
+    #[tokio::test]
+    async fn processing_runs_on_the_blocking_pool() {
+        let small = png(&DynamicImage::ImageRgb8(RgbImage::new(10, 4)));
+        let out = process_blocking(small).await.unwrap();
+        assert_eq!((out.width, out.height), (10, 4));
+        let err = process_blocking(b"nope".to_vec()).await.unwrap_err();
+        assert_eq!(err.code(), "invalid_image");
     }
 
     #[test]

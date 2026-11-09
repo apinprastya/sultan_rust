@@ -72,7 +72,7 @@ pub async fn put(
     let bytes = to_bytes(body, MAX_UPLOAD_BYTES)
         .await
         .map_err(|_| product_image::too_large())?;
-    let processed = product_image::process(&bytes)?;
+    let processed = product_image::process_blocking(bytes).await?;
     let image = ProductImage {
         mime: STORED_MIME.to_owned(),
         width: processed.width,

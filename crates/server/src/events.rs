@@ -270,11 +270,16 @@ fn revoked(me: &UserSession, event: &Event, user: UserId, session: Option<TokenH
 }
 
 /// Whether the socket's caller may see an event for `scopes` (spec 2.1 §3 branch visibility).
+/// A company-wide scope ([`BranchScope::All`], e.g. [`Audience::Everyone`]) is seen by every
+/// valid session, so the caller's permissions are not loaded for it.
 async fn sees_any(
     state: &AppState,
     me: &UserSession,
     scopes: &[BranchScope],
 ) -> Result<bool, ApiError> {
+    if scopes.contains(&BranchScope::All) {
+        return Ok(true);
+    }
     let view = Caller::load(&state.db, me).await?.branch_view();
     Ok(scopes.iter().any(|s| match s {
         BranchScope::All => true,
@@ -386,6 +391,49 @@ mod tests {
         let event = Event::for_branch("x", BranchId::generate(), json!({}));
         hub.clone().publish(event.clone());
         assert_eq!(rx.try_recv().unwrap(), event);
+    }
+
+    /// A session for an unknown user (no database row is needed: nothing is looked up).
+    fn session() -> UserSession {
+        let now = sultan_core::time::Timestamp::from_unix_millis(0);
+        let user = UserId::generate();
+        UserSession {
+            token_hash: [7; 32],
+            session: auth::AuthSession {
+                token_hash: [7; 32],
+                user,
+                register: None,
+                branch: BranchId::generate(),
+                created_at: now,
+                last_seen: now,
+                expires_at: now,
+                revoked_at: None,
+            },
+            user: users::User {
+                id: user,
+                username: "x".into(),
+                display_name: "X".into(),
+                pin_hash: None,
+                password_hash: None,
+                active: true,
+            },
+        }
+    }
+
+    #[tokio::test]
+    async fn company_wide_scopes_skip_the_permission_lookup() {
+        // No migrations: any permission query fails, so `Ok(true)` proves none ran.
+        let db = sultan_db::Db::connect("sqlite::memory:").await.unwrap();
+        let clock =
+            crate::state::ManualClock::new(sultan_core::time::Timestamp::from_unix_millis(0));
+        let state = AppState::new(db, crate::state::NodeRole::Hq, std::sync::Arc::new(clock));
+        let me = session();
+        assert!(sees_any(&state, &me, &[BranchScope::All]).await.unwrap());
+        let mixed = [BranchScope::Branch(BranchId::generate()), BranchScope::All];
+        assert!(sees_any(&state, &me, &mixed).await.unwrap());
+        // A branch scope does look the permissions up (and fails here).
+        let branch = [BranchScope::Branch(BranchId::generate())];
+        assert!(sees_any(&state, &me, &branch).await.is_err());
     }
 
     #[test]

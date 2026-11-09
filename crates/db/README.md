@@ -74,9 +74,14 @@ kill %1 && rm -rf "$DIR"
   them.
 - Session numbers (`cashier_sessions::insert`) are allocated as `MAX(seq) + 1` inside the open
   transaction, guarded by `UNIQUE (register_id, local_day, seq)`. Under `REPEATABLE READ` two
-  racing opens can read the same maximum. The loser gets a duplicate key error (on SQLite,
-  `BUSY`), and the server reruns the transaction (`DbError::is_retryable`), which then answers
-  `409 session_already_open`. Concurrent opens are tested on both backends.
+  racing opens can read the same maximum. The loser gets a duplicate key error (or a deadlock),
+  and the server reruns the transaction with a short jittered backoff (`DbError::is_retryable`,
+  `sultan_server::retry`), which then answers `409 session_already_open`. Concurrent opens are
+  tested on both backends.
+- On SQLite, `Db::begin` issues `BEGIN IMMEDIATE`: a transaction takes the write lock up front
+  and waits for it up to the busy timeout (5 s). A deferred transaction that read first could
+  otherwise fail at its first write with `SQLITE_BUSY_SNAPSHOT`, which ignores the busy timeout.
+  Readers outside transactions are not blocked (WAL).
 
 ## File permissions
 

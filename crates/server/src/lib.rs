@@ -40,6 +40,7 @@ pub mod movements;
 pub mod openapi;
 pub mod overrides;
 pub mod product_image;
+pub mod retry;
 pub mod routes;
 pub mod state;
 pub mod token;

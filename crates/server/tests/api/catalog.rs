@@ -4,6 +4,7 @@
 use axum::http::{Method, StatusCode};
 use serde_json::{Value, json};
 use sultan_core::ids::VariantId;
+use sultan_db::Db;
 
 use crate::catalog_fixtures::{
     STANDARD, as_device, create, ean13, kaos, put_brand, put_category, put_product, simple,
@@ -19,6 +20,7 @@ api_tests!(
     categories,
     brands,
     settings_and_generators,
+    racing_catalog_writes,
 );
 
 /// §14 item 15 + 20: create → replay → no duplicates; the update diff is applied atomically, with
@@ -596,4 +598,106 @@ async fn settings_and_generators(h: &Harness) {
     assert!(value.starts_with("28"), "{value}");
     assert_eq!(value, ean13(&value[..12]));
     assert_eq!(h.audit_count("catalog.generate.product_code").await, 2);
+}
+
+/// How many writers race in [`racing_catalog_writes`].
+const RACERS: usize = 8;
+
+/// Concurrent writes that collide: every request gets its proper answer (the server reruns a
+/// transaction that lost a race, with backoff), never a `500`.
+async fn racing_catalog_writes(h: &Harness) {
+    race_same_sku(h).await;
+    race_generators(h).await;
+}
+
+/// Sends `RACERS` requests at once, built by `request(n)`, as the owner.
+async fn concurrently(
+    h: &Harness,
+    request: impl Fn(usize) -> (Method, String, Option<Value>),
+) -> Vec<crate::common::Response> {
+    let bearer = format!("Bearer {}", h.owner_token().await);
+    let tasks: Vec<_> = (0..RACERS)
+        .map(|n| {
+            let (app, bearer) = (h.app(), bearer.clone());
+            let (method, uri, body) = request(n);
+            tokio::spawn(async move {
+                Harness::send_to(app, method, &uri, &[("authorization", &bearer)], body).await
+            })
+        })
+        .collect();
+    let mut responses = Vec::new();
+    for task in tasks {
+        responses.push(task.await.unwrap());
+    }
+    responses
+}
+
+/// Different products with the same SKU: exactly one wins, the others are `409 duplicate_sku`.
+async fn race_same_sku(h: &Harness) {
+    let docs: Vec<_> = (0..RACERS)
+        .map(|n| {
+            let barcode = ean13(&format!("8991000000{n:02}"));
+            let mut doc = simple(&format!("RACE{n}"), &barcode);
+            doc.body["variants"][0]["sku"] = "RACE-SKU".into();
+            doc
+        })
+        .collect();
+    let responses = concurrently(h, |n| {
+        let doc = &docs[n];
+        (
+            Method::PUT,
+            format!("/api/v1/products/{}", doc.id),
+            Some(doc.body.clone()),
+        )
+    })
+    .await;
+    let mut statuses = Vec::new();
+    for r in &responses {
+        if r.status != StatusCode::CREATED {
+            r.assert_problem(409, "duplicate_sku");
+        }
+        statuses.push(r.status.as_u16());
+    }
+    statuses.sort_unstable();
+    let mut expected = vec![409; RACERS];
+    expected[0] = 201;
+    assert_eq!(statuses, expected);
+}
+
+/// Concurrent generators: every request gets its own value.
+async fn race_generators(h: &Harness) {
+    for path in ["product-code", "barcode"] {
+        let responses = concurrently(h, |_| {
+            (
+                Method::POST,
+                format!("/api/v1/catalog/generate/{path}"),
+                None,
+            )
+        })
+        .await;
+        let mut values: Vec<String> = responses
+            .iter()
+            .map(|r| {
+                assert_eq!(r.status, StatusCode::OK, "{path}: {}", r.body);
+                r.body["value"].as_str().unwrap().to_owned()
+            })
+            .collect();
+        values.sort_unstable();
+        values.dedup();
+        assert_eq!(values.len(), RACERS, "{path}: {values:?}");
+    }
+}
+
+/// The same races on a `SQLite` file with a real connection pool (multi-threaded runtime).
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn racing_catalog_writes_on_a_sqlite_file() {
+    let dir = std::env::temp_dir().join(format!("sultan-catalog-race-{}", uuid::Uuid::now_v7()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let db = Db::connect(&format!("sqlite://{}", dir.join("race.db").display()))
+        .await
+        .unwrap();
+    let h = Harness::with_db(db).await;
+    racing_catalog_writes(&h).await;
+    h.db.close().await;
+    std::fs::remove_dir_all(dir).unwrap();
 }
