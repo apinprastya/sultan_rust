@@ -403,8 +403,8 @@ msgstr "Saya punya kode pairing"
 msgid "Use a manager login"
 msgstr "Pakai login manajer"
 
-msgid "Open the register"
-msgstr "Buka kasir"
+msgid "Open Sultan"
+msgstr "Buka Sultan"
 
 msgid "Finish"
 msgstr "Selesai"
@@ -517,8 +517,11 @@ msgstr "Ketik kode sekali pakai dari back office (berlaku 10 menit)."
 msgid "All set"
 msgstr "Semua siap"
 
-msgid "The shop {} (branch {}) is ready. The register opens next; log in with the owner PIN."
-msgstr "Toko {} (cabang {}) sudah siap. Kasir akan terbuka; login dengan PIN pemilik."
+msgid "The shop {} (branch {}) is ready. The Start screen opens next: F1 opens the register; log in with the owner PIN."
+msgstr "Toko {} (cabang {}) sudah siap. Berikutnya layar awal terbuka: F1 membuka kasir; masuk dengan PIN pemilik."
+
+msgid "More cash registers later? Start screen → Settings (F3) → Terminals in this shop: allow terminals to connect, then set up each terminal with the address shown there."
+msgstr "Nanti perlu kasir tambahan? Layar awal → Pengaturan (F3) → Terminal di toko ini: izinkan terminal terhubung, lalu siapkan setiap terminal dengan alamat yang ditampilkan di sana."
 
 msgid "The HQ server for {} (branch {}) is set up."
 msgstr "Server HQ untuk {} (cabang {}) sudah disiapkan."
@@ -576,7 +579,7 @@ msgid "Stock"
 msgstr "Stok"
 
 msgid "Weighed"
-msgstr "Timbang"
+msgstr "Ditimbang"
 
 msgid "Service"
 msgstr "Jasa"
@@ -792,7 +795,7 @@ msgid "Short name"
 msgstr "Nama singkat"
 
 msgid "Quantities"
-msgstr "Jumlah"
+msgstr "Jenis"
 
 msgid "Whole pieces (pcs, box)"
 msgstr "Bilangan bulat (pcs, box)"
@@ -1087,3 +1090,213 @@ msgstr "Semua merek"
 
 msgid "(Top level)"
 msgstr "(Tingkat utama)"
+
+# Register barcode lookup (phase C5).
+msgid "No item has the code {}."
+msgstr "Tidak ada barang dengan kode {}."
+
+msgid "{} is not sold at this branch."
+msgstr "{} tidak dijual di cabang ini."
+
+msgid "{} is archived and can no longer be sold."
+msgstr "{} sudah diarsipkan dan tidak bisa dijual lagi."
+
+msgid "{} is not for sale."
+msgstr "{} tidak untuk dijual."
+
+msgid "The scale label {} shows 0. Weigh the item again."
+msgstr "Label timbangan {} menunjukkan 0. Timbang ulang barangnya."
+
+msgid "Look up"
+msgstr "Cari"
+
+msgid "Clear"
+msgstr "Hapus"
+
+msgid "Barcode (UPC/EAN form)"
+msgstr "Barcode (bentuk UPC/EAN)"
+
+msgid "Scale label (weight)"
+msgstr "Label timbangan (berat)"
+
+msgid "Scale label (price)"
+msgstr "Label timbangan (harga)"
+
+msgid "Barcode, SKU or PLU"
+msgstr "Barcode, SKU, atau PLU"
+
+msgid "BARCODE · SKU · PLU"
+msgstr "BARCODE · SKU · PLU"
+
+msgid "Scan or type a code, then press Enter"
+msgstr "Pindai atau ketik kode, lalu tekan Enter"
+
+msgid "Looking up {}…"
+msgstr "Mencari {}…"
+
+msgid "Scan an item to see it here."
+msgstr "Pindai barang untuk menampilkannya di sini."
+
+msgid "Check the item or the label and scan again. Esc clears."
+msgstr "Periksa barang atau labelnya, lalu pindai lagi. Esc untuk menghapus."
+
+msgid "Open price"
+msgstr "Harga bebas"
+
+msgid "Needs a note"
+msgstr "Perlu catatan"
+
+msgid "Quantity"
+msgstr "Jumlah"
+
+msgid "Found by"
+msgstr "Ditemukan lewat"
+
+msgid "Amount on the label"
+msgstr "Nominal di label"
+
+msgid "Price"
+msgstr "Harga"
+
+msgid "Prices and the cart arrive in a later version."
+msgstr "Harga dan keranjang belanja hadir di versi berikutnya."
+
+# Start screen (ui/start.slint) and the way back to it (F9).
+msgid "Sultan POS · Start"
+msgstr "Sultan POS · Mulai"
+
+msgid "Start screen"
+msgstr "Layar awal"
+
+msgid "What do you want to open?"
+msgstr "Apa yang ingin dibuka?"
+
+msgid "Press a key or tap a tile."
+msgstr "Tekan tombolnya atau ketuk salah satu kotak."
+
+msgid "Cash register"
+msgstr "Kasir"
+
+msgid "Sell: each cashier logs in with their PIN."
+msgstr "Berjualan: setiap kasir masuk dengan PIN-nya."
+
+msgid "Products, categories and brands: log in with your username and password."
+msgstr "Produk, kategori, dan merek: masuk dengan nama pengguna dan kata sandi Anda."
+
+msgid "Settings"
+msgstr "Pengaturan"
+
+msgid "Language, connection and setting this computer up again."
+msgstr "Bahasa, koneksi, dan penyiapan ulang komputer ini."
+
+msgid "Check connection"
+msgstr "Periksa koneksi"
+
+msgid "Change language"
+msgstr "Ganti bahasa"
+
+msgid "Set up again"
+msgstr "Siapkan ulang"
+
+msgid "Continue"
+msgstr "Lanjutkan"
+
+msgid "Connecting to {}…"
+msgstr "Menghubungkan ke {}…"
+
+msgid "Not connected to {}"
+msgstr "Tidak terhubung ke {}"
+
+msgid "Connected to {}, but this register is not paired"
+msgstr "Terhubung ke {}, tetapi kasir ini belum dipasangkan"
+
+msgid "Single app: the server runs on this computer"
+msgstr "Aplikasi tunggal: server berjalan di komputer ini"
+
+msgid "Connected to {}"
+msgstr "Terhubung ke {}"
+
+msgid "Cannot reach the server at {}. Check the network cable or Wi-Fi and that the server is switched on, then press F5."
+msgstr "Server di {} tidak dapat dihubungi. Periksa kabel jaringan atau Wi-Fi dan pastikan server menyala, lalu tekan F5."
+
+msgid "The server does not know this register any more (it was unpaired). Open Settings and choose Set up again."
+msgstr "Server tidak lagi mengenali kasir ini (sudah dilepas). Buka Pengaturan, lalu pilih Siapkan ulang."
+
+msgid "Language"
+msgstr "Bahasa"
+
+msgid "Set by SULTAN_LANG on this computer."
+msgstr "Diatur oleh SULTAN_LANG di komputer ini."
+
+msgid "F6 switches. Saved for the next start."
+msgstr "F6 untuk mengganti. Disimpan untuk saat dibuka berikutnya."
+
+msgid "Connection"
+msgstr "Koneksi"
+
+msgid "App type"
+msgstr "Jenis aplikasi"
+
+msgid "Branch"
+msgstr "Cabang"
+
+msgid "Status"
+msgstr "Status"
+
+msgid "F8 opens the setup wizard, e.g. to make this computer a terminal of another server. A database that is already set up is never overwritten."
+msgstr "F8 membuka panduan penyiapan, misalnya untuk menjadikan komputer ini terminal dari server lain. Database yang sudah disiapkan tidak pernah ditimpa."
+
+msgid "Version"
+msgstr "Versi"
+
+msgid "Open the setup wizard?"
+msgstr "Buka panduan penyiapan?"
+
+msgid "This window closes while the wizard is open. A database that is already set up is never overwritten; closing the wizard brings you back here."
+msgstr "Jendela ini ditutup selama panduan terbuka. Database yang sudah disiapkan tidak pernah ditimpa; menutup panduan akan membawa Anda kembali ke sini."
+
+# Start screen → Settings → Terminals in this shop (single app only).
+msgid "Terminals could not be switched: {}. The previous setting stays."
+msgstr "Terminal tidak bisa diubah: {}. Pengaturan sebelumnya tetap berlaku."
+
+msgid "Port {} is already used by another program on this computer. The previous setting stays."
+msgstr "Port {} sudah dipakai program lain di komputer ini. Pengaturan sebelumnya tetap berlaku."
+
+msgid "Terminals cannot connect: port {} could not be opened on this computer (another program may use it), so only this computer uses its server now. Switch terminals on again in Settings."
+msgstr "Terminal tidak bisa terhubung: port {} tidak bisa dibuka di komputer ini (mungkin dipakai program lain), jadi sekarang hanya komputer ini yang memakai servernya. Aktifkan terminal lagi di Pengaturan."
+
+msgid "Allow terminals"
+msgstr "Izinkan terminal"
+
+msgid "Terminals in this shop"
+msgstr "Terminal di toko ini"
+
+msgid "Other cash registers (terminals) on the shop network can use this computer's server."
+msgstr "Kasir lain (terminal) di jaringan toko dapat memakai server komputer ini."
+
+msgid "Allow terminals to connect"
+msgstr "Izinkan terminal terhubung"
+
+msgid "Restarting the server…"
+msgstr "Server sedang dimulai ulang…"
+
+msgid "Set by SULTAN_LISTEN on this computer."
+msgstr "Diatur oleh SULTAN_LISTEN di komputer ini."
+
+msgid "F7 switches. Saved for the next start."
+msgstr "F7 untuk mengganti. Disimpan untuk saat dibuka berikutnya."
+
+msgid "In the terminal's setup wizard, type this server address:"
+msgstr "Di panduan penyiapan terminal, ketik alamat server ini:"
+
+msgid "No network address was found on this computer. Connect it to the shop network, then open Settings again."
+msgstr "Tidak ditemukan alamat jaringan di komputer ini. Hubungkan ke jaringan toko, lalu buka Pengaturan lagi."
+
+msgid "Off: only this computer uses its server. Turn it on to add terminals."
+msgstr "Nonaktif: hanya komputer ini yang memakai servernya. Aktifkan untuk menambah terminal."
+
+msgid "Terminals still need a manager login or a pairing code to connect. Turn this on only in a trusted shop network."
+msgstr "Terminal tetap memerlukan login manajer atau kode pairing untuk terhubung. Aktifkan hanya di jaringan toko yang tepercaya."
+
+msgid "If a terminal cannot connect, allow incoming TCP port {} in this computer's firewall."
+msgstr "Jika terminal tidak bisa terhubung, izinkan koneksi masuk ke port TCP {} di firewall komputer ini."

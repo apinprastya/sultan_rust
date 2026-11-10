@@ -29,9 +29,10 @@ use crate::amount::{rupiah, signed_rupiah};
 use crate::controller::{Controller, Effect, Msg, Notice, Screen, TILE_COLUMNS, Tone, value_text};
 use crate::count::{CountForm, DENOMINATIONS, is_coin};
 use crate::input::{Key, date_time, time_of_day};
+use crate::scan::{ScanField, match_kind, qty_text};
 use crate::{
     Chip, CloseView, DenomRow, HomeView, LockView, MainWindow, Note, OpenView, OverrideView,
-    ReportLine, ReportView, UserTile,
+    ReportLine, ReportView, ScanView, UserTile,
 };
 
 /// How service calls run; see the module docs.
@@ -69,6 +70,9 @@ pub struct Options {
     pub language: Option<String>,
     /// The clock.
     pub clock: Clock,
+    /// Opened from the Start screen: the lock screen offers F9 to go back to it (the window
+    /// closes).
+    pub start: bool,
 }
 
 impl Options {
@@ -79,6 +83,7 @@ impl Options {
             register_label: register_label.into(),
             language: None,
             clock: system_clock(),
+            start: false,
         }
     }
 }
@@ -197,7 +202,16 @@ fn start(service: &dyn Service, effect: Effect) -> Option<MsgFuture> {
             Msg::Protected
         ),
         Effect::Logout { token } => call!(service.logout(&token), Msg::LoggedOut),
-        Effect::WatchEvents { .. } => None,
+        Effect::Lookup {
+            token,
+            code,
+            seq,
+            generation,
+        } => {
+            let future = service.lookup(&token, &code);
+            Some(Box::pin(async move { Msg::Looked(generation, seq, future.await) }) as MsgFuture)
+        }
+        Effect::WatchEvents { .. } | Effect::Exit => None,
     }
 }
 
@@ -244,6 +258,13 @@ impl State {
                 self.runner.handle().spawn(async move {
                     let _ = watching.await;
                 });
+                continue;
+            }
+            if effect == Effect::Exit {
+                if let Some(ui) = self.ui.upgrade() {
+                    // Ends `run_event_loop` when this is the last window.
+                    let _ = ui.hide();
+                }
                 continue;
             }
             let Some(future) = start(self.service.as_ref(), effect) else {
@@ -342,6 +363,60 @@ fn report_lines(r: &CloseReport) -> (Vec<ReportLine>, Vec<ReportLine>) {
         })
         .collect();
     (lines, tenders)
+}
+
+/// The barcode field and the shown item (phase C5). No price: only the amount printed on a
+/// price scale label.
+fn scan_view(scan: &ScanField, now: i64) -> ScanView {
+    let mut view = ScanView {
+        code: scan.code.as_str().into(),
+        looking: scan.looking().unwrap_or_default().into(),
+        ..ScanView::default()
+    };
+    let Some(shown) = &scan.shown else {
+        return view;
+    };
+    view.scanned = shown.code.as_str().into();
+    match &shown.result {
+        Err(notice) => {
+            view.state = 2;
+            view.note = note(Some(notice), now);
+        }
+        Ok(item) => {
+            view.state = 1;
+            view.name = if item.product_name.is_empty() {
+                &item.name
+            } else {
+                &item.product_name
+            }
+            .into();
+            view.variant = item.variant_label.as_str().into();
+            view.sku = item.sku.as_str().into();
+            view.unit = item.unit_name.as_str().into();
+            view.qty = item
+                .qty_thousandths
+                .map(|q| {
+                    format!("{} {}", qty_text(q), item.unit_name)
+                        .trim_end()
+                        .to_owned()
+                })
+                .unwrap_or_default()
+                .into();
+            view.plu = item.plu.map(|p| p.to_string()).unwrap_or_default().into();
+            view.kind = item.product_type.as_str().into();
+            view.r#match = match_kind(item).into();
+            view.matched = if item.matched_code.is_empty() {
+                &shown.code
+            } else {
+                &item.matched_code
+            }
+            .into();
+            view.amount = item.amount.map(rupiah).unwrap_or_default().into();
+            view.open_price = item.open_price;
+            view.requires_note = item.requires_note;
+        }
+    }
+    view
 }
 
 fn denominations(form: &CountForm) -> Vec<DenomRow> {
@@ -450,6 +525,7 @@ fn render(ui: &MainWindow, c: &Controller, now: i64, models: &Models, options: &
                     .into(),
                 note: note(h.notice.as_ref(), now),
             });
+            ui.set_scan(scan_view(&h.scan, now));
         }
         Screen::Close(close) => {
             sync(&models.denoms, denominations(&close.form));
@@ -589,7 +665,8 @@ pub fn build_app(
         }
         Runner::Block(_) => Arc::new(|| {}),
     };
-    let (controller, effects) = Controller::new();
+    let (mut controller, effects) = Controller::new();
+    controller.start = options.start;
     let state = Rc::new(State {
         ui: ui.as_weak(),
         controller: RefCell::new(controller),

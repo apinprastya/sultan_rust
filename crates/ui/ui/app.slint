@@ -2,8 +2,8 @@
 // (`crates/ui/src/app.rs`) sets the view properties and receives keys, actions and picks.
 //
 // Keyboard: one FocusScope holds the focus for the whole window and hands every key to Rust
-// (`key`), which decides per screen and per dialog what it means. There are no text fields, so no
-// widget swallows keys (the reason `sultan-spike` needed `capture-key-pressed`), and the override
+// (`key`), which decides per screen and per dialog what it means. There are no text fields (the
+// session home's barcode field is drawn here and edited in Rust), so no widget swallows keys (the reason `sultan-spike` needed `capture-key-pressed`), and the override
 // dialog cannot leak keys to the page below: Rust routes them to the dialog while it is open.
 // Clicks on tiles, keypads and key chips call the same paths.
 
@@ -13,6 +13,8 @@ import { Note, Chip, Card, KeyChip, NoteLine, Avatar, PinDots, Keypad } from "wi
 export { Note, Chip, Theme, Strings }
 // The first-run setup wizard, a window of its own.
 export { SetupWindow, SetupForm, SetupStrings } from "setup.slint";
+// The Start screen of a single app or a terminal, a window of its own.
+export { StartWindow, StartStrings } from "start.slint";
 // The back office (phase C4), a window of its own.
 export { BackOfficeWindow, BoStrings, BoLogin, BoList, BoProductRow, BoTreeRow, BoCategoryEditor, BoBrandEditor, BoForm, BoGeneral, BoOption, BoValue, BoCombo, BoUnit, BoBarcode, BoComponent, BoHit, BoBranch } from "backoffice.slint";
 
@@ -44,6 +46,28 @@ export struct HomeView {
     since: string,
     opening: string,
     note: Note,
+}
+
+// The barcode field and the item it found (phase C5; `crates/ui/src/scan.rs`).
+// state: 0 nothing shown, 1 an item, 2 no item (`note` says why).
+export struct ScanView {
+    code: string,
+    looking: string,
+    state: int,
+    scanned: string,
+    note: Note,
+    name: string,
+    variant: string,
+    sku: string,
+    unit: string,
+    qty: string,
+    plu: string,
+    kind: string,
+    match: string,
+    matched: string,
+    amount: string,
+    open-price: bool,
+    requires-note: bool,
 }
 
 export struct DenomRow {
@@ -367,20 +391,293 @@ component Stat inherits Rectangle {
     in property <string> value;
     border-radius: 12px;
     background: Theme.raised;
-    min-height: 92px;
     VerticalLayout {
-        padding: 16px;
-        spacing: 6px;
+        padding-left: 16px;
+        padding-right: 16px;
+        padding-top: 10px;
+        padding-bottom: 10px;
+        spacing: 2px;
         Text {
             text: root.label;
             color: Theme.muted;
-            font-size: 13px;
+            font-size: 12px;
         }
         Text {
             text: root.value;
             color: Theme.text;
-            font-size: 28px;
+            font-size: 20px;
             font-weight: 700;
+        }
+    }
+}
+
+// The barcode field: drawn here, edited in Rust (every key goes through the window's
+// FocusScope, so the field never takes the focus away from the shortcuts).
+component ScanBox inherits Rectangle {
+    in property <ScanView> view;
+    callback action(string);
+    accessible-role: text-input;
+    accessible-label: @tr("Barcode, SKU or PLU");
+    accessible-value: root.view.code;
+    height: 68px;
+    border-radius: 12px;
+    border-width: 2px;
+    border-color: Theme.accent;
+    background: Theme.raised;
+    HorizontalLayout {
+        padding-left: 16px;
+        padding-right: 12px;
+        spacing: 12px;
+        VerticalLayout {
+            horizontal-stretch: 1;
+            alignment: center;
+            spacing: 2px;
+            Text {
+                text: @tr("BARCODE · SKU · PLU");
+                color: Theme.muted;
+                font-size: 11px;
+                font-weight: 700;
+            }
+            HorizontalLayout {
+                spacing: 2px;
+                alignment: start;
+                if root.view.code != "": Text {
+                    text: root.view.code;
+                    color: Theme.text;
+                    font-size: 22px;
+                    font-weight: 600;
+                    vertical-alignment: center;
+                }
+                // The caret: the field always has the keyboard.
+                VerticalLayout {
+                    alignment: center;
+                    Rectangle {
+                        width: 2px;
+                        height: 24px;
+                        background: Theme.accent;
+                    }
+                }
+                if root.view.code == "": Text {
+                    text: @tr("Scan or type a code, then press Enter");
+                    color: Theme.muted;
+                    font-size: 16px;
+                    vertical-alignment: center;
+                    overflow: elide;
+                }
+            }
+        }
+        if root.view.looking != "": Text {
+            text: @tr("Looking up {}…", root.view.looking);
+            color: Theme.warn;
+            font-size: 13px;
+            vertical-alignment: center;
+            overflow: elide;
+            max-width: 200px;
+        }
+        VerticalLayout {
+            alignment: center;
+            KeyChip {
+                keys: "Enter";
+                label: Strings.chip("look_up");
+                clicked => {
+                    root.action("confirm");
+                }
+            }
+        }
+        VerticalLayout {
+            alignment: center;
+            KeyChip {
+                keys: "Esc";
+                label: Strings.chip("clear");
+                clicked => {
+                    root.action("back");
+                }
+            }
+        }
+    }
+}
+
+component Field inherits VerticalLayout {
+    in property <string> label;
+    in property <string> value;
+    spacing: 2px;
+    Text {
+        text: root.label;
+        color: Theme.muted;
+        font-size: 12px;
+    }
+    Text {
+        text: root.value == "" ? "–" : root.value;
+        color: Theme.text;
+        font-size: 18px;
+        font-weight: 600;
+        overflow: elide;
+    }
+}
+
+component Badge inherits Rectangle {
+    in property <string> text;
+    in property <color> tint: Theme.accent;
+    height: 26px;
+    border-radius: 13px;
+    background: Theme.accent-soft;
+    HorizontalLayout {
+        padding-left: 10px;
+        padding-right: 10px;
+        Text {
+            text: root.text;
+            color: root.tint;
+            font-size: 13px;
+            font-weight: 600;
+            vertical-alignment: center;
+        }
+    }
+}
+
+// What the last scan found. Prices are not in the catalog (spec 2.3): the price row is a
+// placeholder, except the amount printed on a price scale label.
+component ItemPanel inherits Card {
+    in property <ScanView> view;
+    if root.view.state == 0: VerticalLayout {
+        padding: 24px;
+        alignment: center;
+        spacing: 8px;
+        Text {
+            text: root.view.looking != "" ? @tr("Looking up {}…", root.view.looking) : @tr("Scan an item to see it here.");
+            color: Theme.text;
+            font-size: 18px;
+            horizontal-alignment: center;
+        }
+        Subtitle {
+            text: @tr("Selling arrives in a later version.") + " " + @tr("Your session stays open while the register is locked.");
+            horizontal-alignment: center;
+        }
+    }
+    if root.view.state == 2: VerticalLayout {
+        padding: 24px;
+        alignment: center;
+        spacing: 10px;
+        Text {
+            text: Strings.message(root.view.note.code, root.view.note.arg);
+            color: Theme.danger;
+            font-size: 22px;
+            font-weight: 700;
+            wrap: word-wrap;
+            horizontal-alignment: center;
+        }
+        Subtitle {
+            text: @tr("Check the item or the label and scan again. Esc clears.");
+            horizontal-alignment: center;
+        }
+    }
+    if root.view.state == 1: VerticalLayout {
+        padding: 20px;
+        spacing: 14px;
+        HorizontalLayout {
+            spacing: 12px;
+            VerticalLayout {
+                horizontal-stretch: 1;
+                spacing: 2px;
+                Text {
+                    text: root.view.name;
+                    color: Theme.text;
+                    font-size: 24px;
+                    font-weight: 700;
+                    overflow: elide;
+                }
+                Text {
+                    text: root.view.variant;
+                    color: Theme.muted;
+                    font-size: 16px;
+                    overflow: elide;
+                }
+            }
+            VerticalLayout {
+                alignment: start;
+                HorizontalLayout {
+                    spacing: 6px;
+                    Badge {
+                        text: Strings.product-type(root.view.kind);
+                    }
+                    if root.view.open-price: Badge {
+                        text: @tr("Open price");
+                        tint: Theme.warn;
+                    }
+                    if root.view.requires-note: Badge {
+                        text: @tr("Needs a note");
+                        tint: Theme.warn;
+                    }
+                }
+            }
+        }
+        HorizontalLayout {
+            spacing: 16px;
+            Field {
+                horizontal-stretch: 1;
+                label: @tr("Quantity");
+                value: root.view.qty;
+            }
+            Field {
+                horizontal-stretch: 1;
+                label: @tr("Unit");
+                value: root.view.unit;
+            }
+            Field {
+                horizontal-stretch: 1;
+                label: "SKU";
+                value: root.view.sku;
+            }
+            Field {
+                horizontal-stretch: 1;
+                label: "PLU";
+                value: root.view.plu;
+            }
+        }
+        HorizontalLayout {
+            spacing: 16px;
+            Field {
+                horizontal-stretch: 1;
+                label: @tr("Found by");
+                value: Strings.match-kind(root.view.match);
+            }
+            Field {
+                horizontal-stretch: 3;
+                label: @tr("Code");
+                value: root.view.matched;
+            }
+        }
+        Rectangle {
+            vertical-stretch: 1;
+        }
+        Rectangle {
+            border-radius: 10px;
+            background: Theme.raised;
+            HorizontalLayout {
+                padding: 12px;
+                spacing: 12px;
+                Text {
+                    text: root.view.amount != "" ? @tr("Amount on the label") : @tr("Price");
+                    color: Theme.muted;
+                    font-size: 14px;
+                    vertical-alignment: center;
+                }
+                Text {
+                    text: root.view.amount != "" ? root.view.amount : "–";
+                    color: Theme.text;
+                    font-size: 20px;
+                    font-weight: 700;
+                    vertical-alignment: center;
+                }
+                Text {
+                    horizontal-stretch: 1;
+                    text: @tr("Prices and the cart arrive in a later version.");
+                    color: Theme.muted;
+                    font-size: 13px;
+                    horizontal-alignment: right;
+                    vertical-alignment: center;
+                    wrap: word-wrap;
+                }
+            }
         }
     }
 }
@@ -388,23 +685,29 @@ component Stat inherits Rectangle {
 component HomePage inherits Rectangle {
     in property <string> user;
     in property <HomeView> view;
+    in property <ScanView> scan;
     in property <[Chip]> chips;
     callback action(string);
     HorizontalLayout {
-        padding: 32px;
+        padding: 28px;
         spacing: 24px;
         VerticalLayout {
             horizontal-stretch: 1;
-            spacing: 18px;
-            Title {
-                text: @tr("Hello, {}", root.user);
-                font-size: 32px;
-            }
-            if root.view.number != "": Subtitle {
-                text: @tr("Session {}", root.view.number);
-            }
+            spacing: 14px;
             HorizontalLayout {
                 spacing: 16px;
+                VerticalLayout {
+                    horizontal-stretch: 1;
+                    alignment: center;
+                    spacing: 4px;
+                    Title {
+                        text: @tr("Hello, {}", root.user);
+                        overflow: elide;
+                    }
+                    if root.view.number != "": Subtitle {
+                        text: @tr("Session {}", root.view.number);
+                    }
+                }
                 Stat {
                     label: @tr("Session open since");
                     value: root.view.since;
@@ -414,23 +717,15 @@ component HomePage inherits Rectangle {
                     value: root.view.opening;
                 }
             }
-            Card {
-                vertical-stretch: 1;
-                VerticalLayout {
-                    padding: 24px;
-                    alignment: center;
-                    spacing: 8px;
-                    Text {
-                        text: @tr("Selling arrives in a later version.");
-                        color: Theme.text;
-                        font-size: 18px;
-                        horizontal-alignment: center;
-                    }
-                    Subtitle {
-                        text: @tr("Your session stays open while the register is locked.");
-                        horizontal-alignment: center;
-                    }
+            ScanBox {
+                view: root.scan;
+                action(a) => {
+                    root.action(a);
                 }
+            }
+            ItemPanel {
+                vertical-stretch: 1;
+                view: root.scan;
             }
             NoteLine {
                 note: root.view.note;
@@ -438,7 +733,7 @@ component HomePage inherits Rectangle {
             }
         }
         VerticalLayout {
-            width: 300px;
+            width: 260px;
             spacing: 12px;
             Text {
                 text: @tr("ACTIONS");
@@ -863,6 +1158,7 @@ export component MainWindow inherits Window {
     in property <LockView> lock;
     in property <OpenView> open;
     in property <HomeView> home;
+    in property <ScanView> scan;
     in property <[DenomRow]> denoms;
     in property <CloseView> closing;
     in property <[ReportLine]> report-lines;
@@ -931,6 +1227,7 @@ export component MainWindow inherits Window {
                 if root.screen == "home": HomePage {
                     user: root.user-name;
                     view: root.home;
+                    scan: root.scan;
                     chips: root.actions;
                     action(a) => {
                         root.action(a);

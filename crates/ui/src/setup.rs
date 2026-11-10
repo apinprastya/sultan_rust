@@ -437,6 +437,8 @@ pub struct TerminalRequest {
     pub code: String,
     /// Register name, e.g. `Kasir 2`.
     pub name: String,
+    /// The branch as shown later on the Start screen, e.g. `JKT01 · Jakarta`.
+    pub branch_label: String,
 }
 
 /// This machine is paired.
@@ -1068,6 +1070,7 @@ impl SetupController {
                 branch_id: branch.id.clone(),
                 code: self.form.register_code.trim().to_owned(),
                 name: self.form.register_name.trim().to_owned(),
+                branch_label: format!("{} · {}", branch.code, branch.name),
             },
         }))
     }
@@ -1391,6 +1394,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::too_many_lines)] // one walk through every terminal page, in order
     fn terminal_logs_in_a_manager_and_registers() {
         let mut c = wizard();
         c.update(Msg::Pick(Pick::AppType, 3));
@@ -1477,6 +1481,7 @@ mod tests {
                     branch_id: "b1".into(),
                     code: "R2".into(),
                     name: "Kasir 2".into(),
+                    branch_label: "JKT01 · Jakarta".into(),
                 },
             }]
         );

@@ -11,7 +11,8 @@ use std::collections::HashMap;
 
 use sultan_core::catalog::{
     CatalogError, CatalogIndex, ItemRef, ItemStatus, MatchSource, Plu, ProductType, Qty,
-    ScaleLayout, check_sellable, resolve_lookup, search_key, variant_display_name,
+    ScaleLayout, check_sellable, matched_code, normalized_barcode, resolve_lookup, search_key,
+    variant_display_name,
 };
 use sultan_core::ids::{BranchId, ProductId, UnitId, VariantId};
 use sultan_core::money::Money;
@@ -94,11 +95,7 @@ pub async fn load_index<'c>(
     }
     let all_digits = code.bytes().all(|b| b.is_ascii_digit());
     let mut codes = vec![code.to_owned()];
-    if all_digits && code.len() == 12 {
-        codes.push(format!("0{code}"));
-    } else if all_digits && code.len() == 13 && code.starts_with('0') {
-        codes.push(code[1..].to_owned());
-    }
+    codes.extend(normalized_barcode(code));
     let sql = format!(
         "SELECT code, variant_id, unit_id, archived FROM barcode WHERE code IN ({}) \
          ORDER BY archived DESC, id",
@@ -191,8 +188,16 @@ pub struct LookupItem {
     pub unit: UnitId,
     /// Display name, `<product> – <values>`.
     pub name: String,
+    /// The product name.
+    pub product_name: String,
+    /// The variant's option values joined by ` / ` (`Medium / Red`); empty without options.
+    pub variant_label: String,
+    /// The unit's name (`pcs`, `box`, `kg`).
+    pub unit_name: String,
     /// The variant SKU.
     pub sku: String,
+    /// The variant's PLU (weighed products).
+    pub plu: Option<Plu>,
     /// Product type.
     pub product_type: ProductType,
     /// The cashier types the price.
@@ -201,6 +206,8 @@ pub struct LookupItem {
     pub requires_note: bool,
     /// Which lookup step matched.
     pub source: MatchSource,
+    /// The code that matched, as stored (`core::matched_code`).
+    pub matched_code: String,
     /// Quantity: 1, or the weight of a weight scale code; `None` for a price scale code.
     pub qty: Option<Qty>,
     /// Line amount of a price scale code.
@@ -337,7 +344,7 @@ pub async fn lookup<'c>(
     let row = sql::fetch_optional(
         conn.reborrow(),
         "SELECT p.id, p.name, p.type, p.open_price, p.requires_note, p.sellable, p.archived_at, \
-         v.sku, v.archived, u.archived AS unit_archived, \
+         v.sku, v.plu, v.archived, u.name AS unit_name, u.archived AS unit_archived, \
          (SELECT COUNT(*) FROM product_branch_block b \
           WHERE b.product_id = p.id AND b.branch_id = ?) AS blocked \
          FROM variant v JOIN product p ON p.id = v.product_id \
@@ -355,11 +362,16 @@ pub async fn lookup<'c>(
                 variant: found.item.variant,
                 unit: found.item.unit,
                 name: row.text("name")?,
+                product_name: row.text("name")?,
+                variant_label: String::new(),
+                unit_name: row.text("unit_name")?,
                 sku: row.text("sku")?,
+                plu: plu_from(row.opt_i64("plu")?)?,
                 product_type: parse_product_type(&row.text("type")?)?,
                 open_price: row.bool("open_price")?,
                 requires_note: row.bool("requires_note")?,
                 source: found.source,
+                matched_code: matched_code(code, found.source),
                 qty: found.qty,
                 amount: found.amount,
             };
@@ -371,7 +383,9 @@ pub async fn lookup<'c>(
     status.variant_archived |= barcode_archived;
     check_sellable(status).map_err(CatalogDbError::rule)?;
     let names = value_names(conn, &[item.variant]).await?;
-    item.name = display_name(&item.name, names.get(&item.variant));
+    let values = names.get(&item.variant);
+    item.name = display_name(&item.name, values);
+    item.variant_label = values.map(|v| v.join(" / ")).unwrap_or_default();
     Ok(item)
 }
 

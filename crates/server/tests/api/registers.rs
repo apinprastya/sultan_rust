@@ -56,6 +56,8 @@ async fn pairing_happy_path(h: &Harness) {
     assert_eq!(r.body["branch_id"], h.jkt.id.to_string());
     assert_eq!(r.body["register_code"], "R1");
     assert_eq!(r.body["register_name"], "Front");
+    assert_eq!(r.body["branch_code"], "JKT01");
+    assert_eq!(r.body["branch_name"], "Toko JKT01");
 
     // Only the hash is stored, and it identifies the register.
     let device_token = r.body["device_token"].as_str().unwrap();
@@ -77,6 +79,34 @@ async fn pairing_happy_path(h: &Harness) {
         )
         .await;
     assert_eq!(users.status, StatusCode::OK);
+
+    // It also says which register and branch it is.
+    let me = h
+        .send(
+            Method::GET,
+            "/api/v1/registers/me",
+            &[("x-register-token", device_token)],
+            None,
+        )
+        .await;
+    assert_eq!(me.status, StatusCode::OK, "{}", me.body);
+    assert_eq!(me.body["register_id"], h.jkt_register.id.to_string());
+    assert_eq!(me.body["register_code"], "R1");
+    assert_eq!(me.body["register_name"], "Front");
+    assert_eq!(me.body["branch_id"], h.jkt.id.to_string());
+    assert_eq!(me.body["branch_code"], "JKT01");
+    assert_eq!(me.body["branch_name"], "Toko JKT01");
+    h.send(Method::GET, "/api/v1/registers/me", &[], None)
+        .await
+        .assert_problem(401, "invalid_device_token");
+    h.send(
+        Method::GET,
+        "/api/v1/registers/me",
+        &[("x-register-token", "nope")],
+        None,
+    )
+    .await
+    .assert_problem(401, "invalid_device_token");
 }
 
 async fn pairing_code_expires_after_ten_minutes(h: &Harness) {

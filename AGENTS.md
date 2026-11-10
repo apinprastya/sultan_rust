@@ -5,6 +5,9 @@ configuration. The design is in [docs/plan.md](docs/plan.md), and the agreed rul
 section are in [docs/spec/](docs/spec/). If code and spec disagree, the spec wins. Ask before
 changing a spec rule.
 
+**Start here:** the "Status" section of [docs/plan.md](docs/plan.md) says what is done, which
+decisions are open and what comes next. Update it at the end of every phase.
+
 ## Project
 
 A retail point of sale in Rust. One binary (`sultan`) runs every node role (`standalone`, `hq`,
@@ -18,8 +21,8 @@ Toolchain: Rust 1.95, edition 2024 (`rust-toolchain.toml`).
 | `sultan-db` | `crates/db` | sqlx migrations and repositories for SQLite and MySQL. See [crates/db/README.md](crates/db/README.md). |
 | `sultan-server` | `crates/server` | axum REST API, auth, idempotency, outbox, WebSocket events, OpenAPI (`utoipa`). |
 | `sultan-client` | `crates/client` | The register's `Service` trait and the back office's `BackOffice` trait, their HTTP implementation, and a fake for UI tests. |
-| `sultan-ui` | `crates/ui` | Slint register, setup wizard and back office (`ui/*.slint`, controllers in `src/`). |
-| `sultan-app` | `crates/app` | The binary: CLI, config, setup wizard, `serve`, `init`, `register`. |
+| `sultan-ui` | `crates/ui` | Slint register (with the barcode lookup, `src/scan.rs`), setup wizard, Start screen (`src/start.rs`) and back office (`ui/*.slint`, controllers in `src/`). |
+| `sultan-app` | `crates/app` | The binary: CLI, config, setup wizard, Start screen flow (`src/start.rs`), `serve`, `init`, `register`. |
 
 Dependencies point one way: `core` ← `db` ← `server`; `core` ← `client` ← `ui` ← `app`.
 Never add IO, sqlx or axum to `core`.
@@ -88,6 +91,14 @@ cargo run -p sultan-ui --example screenshots -- docs/screenshots 1366x768 en
 
 ## UI
 
+- **UI only, except HQ** (`docs/plan.md` §3): on a single app or a terminal everything must be
+  reachable from a window. A bare `sultan` opens the Start screen (F1 register, F2 back office,
+  F3 settings); the register's lock screen and the back office's login screen go back to it
+  with F9. A CLI subcommand may exist for scripts, but never as the only way, and neither is
+  editing `sultan.toml` (e.g. a single app lets terminals connect from Settings, F7, which writes
+  `listen` and restarts its server: `crates/app/src/single.rs`, `Embedded`). New windows are
+  opened through a hook in `sultan_app::Context` (`open_ui`, `open_setup`, `open_backoffice`,
+  `open_start`) so the flow is tested without a display.
 - The register is keyboard-first, and every key also has an on-screen button. Keep the key
   tables in README.md in sync with the UI.
 - Every user-facing string uses `@tr()` (in Slint) and has an Indonesian translation in

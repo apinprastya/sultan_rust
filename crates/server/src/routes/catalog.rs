@@ -230,8 +230,16 @@ pub struct LookupDto {
     pub unit_id: String,
     /// Display name `<product> – <values>`.
     pub name: String,
+    /// The product name alone.
+    pub product_name: String,
+    /// The variant's option values joined by ` / ` (`Medium / Red`); empty without options.
+    pub variant_label: String,
+    /// The unit's name (`pcs`, `box`, `kg`).
+    pub unit_name: String,
     /// Variant SKU.
     pub sku: String,
+    /// The variant's PLU (weighed products), else `null`.
+    pub plu: Option<u32>,
     /// `stock`, `weighed`, `service` or `bundle`.
     #[serde(rename = "type")]
     pub product_type: String,
@@ -241,6 +249,9 @@ pub struct LookupDto {
     pub requires_note: bool,
     /// Which step matched: `barcode`, `normalized_barcode`, `scale_barcode`, `sku` or `plu`.
     pub source: String,
+    /// The code that matched, as stored: the barcode (its UPC-A ↔ EAN-13 form for
+    /// `normalized_barcode`), the scale code, the upper-cased SKU or the PLU as typed.
+    pub matched_code: String,
     /// Quantity in thousandths (`1000` = 1, `1250` = 1.250 kg); `null` for a price-embedded
     /// scale code (it follows from the unit price, spec 2.3).
     pub qty_thousandths: Option<i64>,
@@ -266,11 +277,16 @@ fn lookup_dto(item: &LookupItem, branch: Option<BranchId>) -> LookupDto {
         variant_id: item.variant.to_string(),
         unit_id: item.unit.to_string(),
         name: item.name.clone(),
+        product_name: item.product_name.clone(),
+        variant_label: item.variant_label.clone(),
+        unit_name: item.unit_name.clone(),
         sku: item.sku.clone(),
+        plu: item.plu.map(sultan_core::catalog::Plu::value),
         product_type: item.product_type.as_str().to_owned(),
         open_price: item.open_price,
         requires_note: item.requires_note,
         source: source_str(item.source).to_owned(),
+        matched_code: item.matched_code.clone(),
         qty_thousandths: item.qty.map(sultan_core::catalog::Qty::thousandths),
         amount: item.amount.map(sultan_core::money::Money::minor),
         branch_id: branch.map(|b| b.to_string()),

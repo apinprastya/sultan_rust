@@ -43,6 +43,11 @@ fn kaos(code: &str, barcode: &str) -> Product {
 }
 
 fn office_with(fake: FakeService, language: &str) -> Office {
+    office_opened(fake, language, false)
+}
+
+/// A back office opened from the Start screen (`start`) or alone.
+fn office_opened(fake: FakeService, language: &str, start: bool) -> Office {
     thread_local!(static READY: std::cell::Cell<bool> = const { std::cell::Cell::new(false) });
     if !READY.get() {
         i_slint_backend_testing::init_no_event_loop();
@@ -57,6 +62,7 @@ fn office_with(fake: FakeService, language: &str) -> Office {
     let mut options = BackOfficeOptions::new("http://127.0.0.1:8080");
     options.language = Some(language.to_owned());
     options.debounce = Duration::ZERO;
+    options.start = start;
     let app = build_backoffice(
         fake.clone(),
         Runner::Block(runtime.handle().clone()),
@@ -89,6 +95,7 @@ fn key_text(name: &str) -> SharedString {
         "F3" => Key::F3.into(),
         "F4" => Key::F4.into(),
         "F5" => Key::F5.into(),
+        "F9" => Key::F9.into(),
         "F12" => Key::F12.into(),
         other => other.into(),
     }
@@ -601,4 +608,31 @@ fn live_refresh_from_catalog_events() {
     o.click("Reload (drops your changes)");
     assert_eq!(o.app.ui.get_general().name, "Kaos Baru");
     assert!(!o.app.ui.get_form().changed_elsewhere);
+}
+
+#[test]
+fn f9_on_the_login_screen_goes_back_to_the_start_screen() {
+    // Opened alone (`sultan backoffice`): no button, F9 does nothing.
+    let o = office();
+    assert!(!o.app.ui.get_start());
+    o.press(&["F9"]);
+    assert!(o.app.ui.window().is_visible());
+
+    // From the Start screen: F9 on the login screen closes the window (also while a field has
+    // the focus).
+    let o = office_opened(FakeService::default(), "en", true);
+    o.type_text("own");
+    o.press(&["F9"]);
+    assert!(!o.app.ui.window().is_visible());
+
+    // Logged in, F9 does nothing; after logging out (F12) the button closes the window.
+    let o = office_opened(FakeService::default(), "id", true);
+    o.owner();
+    o.press(&["F9"]);
+    assert!(o.app.ui.window().is_visible());
+    o.press(&["F12"]);
+    assert_eq!(o.screen(), "login");
+    assert!(o.app.ui.window().is_visible());
+    o.click("Layar awal");
+    assert!(!o.app.ui.window().is_visible());
 }

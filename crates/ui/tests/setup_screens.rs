@@ -266,7 +266,7 @@ fn single_app_by_buttons() {
     assert_eq!(w.setup.ui.get_summary_a(), "PT A");
     assert_eq!(w.setup.ui.get_summary_b(), "JKT01");
     assert_eq!(w.setup.outcome(), None);
-    w.click("Open the register");
+    w.click("Open Sultan");
     assert_eq!(w.setup.outcome(), Some(AppType::Single));
     assert!(!w.setup.ui.window().is_visible(), "the window closes");
 }

@@ -6,14 +6,21 @@
 //! Screens ([`Screen`]):
 //! 1. **Lock** — tiles from `GET /registers/me/users`; arrows (or a click) pick a user, a digit or
 //!    Enter opens the PIN pad; Enter logs in, Esc closes the pad. `401 invalid_credentials` shows
-//!    "wrong PIN"; `423 locked_out` shows a countdown to `locked_until`.
+//!    "wrong PIN"; `423 locked_out` shows a countdown to `locked_until`. Opened from the Start
+//!    screen ([`Controller::start`]), F9 closes the window and goes back there
+//!    ([`Effect::Exit`]).
 //! 2. **Open session** — after login when this register has no open session: the opening cash
 //!    is typed as digits and shown as Rupiah; Enter opens (`Idempotency-Key`, reused only when
 //!    the answer was lost). If another user's session is open here, the screen says whose and
 //!    only offers "back to lock" (spec 2.1 §5 handover: no shared sessions).
-//! 3. **Home** — placeholder for the cashier: user, session start, opening cash, and the actions
-//!    F2 test override, F10 close session, F12 lock (logout; spec 2.1 §4: locking keeps the
-//!    session open).
+//! 3. **Home** — the cashier's screen: user, session start, opening cash, the **barcode field**
+//!    (phase C5, spec 2.2 §6) and the actions F2 test override, F10 close session, F12 lock
+//!    (logout; spec 2.1 §4: locking keeps the session open). Typed or scanned characters go into
+//!    the field ([`crate::scan::ScanField`]); Enter resolves the code through
+//!    `GET /catalog/lookup` and shows the item (or why there is none: not found, not sold at this
+//!    branch, archived, not for sale, a scale label of 0); Esc clears the field and the item. The
+//!    lookup does not block input, so the next scan can follow at once; only the newest answer is
+//!    shown. No cart and no prices yet (spec 2.3, 2.6).
 //! 4. **Close** — blind close (spec 2.1 §5): a counted total or per-denomination counts; expected
 //!    cash is never shown before the close. Enter asks for confirmation, Enter again closes.
 //! 5. **Report** — expected, counted, over/short and tender totals; Enter logs out to Lock.
@@ -26,19 +33,23 @@
 //!
 //! **Events** (spec 2.1 §4): after login the glue watches `GET /events`; `session.revoked` for
 //! this login session returns to Lock. Events carry the login generation they were watched for,
-//! so a late event of an earlier login is ignored.
+//! so a late event of an earlier login is ignored. `catalog.changed` for the shown item's
+//! product (or for the catalog settings) and `events.lagged` look the shown code up again, so the
+//! panel follows the back office (spec 2.2 §11); the socket needs the PIN session, which the home
+//! screen always has.
 //!
 //! While a call is running (`busy`), input is swallowed, so a double Enter cannot log in or open
 //! twice.
 
 use sultan_client::{
-    Branch, CashierSession, ClientError, CloseReport, CloseRequest, LockUser, Login, OverrideGrant,
-    OverrideRequest, ProtectedAction, ProtectedResult, ServerEvent,
+    Branch, CashierSession, ClientError, CloseReport, CloseRequest, LockUser, Login, Lookup,
+    OverrideGrant, OverrideRequest, ProtectedAction, ProtectedResult, ServerEvent,
 };
 
 use crate::amount::{Digits, percent, rupiah};
 use crate::count::{CountForm, wrap};
 use crate::input::{Key, Pin};
+use crate::scan::ScanField;
 
 /// The action the "test override" button asks for: a 15% line discount, above the seeded
 /// Cashier limit (10%) and within the Manager limit (20%).
@@ -97,7 +108,9 @@ pub struct Notice {
 }
 
 impl Notice {
-    fn new(code: &'static str, arg: impl Into<String>, tone: Tone) -> Self {
+    /// A message with an argument.
+    #[must_use]
+    pub fn new(code: &'static str, arg: impl Into<String>, tone: Tone) -> Self {
         Self {
             code,
             arg: arg.into(),
@@ -180,6 +193,21 @@ pub fn notice_for(error: &ClientError) -> Notice {
     }
 }
 
+/// The message for a failed lookup of `code` (spec 2.2 §6 errors); other errors as
+/// [`notice_for`].
+#[must_use]
+pub fn lookup_notice(error: &ClientError, code: &str) -> Notice {
+    let item = match error.code() {
+        Some("not_found") => "item_not_found",
+        Some("not_sold_here") => "item_not_sold_here",
+        Some("archived") => "item_archived",
+        Some("not_sellable") => "item_not_sellable",
+        Some("scale_value_zero") => "scale_value_zero",
+        _ => return notice_for(error),
+    };
+    Notice::new(item, code, Tone::Bad)
+}
+
 /// Whether the error means the login (or the device) is no longer valid.
 fn ends_login(error: &ClientError) -> bool {
     matches!(
@@ -208,16 +236,19 @@ pub enum Action {
     CloseSession,
     /// Run the demo action protected by an override.
     TestOverride,
+    /// Leave the register for the Start screen (lock screen only, when opened from it).
+    Start,
 }
 
 impl Action {
-    const ALL: [Self; 6] = [
+    const ALL: [Self; 7] = [
         Self::Confirm,
         Self::Back,
         Self::Retry,
         Self::Lock,
         Self::CloseSession,
         Self::TestOverride,
+        Self::Start,
     ];
 
     /// The ID used by the UI.
@@ -230,6 +261,7 @@ impl Action {
             Self::Lock => "lock",
             Self::CloseSession => "close-session",
             Self::TestOverride => "test-override",
+            Self::Start => "start",
         }
     }
 
@@ -301,6 +333,8 @@ impl OpenScreen {
 pub struct HomeScreen {
     /// Result of the last action.
     pub notice: Option<Notice>,
+    /// The barcode field and the item it found.
+    pub scan: ScanField,
 }
 
 /// Blind-close screen state.
@@ -424,6 +458,17 @@ pub enum Effect {
         /// Session token.
         token: String,
     },
+    /// [`sultan_client::Service::lookup`]; the answer comes back as [`Msg::Looked`] with `seq`.
+    Lookup {
+        /// Session token.
+        token: String,
+        /// The scanned or typed code.
+        code: String,
+        /// The lookup's sequence number.
+        seq: u64,
+        /// The login generation the lookup was started for.
+        generation: u64,
+    },
     /// [`sultan_client::Service::watch_events`]; events come back as [`Msg::Event`] with
     /// `generation`.
     WatchEvents {
@@ -432,6 +477,8 @@ pub enum Effect {
         /// The login they belong to.
         generation: u64,
     },
+    /// Close the window: back to the Start screen ([`Action::Start`]).
+    Exit,
 }
 
 /// Input for [`Controller::update`].
@@ -467,6 +514,9 @@ pub enum Msg {
     LoggedOut(Result<(), ClientError>),
     /// An event of the login `generation`.
     Event(u64, ServerEvent),
+    /// Result of [`Effect::Lookup`] number `seq` (second field) of the login `generation`
+    /// (first field).
+    Looked(u64, u64, Result<Lookup, ClientError>),
 }
 
 /// What [`Controller::update`] did.
@@ -509,6 +559,10 @@ pub struct Controller {
     /// The lock-screen message is from a failed user list (cleared once it loads).
     users_failed: bool,
     generation: u64,
+    /// Sequence number of the last lookup.
+    lookups: u64,
+    /// The window was opened from the Start screen: the lock screen offers F9 to go back.
+    pub start: bool,
 }
 
 impl Controller {
@@ -526,6 +580,8 @@ impl Controller {
             pending: None,
             users_failed: false,
             generation: 0,
+            lookups: 0,
+            start: false,
         };
         (controller, vec![Effect::LoadUsers])
     }
@@ -561,6 +617,16 @@ impl Controller {
         ]
     }
 
+    /// The keys of the barcode field (shown next to it): Enter looks up, Esc clears.
+    #[must_use]
+    pub fn scan_actions() -> Vec<Shortcut> {
+        let s = |key, action, label| Shortcut { key, action, label };
+        vec![
+            s(Key::Enter, Action::Confirm, "look_up"),
+            s(Key::Escape, Action::Back, "clear"),
+        ]
+    }
+
     /// The key chips of the current screen or dialog.
     #[must_use]
     pub fn shortcuts(&self) -> Vec<Shortcut> {
@@ -579,16 +645,26 @@ impl Controller {
                     s(Key::Escape, Back, "back"),
                 ]
             }
-            Screen::Lock(_) => vec![
-                s(Key::Enter, Confirm, "enter_pin"),
-                s(Key::F(5), Retry, "refresh"),
-            ],
+            Screen::Lock(_) => {
+                let mut keys = vec![
+                    s(Key::Enter, Confirm, "enter_pin"),
+                    s(Key::F(5), Retry, "refresh"),
+                ];
+                if self.start {
+                    keys.push(s(Key::F(9), Action::Start, "start"));
+                }
+                keys
+            }
             Screen::Open(o) if o.blocked.is_some() => vec![s(Key::Escape, Lock, "back_to_lock")],
             Screen::Open(_) => vec![
                 s(Key::Enter, Confirm, "open_session"),
                 s(Key::Escape, Lock, "lock"),
             ],
-            Screen::Home(_) => Self::home_actions(),
+            Screen::Home(_) => {
+                let mut keys = Self::home_actions();
+                keys.extend(Self::scan_actions());
+                keys
+            }
             Screen::Close(c) if c.confirm => vec![
                 s(Key::Enter, Confirm, "confirm_close"),
                 s(Key::Escape, Back, "edit_count"),
@@ -687,6 +763,15 @@ impl Controller {
                 }
                 _ => false,
             },
+            Screen::Home(h) => match key {
+                Key::Digit(d) => h.scan.push(char::from(b'0' + d)),
+                Key::Char(c) => h.scan.push(c),
+                Key::Backspace => {
+                    h.scan.pop();
+                    true
+                }
+                _ => false,
+            },
             Screen::Close(c) if !c.confirm => {
                 let used = match key {
                     Key::Up | Key::BackTab => {
@@ -741,6 +826,7 @@ impl Controller {
                 Vec::new()
             }
             Action::Retry => vec![Effect::LoadUsers],
+            Action::Start => vec![Effect::Exit],
             Action::Lock => self.logout(None),
             Action::CloseSession => {
                 self.screen = Screen::Close(CloseScreen {
@@ -852,7 +938,21 @@ impl Controller {
                 vec![effect]
             }
             Screen::Report(_) => self.logout(None),
-            Screen::Home(_) => Vec::new(),
+            Screen::Home(h) => {
+                let seq = self.lookups + 1;
+                let Some(code) = h.scan.take(seq) else {
+                    return Vec::new();
+                };
+                // A scan is the next action: the previous action's message goes.
+                h.notice = None;
+                self.lookups = seq;
+                vec![Effect::Lookup {
+                    token,
+                    code,
+                    seq,
+                    generation: self.generation,
+                }]
+            }
         }
     }
 
@@ -866,6 +966,10 @@ impl Controller {
             Screen::Lock(l) => l.pad = None,
             Screen::Close(c) if c.confirm => c.confirm = false,
             Screen::Close(_) => self.screen = Screen::Home(HomeScreen::default()),
+            Screen::Home(h) => {
+                h.scan.clear();
+                h.notice = None;
+            }
             _ => {}
         }
     }
@@ -946,19 +1050,80 @@ impl Controller {
             Msg::Approved(result) => self.approved(result),
             Msg::Protected(result) => self.protected_done(result),
             Msg::Event(generation, event) => {
-                if generation == self.generation
-                    && self.login.is_some()
-                    && event.revokes_this_session()
-                {
+                if generation != self.generation || self.login.is_none() {
+                    return Vec::new();
+                }
+                if event.revokes_this_session() {
                     // The server revoked it already; nothing to log out.
                     self.login = None;
                     return self.logout(Some(Notice::bad("session_ended")));
                 }
-                Vec::new()
+                self.catalog_event(&event)
             }
+            Msg::Looked(generation, seq, result) => self.looked(generation, seq, result),
             // Logout and branch failures change nothing on screen.
             _ => Vec::new(),
         }
+    }
+
+    /// `catalog.changed` touching the shown item (its product, or the settings with the scale
+    /// layouts) or `events.lagged`: look the shown code up again.
+    fn catalog_event(&mut self, event: &ServerEvent) -> Vec<Effect> {
+        let token = self.token();
+        let Screen::Home(h) = &mut self.screen else {
+            return Vec::new();
+        };
+        let Some(shown) = &h.scan.shown else {
+            return Vec::new();
+        };
+        let touches = match event.kind.as_str() {
+            "events.lagged" => true,
+            "catalog.changed" => {
+                let data = &event.data;
+                data["scope"] == "settings"
+                    || shown.item().is_none_or(|item| {
+                        data["product_id"].as_str() == Some(item.product_id.as_str())
+                    })
+            }
+            _ => false,
+        };
+        if !touches {
+            return Vec::new();
+        }
+        let seq = self.lookups + 1;
+        let Some(code) = h.scan.again(seq) else {
+            return Vec::new();
+        };
+        self.lookups = seq;
+        vec![Effect::Lookup {
+            token,
+            code,
+            seq,
+            generation: self.generation,
+        }]
+    }
+
+    fn looked(
+        &mut self,
+        generation: u64,
+        seq: u64,
+        result: Result<Lookup, ClientError>,
+    ) -> Vec<Effect> {
+        // An answer of an earlier login must not end (or change) the current one.
+        if generation != self.generation || self.login.is_none() {
+            return Vec::new();
+        }
+        if let Err(e) = &result
+            && ends_login(e)
+        {
+            return self.fail(e);
+        }
+        if let Screen::Home(h) = &mut self.screen {
+            let code = h.scan.looking().unwrap_or_default().to_owned();
+            h.scan
+                .answer(seq, result.map_err(|e| lookup_notice(&e, &code)));
+        }
+        Vec::new()
     }
 
     fn logged_in(&mut self, result: Result<Login, ClientError>) -> Vec<Effect> {
@@ -1032,6 +1197,7 @@ impl Controller {
                 self.session = Some(session);
                 self.screen = Screen::Home(HomeScreen {
                     notice: Some(Notice::new("session_opened", "", Tone::Good)),
+                    scan: ScanField::default(),
                 });
                 Vec::new()
             }
@@ -1245,6 +1411,163 @@ mod tests {
         );
         assert_eq!(locked.shown(10_000), None, "over");
         assert_eq!(value_text("sale.discount", None), "");
+    }
+
+    #[test]
+    fn lookup_errors_name_the_code() {
+        let p = |status, code| api(Problem::new(status, code, "x"));
+        #[rustfmt::skip]
+        let cases = [
+            (p(404, "not_found"), "item_not_found", "C1"),
+            (p(422, "not_sold_here"), "item_not_sold_here", "C1"),
+            (p(422, "archived"), "item_archived", "C1"),
+            (p(422, "not_sellable"), "item_not_sellable", "C1"),
+            (p(422, "scale_value_zero"), "scale_value_zero", "C1"),
+            (ClientError::Network("x".into()), "network", ""),
+            (p(500, "internal"), "error", "internal"),
+        ];
+        for (error, code, arg) in cases {
+            let notice = lookup_notice(&error, "C1");
+            assert_eq!((notice.code, notice.arg.as_str()), (code, arg), "{error:?}");
+        }
+    }
+
+    /// Ani at home (the fake's flow without the glue).
+    fn at_home() -> Controller {
+        let (mut c, _) = Controller::new();
+        c.update(Msg::Users(Ok(users(1))));
+        c.login = Some(Login {
+            token: "t".into(),
+            user_id: "u0".into(),
+            display_name: "User 0".into(),
+            branch_id: "b".into(),
+            register_id: None,
+            expires_at: 0,
+        });
+        c.screen = Screen::Home(HomeScreen::default());
+        c
+    }
+
+    fn found(product: &str) -> Lookup {
+        serde_json::from_value(serde_json::json!({
+            "product_id": product, "variant_id": "v", "unit_id": "u", "name": "X", "sku": "X",
+            "type": "stock", "source": "sku", "qty_thousandths": 1000
+        }))
+        .unwrap()
+    }
+
+    fn event(kind: &str, data: serde_json::Value) -> Msg {
+        Msg::Event(
+            0,
+            ServerEvent {
+                kind: kind.into(),
+                data,
+            },
+        )
+    }
+
+    #[test]
+    fn scans_resolve_and_catalog_events_refresh_them() {
+        let mut c = at_home();
+        for key in [Key::Char('x'), Key::Digit(1)] {
+            assert!(c.update(Msg::Key(key)).handled);
+        }
+        let step = c.update(Msg::Key(Key::Enter));
+        assert_eq!(
+            step.effects,
+            [Effect::Lookup {
+                token: "t".into(),
+                code: "x1".into(),
+                seq: 1,
+                generation: 0
+            }]
+        );
+        assert!(!c.busy, "scanning goes on while the lookup runs");
+        // An answer of an earlier login, even a 401, leaves the current login alone.
+        let stale = Msg::Looked(9, 1, Err(api(Problem::new(401, "invalid_session", "x"))));
+        assert!(c.update(stale).effects.is_empty());
+        assert!(c.login.is_some());
+        c.update(Msg::Looked(0, 1, Ok(found("p1"))));
+        let Screen::Home(h) = &c.screen else {
+            panic!("home")
+        };
+        assert_eq!(h.scan.shown.as_ref().unwrap().code, "x1");
+
+        // Events that do not touch the shown item; one of another login.
+        for msg in [
+            event(
+                "catalog.changed",
+                serde_json::json!({"scope": "product", "product_id": "p2"}),
+            ),
+            event("user.changed", serde_json::Value::Null),
+            Msg::Event(
+                7,
+                ServerEvent {
+                    kind: "events.lagged".into(),
+                    data: serde_json::Value::Null,
+                },
+            ),
+        ] {
+            assert!(c.update(msg).effects.is_empty());
+        }
+        // The shown product, the settings, a lagged socket: look it up again (one at a time).
+        let step = c.update(event(
+            "catalog.changed",
+            serde_json::json!({"scope": "product", "product_id": "p1"}),
+        ));
+        assert_eq!(step.effects.len(), 1);
+        assert!(
+            c.update(event(
+                "catalog.changed",
+                serde_json::json!({"scope": "settings"})
+            ))
+            .effects
+            .is_empty(),
+            "one is already waiting"
+        );
+        c.update(Msg::Looked(
+            0,
+            2,
+            Err(api(Problem::new(422, "archived", "x"))),
+        ));
+        let step = c.update(event("events.lagged", serde_json::Value::Null));
+        assert_eq!(step.effects.len(), 1);
+        // A late answer of an older lookup is ignored.
+        c.update(Msg::Looked(0, 2, Ok(found("p1"))));
+        let Screen::Home(h) = &c.screen else {
+            panic!("home")
+        };
+        assert_eq!(
+            h.scan
+                .shown
+                .as_ref()
+                .unwrap()
+                .result
+                .as_ref()
+                .unwrap_err()
+                .code,
+            "item_archived"
+        );
+
+        // Not on the home screen: events and answers change nothing.
+        c.screen = Screen::Lock(LockScreen::default());
+        assert!(
+            c.update(event("events.lagged", serde_json::Value::Null))
+                .effects
+                .is_empty()
+        );
+        assert!(
+            c.update(Msg::Looked(0, 3, Ok(found("p1"))))
+                .effects
+                .is_empty()
+        );
+        // Nothing shown at home: nothing to refresh.
+        c.screen = Screen::Home(HomeScreen::default());
+        assert!(
+            c.update(event("events.lagged", serde_json::Value::Null))
+                .effects
+                .is_empty()
+        );
     }
 
     #[test]

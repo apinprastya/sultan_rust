@@ -203,6 +203,60 @@ audit log viewer · light/dark theme · i18n ID/EN.
   **per product** (shared by its variants) · P1 types: stock, weighed + scale barcodes, service,
   bundle/kit · **max 3 option attributes** per product · **per-branch assortment** (HQ can block a
   product for a branch) · product codes and SKUs are stored upper case.
+- **2026-11-09 UI only, except HQ:** shop users are not familiar with the command line. Only the
+  **HQ server** may need it (`sultan serve`, scripts). On a single app, terminal or branch machine
+  everything is reachable from a window: choosing register or back office, setup, pairing,
+  language. CLI subcommands stay for scripts but are never the only way. Built as the **Start
+  screen** a bare `sultan` opens (F1 register, F2 back office, F3 settings: language,
+  connection, set up again, version; F9 on the lock / back-office login screen goes back). A
+  single app opens to its terminals from Settings too ("Allow terminals to connect": restarts its
+  server on the shop network and shows the address to type in the terminal's wizard).
+
+## Status (updated 2026-11-10)
+
+Where we are, so any session can pick up from here. Update this section at the end of every phase.
+
+**Done**
+- Foundation: workspace (`core`, `db`, `server`, `client`, `ui`, `app`), CI, setup wizard
+  (single app / HQ server / terminal), `sultan serve`, register pairing, SQLite + MySQL.
+- **2.1 Organization & access** (spec `docs/spec/2.1-organization-access.md`): branches, registers
+  with device tokens, users/roles/permissions, password + PIN login, cashier sessions (open, blind
+  close, report), manager override, audit log, register lock screen and session home.
+- **2.2 Catalog** (spec `docs/spec/2.2-catalog.md` §15), all phases C1–C5:
+  C1 `core::catalog` · C2 `db` · C3 `server` API (PR #2) · C4 back-office window (PR #3) ·
+  C5 register barcode lookup.
+- **UI only, except HQ** (§3, 2026-11-09):
+  - Start screen on single-app and terminal machines: F1 Kasir, F2 Back office, F3 Settings.
+  - Settings: language (F6), set up again (F8), and on a single app "Allow terminals to connect"
+    (F7), which restarts the built-in server on the shop network and shows the address to type.
+  - Branch name on code-paired terminals: the pairing answer carries the branch;
+    new `GET /registers/me` (device token) refreshes it for older pairings.
+
+**Open decisions (the user's call)**
+1. Keep the new `GET /registers/me` endpoint (and its row in spec 2.1 §8)? Proposed: keep.
+2. Spec 2.2 §17 item 3: let a device token (no PIN session) open `/events` for
+   `Audience::Everyone` events, so the lock screen gets `catalog.changed`.
+3. Spec 2.2 §17 item 4: let `catalog.manage` count from any role assignment, not only an
+   all-branches one (so a branch Manager / Stock clerk can edit the catalog).
+
+**Small to-dos**
+- Settings on a single app: "Server address" shows `127.0.0.1:8080` even when terminals may connect;
+  make clear it is this computer's own address (the terminal address is shown in the card beside it).
+- Settings at 1024 px: the long status text ("Aplikasi tunggal: server berjalan di ko…") is cut off.
+
+**Next (pick one)**
+- **C3b**: the four open items in spec 2.2 §17 (delete never-used products/categories/brands,
+  paging for search, plus decisions 2 and 3 above).
+- **2.3 Pricing**: discuss the spec first (price lists, quantity tiers, membership, tax, rounding),
+  then implement in phases like 2.2.
+
+**Way of working**
+- Each phase is discussed, written as a spec in `docs/spec/`, then built in phases; the user usually
+  asks for each phase to run in a sub agent, and the result is re-checked (fmt, clippy, all tests,
+  screenshots) before it is reported.
+- Never commit or push; the user does that. New code ≥80% covered (`core` ≥95%).
+- On a PR check, fix valid findings directly without asking first.
+- Shop users never need the command line (only HQ may).
 
 ## 4. Release phases
 | Phase | Content |

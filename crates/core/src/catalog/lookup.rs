@@ -103,15 +103,8 @@ pub fn resolve_lookup(
         return Ok(found(item, MatchSource::Barcode));
     }
     let all_digits = code.bytes().all(|b| b.is_ascii_digit());
-    if all_digits {
-        let normalized = match code.len() {
-            12 => Some(format!("0{code}")),
-            13 if code.starts_with('0') => Some(code[1..].to_owned()),
-            _ => None,
-        };
-        if let Some(item) = normalized.and_then(|n| index.by_barcode(&n)) {
-            return Ok(found(item, MatchSource::NormalizedBarcode));
-        }
+    if let Some(item) = normalized_barcode(code).and_then(|n| index.by_barcode(&n)) {
+        return Ok(found(item, MatchSource::NormalizedBarcode));
     }
     match decode_scale_barcode(code, layouts) {
         Ok(Some(scale)) => {
@@ -149,6 +142,37 @@ pub fn resolve_lookup(
         return Ok(found(item, MatchSource::Plu));
     }
     Err(CatalogError::NotFound)
+}
+
+/// The UPC-A ↔ EAN-13 alternative of a scanned code (lookup step 2): 12 digits → `0` + code;
+/// 13 digits starting with `0` → without it; anything else → `None`. Surrounding whitespace is
+/// ignored.
+#[must_use]
+pub fn normalized_barcode(input: &str) -> Option<String> {
+    let code = input.trim();
+    if !code.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    match code.len() {
+        12 => Some(format!("0{code}")),
+        13 if code.starts_with('0') => Some(code[1..].to_owned()),
+        _ => None,
+    }
+}
+
+/// The code that matched, as the catalog stores it, for showing the cashier how a scan
+/// resolved: the barcode as entered, its UPC-A ↔ EAN-13 alternative, the scale code as entered,
+/// the upper-cased SKU, or the typed PLU (surrounding whitespace removed).
+#[must_use]
+pub fn matched_code(input: &str, source: MatchSource) -> String {
+    let code = input.trim();
+    match source {
+        MatchSource::NormalizedBarcode => {
+            normalized_barcode(code).unwrap_or_else(|| code.to_owned())
+        }
+        MatchSource::Sku => code.to_ascii_uppercase(),
+        MatchSource::Barcode | MatchSource::ScaleBarcode | MatchSource::Plu => code.to_owned(),
+    }
 }
 
 /// The PLU of a scale code whose value is zero (decoding it with a fake non-zero value).
@@ -317,6 +341,25 @@ mod tests {
             (m.item, m.source),
             (item(8), MatchSource::NormalizedBarcode)
         );
+    }
+
+    #[test]
+    fn matched_codes() {
+        #[rustfmt::skip]
+        let cases = [
+            (" 4006381333931 ", MatchSource::Barcode, "4006381333931"),
+            ("036000291452", MatchSource::NormalizedBarcode, "0036000291452"),
+            ("0036000291452", MatchSource::NormalizedBarcode, "036000291452"),
+            ("12345", MatchSource::NormalizedBarcode, "12345"),
+            ("2100123012503", MatchSource::ScaleBarcode, "2100123012503"),
+            ("kaos01-m-red ", MatchSource::Sku, "KAOS01-M-RED"),
+            ("123", MatchSource::Plu, "123"),
+        ];
+        for (input, source, expected) in cases {
+            assert_eq!(matched_code(input, source), expected, "{input:?}");
+        }
+        assert_eq!(normalized_barcode("1234567890123"), None);
+        assert_eq!(normalized_barcode("03600029145a"), None);
     }
 
     #[test]

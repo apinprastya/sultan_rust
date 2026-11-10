@@ -8,6 +8,8 @@
 //! - [`http::HttpService`]: the real implementation over `reqwest` (device token in
 //!   `X-Register-Token`, session token as `Authorization: Bearer`, `Idempotency-Key` on the cashier
 //!   session `POST`s) and `tokio-tungstenite` for `GET /api/v1/events`.
+//! - The register's barcode field resolves codes with [`Service::lookup`]
+//!   (`GET /catalog/lookup`, phase C5); its answer is [`Lookup`].
 //! - [`ClientError`]: problem+json answers become [`Problem`], which keeps the stable `code` and
 //!   the extension members (`locked_until`, `permission`, `limit`, `conflict`, `session_id`, …).
 //!
@@ -34,7 +36,7 @@ use std::sync::Arc;
 
 pub use catalog::{
     Brand, BrandBody, CatalogSettings, Category, CategoryBody, CategoryNode, Generate, ImageInfo,
-    Me, Product, ProductPage, ProductQuery, ProductSummary, SearchHit, TaxClass,
+    Lookup, Me, Product, ProductPage, ProductQuery, ProductSummary, SearchHit, TaxClass,
 };
 pub use error::{ClientError, Duplicate, FieldError, Problem};
 pub use http::{HttpService, api_base};
@@ -99,6 +101,11 @@ pub trait Service: Send + Sync {
 
     /// `GET /events` (WebSocket): calls `sink` for each event until the socket closes.
     fn watch_events(&self, token: &str, sink: EventSink) -> BoxFuture<()>;
+
+    /// `GET /catalog/lookup?code=`: resolves a scanned or typed code (spec 2.2 §6). The
+    /// assortment is the register's branch (from the device token). Errors: `404 not_found`,
+    /// `422 archived` / `not_sold_here` / `not_sellable` / `scale_value_zero`.
+    fn lookup(&self, token: &str, code: &str) -> BoxFuture<Lookup>;
 }
 
 /// What the back office needs from the server (phase C4, spec 2.2 §12). `token` is the password

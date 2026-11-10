@@ -47,6 +47,9 @@ pub struct BackOfficeOptions {
     pub language: Option<String>,
     /// How long the search waits after the last keystroke (zero: at once).
     pub debounce: Duration,
+    /// Opened from the Start screen: the login screen offers F9 to go back to it (the window
+    /// closes).
+    pub start: bool,
 }
 
 impl BackOfficeOptions {
@@ -58,6 +61,7 @@ impl BackOfficeOptions {
             username: String::new(),
             language: None,
             debounce: Duration::from_millis(300),
+            start: false,
         }
     }
 }
@@ -287,7 +291,9 @@ fn start(service: &dyn BackOffice, effect: &Effect) -> Option<MsgFuture> {
             call!(service.put_brand(token, id, body), Msg::BrandSaved)
         }
         Effect::Logout(token) => call!(service.logout(token), Msg::LoggedOut),
-        Effect::WatchEvents { .. } | Effect::Debounce(_) | Effect::ReadFile(_) => None,
+        Effect::WatchEvents { .. } | Effect::Debounce(_) | Effect::ReadFile(_) | Effect::Exit => {
+            None
+        }
     }
 }
 
@@ -342,6 +348,13 @@ impl State {
                 Effect::ReadFile(path) => {
                     let read = std::fs::read(path).map_err(|e| e.to_string());
                     push(&self.inbox, Msg::FileRead(read));
+                    continue;
+                }
+                Effect::Exit => {
+                    if let Some(ui) = self.ui.upgrade() {
+                        // Ends `run_event_loop` when this is the last window.
+                        let _ = ui.hide();
+                    }
                     continue;
                 }
                 _ => {}
@@ -1068,7 +1081,9 @@ pub fn build_backoffice(
         }
         Runner::Block(_) => Arc::new(|| {}),
     };
-    let controller = Controller::new(&options.username);
+    let mut controller = Controller::new(&options.username);
+    controller.start = options.start;
+    ui.set_start(options.start);
     let state = Rc::new(State {
         ui: ui.as_weak(),
         controller: RefCell::new(controller),

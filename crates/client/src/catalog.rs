@@ -684,6 +684,58 @@ pub struct SearchHit {
     pub product_type: String,
 }
 
+/// `GET /catalog/lookup?code=`: what a scanned or typed code resolved to (spec 2.2 §6
+/// "Result"). The display fields after `name` arrived with phase C5; an older server leaves them
+/// empty.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Lookup {
+    /// The product.
+    pub product_id: String,
+    /// The variant.
+    pub variant_id: String,
+    /// The unit: the barcode's, else the default sale unit (the base unit for a PLU).
+    pub unit_id: String,
+    /// Display name `<product> – <values>`.
+    pub name: String,
+    /// The product name alone.
+    #[serde(default)]
+    pub product_name: String,
+    /// Option values joined by ` / `; empty without options.
+    #[serde(default)]
+    pub variant_label: String,
+    /// The unit's name (`pcs`, `box`, `kg`).
+    #[serde(default)]
+    pub unit_name: String,
+    /// Variant SKU.
+    pub sku: String,
+    /// The variant's PLU (weighed products).
+    #[serde(default)]
+    pub plu: Option<u32>,
+    /// `stock`, `weighed`, `service` or `bundle`.
+    #[serde(rename = "type")]
+    pub product_type: String,
+    /// The cashier types the price.
+    #[serde(default)]
+    pub open_price: bool,
+    /// The register asks for a line note.
+    #[serde(default)]
+    pub requires_note: bool,
+    /// `barcode`, `normalized_barcode`, `scale_barcode`, `sku` or `plu`.
+    pub source: String,
+    /// The code that matched, as stored.
+    #[serde(default)]
+    pub matched_code: String,
+    /// Quantity in thousandths; `None` for a price-embedded scale code.
+    #[serde(default)]
+    pub qty_thousandths: Option<i64>,
+    /// Line amount of a price-embedded scale code (minor units).
+    #[serde(default)]
+    pub amount: Option<i64>,
+    /// The branch whose assortment applied (`None`: none).
+    #[serde(default)]
+    pub branch_id: Option<String>,
+}
+
 #[cfg(test)]
 mod tests {
     use serde_json::json;
@@ -817,5 +869,24 @@ mod tests {
         let node: CategoryNode =
             serde_json::from_value(json!({"id": "c", "name": "Food", "children": []})).unwrap();
         assert_eq!(node.category().parent_id, None);
+    }
+
+    #[test]
+    fn lookup_from_an_older_server() {
+        let old: Lookup = serde_json::from_value(json!({
+            "product_id": "p", "variant_id": "v", "unit_id": "u", "name": "Aqua", "sku": "AQ",
+            "type": "stock", "source": "barcode", "qty_thousandths": 1000
+        }))
+        .unwrap();
+        assert_eq!(
+            (
+                old.product_name.as_str(),
+                old.unit_name.as_str(),
+                old.plu,
+                old.amount
+            ),
+            ("", "", None, None)
+        );
+        assert!(!old.open_price && !old.requires_note);
     }
 }

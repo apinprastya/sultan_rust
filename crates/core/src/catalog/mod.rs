@@ -36,7 +36,8 @@ pub use code::{
 pub use error::{CatalogError, CodeKind};
 pub use frozen::check_frozen;
 pub use lookup::{
-    CatalogIndex, ItemRef, ItemStatus, LookupMatch, MatchSource, check_sellable, resolve_lookup,
+    CatalogIndex, ItemRef, ItemStatus, LookupMatch, MatchSource, check_sellable, matched_code,
+    normalized_barcode, resolve_lookup,
 };
 pub use product::{
     Barcode, MAX_NAME_LEN, MAX_RECEIPT_NAME_LEN, MAX_TAG_LEN, MAX_TAGS, ProductDraft, ProductType,

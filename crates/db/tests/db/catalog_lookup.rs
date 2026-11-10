@@ -67,10 +67,21 @@ async fn lookup_order_through_the_db_index(db: &Db) {
     assert!(!item.requires_note);
     assert_eq!(item.product_type, ProductType::Stock);
     assert_eq!(item.name, "Produk AQUA600");
+    assert_eq!(
+        (
+            item.product_name.as_str(),
+            item.variant_label.as_str(),
+            item.unit_name.as_str(),
+            item.matched_code.as_str(),
+            item.plu,
+        ),
+        ("Produk AQUA600", "", "pcs", upc.as_str(), None)
+    );
 
     let item = lookup(db, &upc[1..], o.jkt.id).await.unwrap();
     assert_eq!(item.source, MatchSource::NormalizedBarcode);
     assert_eq!(item.variant, aqua.draft.variants[0].id);
+    assert_eq!(item.matched_code, upc, "the stored EAN-13 form");
 
     let item = lookup(db, " BOX-1 ", o.jkt.id).await.unwrap();
     assert_eq!(
@@ -78,6 +89,11 @@ async fn lookup_order_through_the_db_index(db: &Db) {
         (k.draft.variants[1].id, box_unit)
     );
     assert_eq!(item.name, "Produk KAOS01 – Small / Blue");
+    assert_eq!(
+        (item.variant_label.as_str(), item.unit_name.as_str()),
+        ("Small / Blue", "box")
+    );
+    assert_eq!(item.matched_code, "BOX-1");
 
     let item = lookup(db, "kaos01-m-red", o.jkt.id).await.unwrap();
     assert_eq!(item.source, MatchSource::Sku);
@@ -85,6 +101,7 @@ async fn lookup_order_through_the_db_index(db: &Db) {
     assert_eq!(item.unit, k.draft.units.default_sale);
     assert_eq!(item.sku, "KAOS01-M-RED");
     assert_eq!(item.name, "Produk KAOS01 – Medium / Red");
+    assert_eq!(item.matched_code, "KAOS01-M-RED");
 
     for missing in ["", "NOPE", "999999"] {
         let err = lookup(db, missing, o.jkt.id).await.unwrap_err();
@@ -106,6 +123,9 @@ async fn scale_barcodes_through_the_db_index(db: &Db) {
     assert_eq!(weight.unit, keju.draft.units.base);
     assert_eq!(weight.qty, Some(Qty::from_thousandths(1_250)));
     assert_eq!(weight.product_type, ProductType::Weighed);
+    assert_eq!(weight.plu, Plu::new(123));
+    assert_eq!(weight.unit_name, "kg");
+    assert_eq!(weight.matched_code, ean13("210012301250"));
 
     let price = lookup(db, &ean13("220012315000"), o.jkt.id).await.unwrap();
     assert_eq!(price.qty, None);

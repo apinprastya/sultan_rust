@@ -110,6 +110,7 @@ impl Modify for SecuritySchemes {
         routes::auth::me,
         routes::auth::logout,
         routes::registers::pair,
+        routes::registers::me,
         routes::registers::me_users,
         routes::registers::list,
         routes::registers::get,

@@ -205,7 +205,7 @@ export global SetupStrings {
             return @tr("Use a manager login");
         }
         if (code == "open_register") {
-            return @tr("Open the register");
+            return @tr("Open Sultan");
         }
         if (code == "finish") {
             return @tr("Finish");
@@ -770,7 +770,12 @@ export component SetupWindow inherits Window {
                             }
                             Heading {
                                 title: @tr("All set");
-                                subtitle: root.app-type == "single" ? @tr("The shop {} (branch {}) is ready. The register opens next; log in with the owner PIN.", root.summary-a, root.summary-b) : root.app-type == "hq" ? @tr("The HQ server for {} (branch {}) is set up.", root.summary-a, root.summary-b) : @tr("This computer is now register {} ({}) at {}.", root.summary-a, root.summary-b, root.summary-c);
+                                subtitle: root.app-type == "single" ? @tr("The shop {} (branch {}) is ready. The Start screen opens next: F1 opens the register; log in with the owner PIN.", root.summary-a, root.summary-b) : root.app-type == "hq" ? @tr("The HQ server for {} (branch {}) is set up.", root.summary-a, root.summary-b) : @tr("This computer is now register {} ({}) at {}.", root.summary-a, root.summary-b, root.summary-c);
+                            }
+                            if root.app-type == "single": Text {
+                                text: @tr("More cash registers later? Start screen → Settings (F3) → Terminals in this shop: allow terminals to connect, then set up each terminal with the address shown there.");
+                                color: Theme.muted;
+                                wrap: word-wrap;
                             }
                             if root.app-type == "hq": VerticalLayout {
                                 spacing: 8px;

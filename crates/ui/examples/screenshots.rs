@@ -1,4 +1,6 @@
-//! Renders every register screen and every back-office screen (phase C4, files `bo-*`) to PNG
+//! Renders the Start screen (files `0a`–`0d`, `0d` the single app's settings with terminals
+//! allowed), every register screen (with the barcode lookup of
+//! phase C5, files `5a`–`5c`) and every back-office screen (phase C4, files `bo-*`) to PNG
 //! with Slint's software renderer (no display needed), driven by keys against the fake service,
 //! like the headless tests.
 //!
@@ -16,12 +18,48 @@ use slint::platform::software_renderer::{
 };
 use slint::platform::{Key, Platform, WindowAdapter, WindowEvent};
 use slint::{ComponentHandle, PhysicalSize, PlatformError, SharedString};
-use sultan_client::fake::{FakeService, STANDARD_TAX_CLASS};
+use sultan_client::fake::{BRANCH_ID, FakeService, STANDARD_TAX_CLASS};
 use sultan_client::{BackOffice, CategoryBody, Product};
 use sultan_core::catalog::gtin_check_digit;
+use sultan_ui::start::{
+    AppKind, Lan, LanChanged, LanFuture, StartError, StartFuture, StartInfo, StartService,
+};
 use sultan_ui::{
     App, BackOfficeApp, BackOfficeOptions, Options, Runner, build_app, build_backoffice,
+    build_start,
 };
+
+/// The Start screen's service: the server answers, or not.
+struct Reachable(bool);
+
+impl StartService for Reachable {
+    fn check(&self) -> StartFuture {
+        let answer = if self.0 {
+            Ok(None)
+        } else {
+            Err(StartError::new("network", "192.168.1.10:8080"))
+        };
+        Box::pin(async move { answer })
+    }
+
+    fn set_language(&self, _: &str) -> Result<(), String> {
+        Ok(())
+    }
+
+    fn set_lan(&self, on: bool) -> LanFuture {
+        Box::pin(async move {
+            Ok(LanChanged {
+                lan: Lan {
+                    on,
+                    port: 8080,
+                    addresses: vec!["192.168.1.10:8080".into()],
+                    ..Lan::default()
+                },
+                server: "http://127.0.0.1:8080".into(),
+            })
+        })
+    }
+}
 
 struct Shots(Rc<MinimalSoftwareWindow>);
 
@@ -95,10 +133,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .worker_threads(1)
         .enable_all()
         .build()?;
+    start(&window, &dir, (width, height), &language, &runtime)?;
+
     let fake = Arc::new(FakeService::default());
     fake.set_cash_sales(1_250_000);
+    // The register looks codes up in the same demo catalog; Aqua 600 ml is not sold here.
+    let (aqua600, _) = demo_catalog(&fake);
+    let owner = runtime
+        .block_on(fake.password_login("owner", "owner-pass-1"))?
+        .token;
+    runtime.block_on(fake.put_branch_blocks(&owner, &aqua600, &[BRANCH_ID.to_owned()]))?;
     let mut options = Options::new("R1 · Kasir 1");
     options.language = Some(language.clone());
+    options.start = true;
     let app = build_app(
         fake.clone(),
         Runner::Block(runtime.handle().clone()),
@@ -127,6 +174,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     shot("4-open-session")?;
     press(&app, Key::Return);
     shot("5-home")?;
+    // The barcode field (phase C5): a variant's barcode, a weight scale label, a blocked item.
+    digits(&app, &ean13("8992000100000"));
+    press(&app, Key::Return);
+    shot("5a-scan-item")?;
+    digits(&app, &ean13("210012301250"));
+    press(&app, Key::Return);
+    shot("5b-scan-weight")?;
+    digits(&app, &ean13("899100000001"));
+    press(&app, Key::Return);
+    shot("5c-scan-not-sold-here")?;
+    press(&app, Key::Escape);
     press(&app, Key::F2);
     press(&app, Key::DownArrow);
     digits(&app, "5555");
@@ -321,6 +379,70 @@ fn demo_catalog(fake: &FakeService) -> (String, String) {
 }
 
 /// Renders the back-office screens (`bo-*`).
+fn start(
+    window: &Rc<MinimalSoftwareWindow>,
+    dir: &Path,
+    (width, height): (u32, u32),
+    language: &str,
+    runtime: &tokio::runtime::Runtime,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let shot = |name: &str| {
+        save(
+            window,
+            &dir.join(format!("{name}-{language}-{width}x{height}.png")),
+        )
+    };
+    let info = StartInfo {
+        kind: AppKind::Terminal,
+        server: "http://192.168.1.10:8080".into(),
+        register_code: "R2".into(),
+        register_name: "Kasir 2".into(),
+        branch: "JKT01 · Toko Jakarta".into(),
+        version: env!("CARGO_PKG_VERSION").into(),
+        language: language.to_owned(),
+        language_fixed: false,
+        lan: None,
+    };
+    for reachable in [true, false] {
+        let start = build_start(
+            Arc::new(Reachable(reachable)),
+            Runner::Block(runtime.handle().clone()),
+            info.clone(),
+        )?;
+        start.ui.show()?;
+        if reachable {
+            shot("0a-start")?;
+            key(start.ui.window(), &[Key::F3.into()]);
+            shot("0b-settings")?;
+        } else {
+            key(start.ui.window(), &[Key::F1.into()]);
+            shot("0c-start-offline")?;
+        }
+    }
+    // A single app: terminals allowed (F7 in the settings).
+    let single = StartInfo {
+        kind: AppKind::Single,
+        server: "http://127.0.0.1:41234".into(),
+        register_code: "R1".into(),
+        register_name: "Kasir 1".into(),
+        lan: Some(Lan {
+            port: 8080,
+            ..Lan::default()
+        }),
+        ..info
+    };
+    let start = build_start(
+        Arc::new(Reachable(true)),
+        Runner::Block(runtime.handle().clone()),
+        single,
+    )?;
+    start.ui.show()?;
+    key(start.ui.window(), &[Key::F3.into()]);
+    key(start.ui.window(), &[Key::F7.into()]);
+    shot("0d-settings-single")?;
+    Ok(())
+}
+
 fn backoffice(
     window: &Rc<MinimalSoftwareWindow>,
     dir: &Path,
@@ -334,6 +456,7 @@ fn backoffice(
     options.language = Some(language.to_owned());
     options.debounce = std::time::Duration::ZERO;
     options.username = "owner".into();
+    options.start = true;
     let app: BackOfficeApp = build_backoffice(
         fake.clone(),
         Runner::Block(runtime.handle().clone()),

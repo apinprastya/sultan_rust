@@ -26,8 +26,8 @@ pub struct Cli {
         help = "Config file [env: SULTAN_CONFIG] [default: ./sultan.toml]"
     )]
     pub config: Option<PathBuf>,
-    /// What to do; none runs this machine as it was set up (single app, server hint or
-    /// terminal), or opens the setup wizard on a new machine.
+    /// What to do; none runs this machine as it was set up (the Start screen of a single app or
+    /// a terminal, or the server hint), or opens the setup wizard on a new machine.
     #[command(subcommand)]
     pub command: Option<Command>,
 }

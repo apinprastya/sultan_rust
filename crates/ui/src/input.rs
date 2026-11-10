@@ -3,7 +3,8 @@
 //!
 //! The window has one focused `FocusScope` that hands every key press to Rust as Slint key text
 //! plus modifiers; [`Key::parse`] turns it into a [`Key`], and the controller decides per screen
-//! what it means. Clicks on the PIN pad, keypad and key chips send the same keys or actions, so
+//! what it means. Digits and other printable characters ([`Key::Char`]) also feed the session
+//! home's barcode field, which is drawn by Slint but edited in Rust (no text widget). Clicks on the PIN pad, keypad and key chips send the same keys or actions, so
 //! mouse, touch and keyboard share one path.
 
 use chrono::{Local, TimeZone};
@@ -33,6 +34,9 @@ pub enum Key {
     BackTab,
     /// F1–F12.
     F(u8),
+    /// Another printable ASCII character (letters, `-`, `.`, …; no space): what a barcode
+    /// scanner or a typed SKU sends besides digits.
+    Char(char),
     /// Anything else.
     Other,
 }
@@ -76,6 +80,7 @@ impl Key {
             c if (F1..F1 + 12).contains(&u32::from(c)) => {
                 Self::F(u8::try_from(u32::from(c) - F1 + 1).unwrap_or(0))
             }
+            c if c.is_ascii_graphic() => Self::Char(c),
             _ => Self::Other,
         }
     }
@@ -95,6 +100,7 @@ impl Key {
             Self::Tab => "Tab".to_owned(),
             Self::BackTab => "Shift+Tab".to_owned(),
             Self::F(n) => format!("F{n}"),
+            Self::Char(c) => c.to_string(),
             Self::Other => String::new(),
         }
     }
@@ -212,7 +218,12 @@ mod tests {
             ("\u{F70D}", false, false, Key::F(10)),
             ("\u{F70F}", false, false, Key::F(12)),
             ("\u{F710}", false, false, Key::Other),
-            ("a", false, false, Key::Other),
+            ("a", false, false, Key::Char('a')),
+            ("A", false, true, Key::Char('A')),
+            ("-", false, false, Key::Char('-')),
+            ("a", true, false, Key::Other),
+            (" ", false, false, Key::Other),
+            ("é", false, false, Key::Other),
             ("", false, false, Key::Other),
             ("12", false, false, Key::Other),
         ];
@@ -228,7 +239,7 @@ mod tests {
             (Key::Digit(3), "3"), (Key::Backspace, "⌫"), (Key::Enter, "Enter"),
             (Key::Escape, "Esc"), (Key::Up, "↑"), (Key::Down, "↓"), (Key::Left, "←"),
             (Key::Right, "→"), (Key::Tab, "Tab"), (Key::BackTab, "Shift+Tab"),
-            (Key::F(10), "F10"), (Key::Other, ""),
+            (Key::F(10), "F10"), (Key::Char('x'), "x"), (Key::Other, ""),
         ];
         for (key, label) in cases {
             assert_eq!(key.label(), label);

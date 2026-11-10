@@ -147,6 +147,7 @@ async fn pair(
     client: &reqwest::Client,
     server: &str,
     code: &str,
+    branch: Option<String>,
     config_path: &Path,
 ) -> Result<Paired, SetupError> {
     let base = api_base(server);
@@ -157,7 +158,7 @@ async fn pair(
     )
     .await?;
     let answer: PairResponse = parse(body)?;
-    let stored = register::store(&register::root_of(server), answer, config_path)
+    let stored = register::store(&register::root_of(server), answer, branch, config_path)
         .map_err(|e| setup_error(&e))?;
     set_mode(config_path, Mode::Client)?;
     Ok(Paired {
@@ -323,7 +324,8 @@ impl SetupService for AppSetupService {
                 )
                 .await?,
             )?;
-            let paired = pair(&client, &server, &code.code, &config_path).await;
+            let branch = Some(request.branch_label).filter(|b| !b.is_empty());
+            let paired = pair(&client, &server, &code.code, branch, &config_path).await;
             // The manager's session is not needed any more, whatever happened.
             let _ = call(
                 client
@@ -341,7 +343,7 @@ impl SetupService for AppSetupService {
         let code = code.to_owned();
         let client = self.client.clone();
         let config_path = self.config_path.clone();
-        Box::pin(async move { pair(&client, &server, &code, &config_path).await })
+        Box::pin(async move { pair(&client, &server, &code, None, &config_path).await })
     }
 }
 
@@ -514,6 +516,7 @@ mod tests {
             branch_id: session.branch_id.clone(),
             code: "R2".into(),
             name: "Kasir 2".into(),
+            branch_label: "JKT01 · Toko".into(),
         };
         let paired = service
             .register_terminal(&server.root, &session.token, &request)
@@ -525,6 +528,7 @@ mod tests {
         assert_eq!(file.mode.as_deref(), Some("client"));
         let (register, token) = register::paired(&config_path).unwrap();
         assert_eq!(register.register_name, "Kasir 2");
+        assert_eq!(register.branch.as_deref(), Some("JKT01 · Toko"));
         assert!(!token.is_empty());
 
         // The manager's session was ended.
@@ -543,6 +547,14 @@ mod tests {
             .await
             .unwrap_err();
         assert_eq!(err.code, "conflict");
+        // A pairing code: the branch label comes from the server's answer.
+        let other = TempDir::new("setup-terminal-code");
+        let coded = AppSetupService::new(&other.0.join("sultan.toml"));
+        let code = register::tests::issue_code(&format!("{}/api/v1", server.root), "R3").await;
+        let paired = coded.pair_with_code(&server.root, &code).await.unwrap();
+        assert_eq!(paired.register_code, "R3");
+        let (register, _) = register::paired(&other.0.join("sultan.toml")).unwrap();
+        assert_eq!(register.branch.as_deref(), Some("JKT01 · Toko Jakarta"));
         // A used or unknown pairing code.
         let err = service
             .pair_with_code(&server.root, "AAAA-BBBB")
@@ -564,6 +576,7 @@ mod tests {
             branch_id: session.branch_id.clone(),
             code: "R2".into(),
             name: "Kasir 2".into(),
+            branch_label: String::new(),
         };
         let err = service
             .register_terminal(&server.root, &session.token, &request)

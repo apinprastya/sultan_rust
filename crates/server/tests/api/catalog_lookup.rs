@@ -40,11 +40,16 @@ async fn lookup_by_device_token_or_session(h: &Harness) {
             "variant_id": doc.variants[1],
             "unit_id": doc.base_unit,
             "name": "Kaos Polos – Small / Blue",
+            "product_name": "Kaos Polos",
+            "variant_label": "Small / Blue",
+            "unit_name": "pcs",
             "sku": "KAOS02-S-BLUE",
+            "plu": null,
             "type": "stock",
             "open_price": false,
             "requires_note": false,
             "source": "barcode",
+            "matched_code": code,
             "qty_thousandths": 1000,
             "amount": null,
             "branch_id": h.jkt.id.to_string(),
@@ -129,11 +134,14 @@ async fn lookup_steps_and_errors(h: &Harness) {
     // Box barcode → the box unit; SKU in lower case → the default sale unit.
     let r = device("/api/v1/catalog/lookup?code=BOX-KAOS03".into()).await;
     assert_eq!(r.body["unit_id"], doc.body["units"][1]["id"]);
+    assert_eq!(r.body["unit_name"], "box");
     let r = device("/api/v1/catalog/lookup?code=kaos03-m-red".into()).await;
     assert_eq!(
         (r.body["source"].as_str(), r.body["sku"].as_str()),
         (Some("sku"), Some("KAOS03-M-RED"))
     );
+    assert_eq!(r.body["matched_code"], "KAOS03-M-RED");
+    assert_eq!(r.body["variant_label"], "Medium / Red");
 
     // A weighed product: PLU typed alone, and a weight scale barcode 21 00123 01250 C.
     let (kg, v) = (new_id(), new_id());
@@ -159,6 +167,15 @@ async fn lookup_steps_and_errors(h: &Harness) {
     let r = device(format!("/api/v1/catalog/lookup?code={scale}")).await;
     assert_eq!(r.body["source"], "scale_barcode");
     assert_eq!(r.body["qty_thousandths"], 1250);
+    assert_eq!(
+        (
+            &r.body["plu"],
+            &r.body["unit_name"],
+            &r.body["matched_code"]
+        ),
+        (&json!(123), &json!("kg"), &json!(scale))
+    );
+    assert_eq!(r.body["variant_label"], "");
     let price = ean13("220012315000");
     let r = device(format!("/api/v1/catalog/lookup?code={price}")).await;
     assert_eq!(r.body["amount"], 15_000);
