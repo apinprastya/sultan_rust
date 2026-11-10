@@ -466,6 +466,8 @@ pub enum Effect {
         code: String,
         /// The lookup's sequence number.
         seq: u64,
+        /// The login generation the lookup was started for.
+        generation: u64,
     },
     /// [`sultan_client::Service::watch_events`]; events come back as [`Msg::Event`] with
     /// `generation`.
@@ -512,8 +514,9 @@ pub enum Msg {
     LoggedOut(Result<(), ClientError>),
     /// An event of the login `generation`.
     Event(u64, ServerEvent),
-    /// Result of [`Effect::Lookup`] number `seq`.
-    Looked(u64, Result<Lookup, ClientError>),
+    /// Result of [`Effect::Lookup`] number `seq` (second field) of the login `generation`
+    /// (first field).
+    Looked(u64, u64, Result<Lookup, ClientError>),
 }
 
 /// What [`Controller::update`] did.
@@ -943,7 +946,12 @@ impl Controller {
                 // A scan is the next action: the previous action's message goes.
                 h.notice = None;
                 self.lookups = seq;
-                vec![Effect::Lookup { token, code, seq }]
+                vec![Effect::Lookup {
+                    token,
+                    code,
+                    seq,
+                    generation: self.generation,
+                }]
             }
         }
     }
@@ -1052,7 +1060,7 @@ impl Controller {
                 }
                 self.catalog_event(&event)
             }
-            Msg::Looked(seq, result) => self.looked(seq, result),
+            Msg::Looked(generation, seq, result) => self.looked(generation, seq, result),
             // Logout and branch failures change nothing on screen.
             _ => Vec::new(),
         }
@@ -1087,10 +1095,24 @@ impl Controller {
             return Vec::new();
         };
         self.lookups = seq;
-        vec![Effect::Lookup { token, code, seq }]
+        vec![Effect::Lookup {
+            token,
+            code,
+            seq,
+            generation: self.generation,
+        }]
     }
 
-    fn looked(&mut self, seq: u64, result: Result<Lookup, ClientError>) -> Vec<Effect> {
+    fn looked(
+        &mut self,
+        generation: u64,
+        seq: u64,
+        result: Result<Lookup, ClientError>,
+    ) -> Vec<Effect> {
+        // An answer of an earlier login must not end (or change) the current one.
+        if generation != self.generation || self.login.is_none() {
+            return Vec::new();
+        }
         if let Err(e) = &result
             && ends_login(e)
         {
@@ -1456,11 +1478,16 @@ mod tests {
             [Effect::Lookup {
                 token: "t".into(),
                 code: "x1".into(),
-                seq: 1
+                seq: 1,
+                generation: 0
             }]
         );
         assert!(!c.busy, "scanning goes on while the lookup runs");
-        c.update(Msg::Looked(1, Ok(found("p1"))));
+        // An answer of an earlier login, even a 401, leaves the current login alone.
+        let stale = Msg::Looked(9, 1, Err(api(Problem::new(401, "invalid_session", "x"))));
+        assert!(c.update(stale).effects.is_empty());
+        assert!(c.login.is_some());
+        c.update(Msg::Looked(0, 1, Ok(found("p1"))));
         let Screen::Home(h) = &c.screen else {
             panic!("home")
         };
@@ -1498,11 +1525,15 @@ mod tests {
             .is_empty(),
             "one is already waiting"
         );
-        c.update(Msg::Looked(2, Err(api(Problem::new(422, "archived", "x")))));
+        c.update(Msg::Looked(
+            0,
+            2,
+            Err(api(Problem::new(422, "archived", "x"))),
+        ));
         let step = c.update(event("events.lagged", serde_json::Value::Null));
         assert_eq!(step.effects.len(), 1);
         // A late answer of an older lookup is ignored.
-        c.update(Msg::Looked(2, Ok(found("p1"))));
+        c.update(Msg::Looked(0, 2, Ok(found("p1"))));
         let Screen::Home(h) = &c.screen else {
             panic!("home")
         };
@@ -1525,7 +1556,11 @@ mod tests {
                 .effects
                 .is_empty()
         );
-        assert!(c.update(Msg::Looked(3, Ok(found("p1")))).effects.is_empty());
+        assert!(
+            c.update(Msg::Looked(0, 3, Ok(found("p1"))))
+                .effects
+                .is_empty()
+        );
         // Nothing shown at home: nothing to refresh.
         c.screen = Screen::Home(HomeScreen::default());
         assert!(

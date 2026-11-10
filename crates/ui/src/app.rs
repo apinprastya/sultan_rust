@@ -202,9 +202,14 @@ fn start(service: &dyn Service, effect: Effect) -> Option<MsgFuture> {
             Msg::Protected
         ),
         Effect::Logout { token } => call!(service.logout(&token), Msg::LoggedOut),
-        Effect::Lookup { token, code, seq } => {
+        Effect::Lookup {
+            token,
+            code,
+            seq,
+            generation,
+        } => {
             let future = service.lookup(&token, &code);
-            Some(Box::pin(async move { Msg::Looked(seq, future.await) }) as MsgFuture)
+            Some(Box::pin(async move { Msg::Looked(generation, seq, future.await) }) as MsgFuture)
         }
         Effect::WatchEvents { .. } | Effect::Exit => None,
     }
