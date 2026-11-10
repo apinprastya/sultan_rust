@@ -26,7 +26,7 @@ use sultan_client::{BackOffice, EventSink};
 use sultan_core::catalog::{ProductType, UnitKind};
 use tokio::runtime::Handle;
 
-use crate::app::Runner;
+use crate::app::{Runner, Watchers};
 use crate::backoffice::form::{FormError, ProductForm, Tab};
 use crate::backoffice::{Confirm, Controller, Effect, Msg, Press, Screen, TYPES};
 use crate::controller::Notice;
@@ -127,6 +127,7 @@ struct Models {
 }
 
 struct State {
+    watchers: Watchers,
     ui: slint::Weak<BackOfficeWindow>,
     controller: RefCell<Controller>,
     inbox: Inbox,
@@ -336,9 +337,10 @@ impl State {
                     });
                     let watching = self.service.watch_events(token, sink);
                     // Ends when the socket closes (logout) or fails; nothing to report.
-                    self.runner.handle().spawn(async move {
+                    let task = self.runner.handle().spawn(async move {
                         let _ = watching.await;
                     });
+                    self.watchers.replace(task.abort_handle());
                     continue;
                 }
                 Effect::Debounce(serial) => {
@@ -1085,6 +1087,7 @@ pub fn build_backoffice(
     controller.start = options.start;
     ui.set_start(options.start);
     let state = Rc::new(State {
+        watchers: Watchers::default(),
         ui: ui.as_weak(),
         controller: RefCell::new(controller),
         inbox: Inbox::default(),
@@ -1116,7 +1119,10 @@ pub fn run_backoffice(
     options: BackOfficeOptions,
 ) -> Result<(), slint::PlatformError> {
     let app = build_backoffice(service, Runner::Spawn(handle), options)?;
-    app.ui.run()
+    let result = app.ui.run();
+    // The window is closed: its event socket must not outlive it.
+    app.state.watchers.stop();
+    result
 }
 
 #[cfg(test)]
