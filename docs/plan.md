@@ -211,6 +211,10 @@ audit log viewer · light/dark theme · i18n ID/EN.
   connection, set up again, version; F9 on the lock / back-office login screen goes back). A
   single app opens to its terminals from Settings too ("Allow terminals to connect": restarts its
   server on the shop network and shows the address to type in the terminal's wizard).
+- **2026-11-11 C3b decisions:** keep `GET /registers/me` (spec 2.1 §8) · a device token may open
+  `/events` and gets only `Audience::Everyone` events, so the lock screen sees `catalog.changed`
+  (spec 2.2 §17 item 3) · `catalog.manage` / `catalog.view_archived` count from **any** role
+  assignment, not only an all-branches one (spec 2.2 §11, §17 item 4).
 
 ## Status (updated 2026-11-10)
 
@@ -233,11 +237,7 @@ Where we are, so any session can pick up from here. Update this section at the e
     new `GET /registers/me` (device token) refreshes it for older pairings.
 
 **Open decisions (the user's call)**
-1. Keep the new `GET /registers/me` endpoint (and its row in spec 2.1 §8)? Proposed: keep.
-2. Spec 2.2 §17 item 3: let a device token (no PIN session) open `/events` for
-   `Audience::Everyone` events, so the lock screen gets `catalog.changed`.
-3. Spec 2.2 §17 item 4: let `catalog.manage` count from any role assignment, not only an
-   all-branches one (so a branch Manager / Stock clerk can edit the catalog).
+- None. The three earlier ones were decided on 2026-11-11 (see §3).
 
 **Small to-dos**
 - Settings on a single app: "Server address" shows `127.0.0.1:8080` even when terminals may connect;
@@ -245,8 +245,9 @@ Where we are, so any session can pick up from here. Update this section at the e
 - Settings at 1024 px: the long status text ("Aplikasi tunggal: server berjalan di ko…") is cut off.
 
 **Next (pick one)**
-- **C3b**: the four open items in spec 2.2 §17 (delete never-used products/categories/brands,
-  paging for search, plus decisions 2 and 3 above).
+- **C3b**: the four items in spec 2.2 §17, all decided: delete never-used
+  products/categories/brands, paging for search, device-token `/events` (Everyone events only),
+  `catalog.manage` from any role assignment.
 - **2.3 Pricing**: discuss the spec first (price lists, quantity tiers, membership, tax, rounding),
   then implement in phases like 2.2.
 
