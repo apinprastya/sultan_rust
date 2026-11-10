@@ -5,6 +5,9 @@ configuration. The design is in [docs/plan.md](docs/plan.md), and the agreed rul
 section are in [docs/spec/](docs/spec/). If code and spec disagree, the spec wins. Ask before
 changing a spec rule.
 
+**Start here:** the "Status" section of [docs/plan.md](docs/plan.md) says what is done, which
+decisions are open and what comes next. Update it at the end of every phase.
+
 ## Project
 
 A retail point of sale in Rust. One binary (`sultan`) runs every node role (`standalone`, `hq`,
