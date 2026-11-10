@@ -4,11 +4,12 @@
 and of the catalog, spec 2.2 (`docs/spec/2.2-catalog.md`), against a running node. Requests and bodies follow the OpenAPI document served at
 `GET /api/v1/openapi.json` (import that URL into Postman to browse every endpoint).
 
-Flow (67 requests, each with test scripts). Spec 2.1 (requests 01–34):
+Flow (68 requests, each with test scripts). Spec 2.1 (requests 01–35):
 password login → OpenAPI document → create branch (`PUT`, client UUIDv7, time zone
 `Asia/Makassar`) → replay the same `PUT` (idempotent) → a time zone that is not IANA (`WIB`) is
-rejected (`invalid_field`) → create register → issue pairing code → pair → reused code rejected → create cashier
-user with PIN → lock-screen users → PIN login → list users → cashier denied `GET /users` and
+rejected (`invalid_field`) → create register → issue pairing code → pair (the answer names the branch: `branch_code`,
+`branch_name`) → reused code rejected → create cashier user with PIN → lock-screen users → the
+device's register and branch (`GET /registers/me`) → PIN login → list users → cashier denied `GET /users` and
 `PUT /branches` (`permission_denied`) → last Owner cannot be archived (`last_owner`) → permission
 catalog → audit queries → **cashier session and override (spec 2.1 §5–6, plan Phase 6):** open a
 cashier session with an `Idempotency-Key` → retry with the same key replays the `201` → second open
@@ -23,7 +24,7 @@ response) → the owner lists the register's closed sessions one per page
 empty → an unknown `status` is rejected → logout. The open and close steps also check the session
 number `<BRANCH>-<REGISTER>-S-<YYMMDD>-<NN>`.
 
-**Catalog (folder "Catalog (spec 2.2)", requests 35–67, phase C3):** create a category and a brand →
+**Catalog (folder "Catalog (spec 2.2)", requests 36–68, phase C3):** create a category and a brand →
 tax classes (device token) → `PUT` a product with Size × Color options, units pcs + box(24) and
 EAN-13 barcodes (default SKUs `<code>-S-RED`…, `factor_thousandths`) → replay (`200`, same body) →
 read it with the device token → duplicate barcode on another product (`409 duplicate_barcode` with

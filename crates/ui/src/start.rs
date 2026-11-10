@@ -9,8 +9,16 @@
 //!   through [`StartService::set_language`], unless `SULTAN_LANG` fixes it), the connection
 //!   details, the version, and **F8** "set up again" (Enter confirms, Esc cancels): the setup
 //!   wizard opens, which never overwrites a database that is already set up. Esc goes back.
+//! - **Terminals in this shop** (single app only, on Settings) — **F7** (or the switch) allows
+//!   terminals on the shop network to connect: the app's server is restarted on the new address
+//!   through [`StartService::set_lan`] (all interfaces on the configured port when on, loopback
+//!   when off; saved as `listen` in `sultan.toml`). While it restarts, every key waits. When it
+//!   is on, the screen lists the addresses terminals type in their setup wizard; when the new
+//!   address cannot be bound, the previous setting stays and the screen says why. `SULTAN_LISTEN`
+//!   fixes the address, and the switch is then locked ([`Lan::fixed`]).
 //!
-//! The connection is checked when the screen opens ([`Effect::Check`]). The register and the
+//! The connection is checked when the screen opens ([`Effect::Check`]); its answer may carry the
+//! branch label (`JKT01 · Toko Jakarta`), which then replaces the one shown. The register and the
 //! back office open only when the server answers: while the check runs the choice waits for it,
 //! after a failure F1/F2 check again first, and if the server still cannot be reached the
 //! screen says so instead of opening a window that cannot work. A register the server no longer
@@ -48,6 +56,32 @@ impl AppKind {
     }
 }
 
+/// Whether terminals on the shop network may connect to a single app's server.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Lan {
+    /// The server listens on every interface (on) or on loopback only (off).
+    pub on: bool,
+    /// The port terminals connect to when on, e.g. `8080`.
+    pub port: u16,
+    /// What terminals type in their setup wizard, e.g. `192.168.1.10:8080`: this computer's
+    /// network addresses with the port. Empty when none was found.
+    pub addresses: Vec<String>,
+    /// `SULTAN_LISTEN` sets the listen address on this computer: the switch is locked.
+    pub fixed: bool,
+    /// Terminals were on, but the server could not listen on that port at start (e.g. another
+    /// program uses it): it then listens on loopback only. The port that failed.
+    pub failed_port: Option<u16>,
+}
+
+/// The answer of [`StartService::set_lan`]: the new setting and where the server now answers.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LanChanged {
+    /// The new setting.
+    pub lan: Lan,
+    /// The server URL for this computer, e.g. `http://127.0.0.1:8080`.
+    pub server: String,
+}
+
 /// What the Start screen shows about this machine.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StartInfo {
@@ -67,6 +101,8 @@ pub struct StartInfo {
     pub language: String,
     /// `SULTAN_LANG` is set: the language cannot be changed here.
     pub language_fixed: bool,
+    /// Terminals in this shop (a single app); `None` on a terminal.
+    pub lan: Option<Lan>,
 }
 
 /// Why the connection check failed.
@@ -89,8 +125,14 @@ impl StartError {
     }
 }
 
-/// A boxed future of [`StartService::check`].
-pub type StartFuture = Pin<Box<dyn Future<Output = Result<(), StartError>> + Send + 'static>>;
+/// A boxed future of [`StartService::check`]: the branch label (`JKT01 · Toko Jakarta`) when
+/// the server says which branch this register belongs to.
+pub type StartFuture =
+    Pin<Box<dyn Future<Output = Result<Option<String>, StartError>> + Send + 'static>>;
+
+/// A boxed future of [`StartService::set_lan`]: the new setting, or why it was not applied
+/// (code `in_use` with the port as the detail, or `failed`).
+pub type LanFuture = Pin<Box<dyn Future<Output = Result<LanChanged, StartError>> + Send + 'static>>;
 
 /// The work behind the Start screen.
 pub trait StartService: Send + Sync {
@@ -101,6 +143,9 @@ pub trait StartService: Send + Sync {
     /// # Errors
     /// Why it could not be saved.
     fn set_language(&self, language: &str) -> Result<(), String>;
+    /// A single app: allows terminals to connect (`on`) or not, restarts the server on the new
+    /// address and saves it. On an error the previous setting stays in force.
+    fn set_lan(&self, on: bool) -> LanFuture;
 }
 
 /// What the person chose.
@@ -156,6 +201,8 @@ pub enum Effect {
     Check,
     /// [`StartService::set_language`] and switch the window's language.
     SetLanguage(String),
+    /// [`StartService::set_lan`].
+    SetLan(bool),
     /// Close the window ([`Controller::outcome`] says why).
     Close,
 }
@@ -166,12 +213,15 @@ pub enum Msg {
     /// A key.
     Key(Key),
     /// A tile or button: `register`, `backoffice`, `settings`, `refresh`, `language`
-    /// (switch), `lang-id`, `lang-en`, `setup`, `confirm`, `back`.
+    /// (switch), `lang-id`, `lang-en`, `lan` (switch terminals on / off), `setup`, `confirm`,
+    /// `back`.
     Action(String),
     /// Result of [`Effect::Check`].
-    Checked(Result<(), StartError>),
+    Checked(Result<Option<String>, StartError>),
     /// Result of [`Effect::SetLanguage`].
     LanguageSaved(Result<(), String>),
+    /// Result of [`Effect::SetLan`].
+    LanSet(Result<LanChanged, StartError>),
 }
 
 /// What [`Controller::update`] did.
@@ -211,20 +261,28 @@ pub struct Controller {
     pub notice: Option<Notice>,
     /// What the person chose, once they have.
     pub outcome: Option<Choice>,
+    /// The server is being restarted on a new address ([`Effect::SetLan`]).
+    pub lan_busy: bool,
 }
 
 impl Controller {
     /// The start state (home, checking the connection) and its first call.
     #[must_use]
     pub fn new(info: StartInfo) -> (Self, Vec<Effect>) {
+        let notice = info
+            .lan
+            .as_ref()
+            .and_then(|lan| lan.failed_port)
+            .map(|port| Notice::new("lan_start", port.to_string(), Tone::Bad));
         let controller = Self {
             info,
             page: Page::Home,
             confirm: false,
             conn: Conn::Checking,
             pending: None,
-            notice: None,
+            notice,
             outcome: None,
+            lan_busy: false,
         };
         (controller, vec![Effect::Check])
     }
@@ -248,6 +306,9 @@ impl Controller {
                 let mut keys = Vec::new();
                 if !self.info.language_fixed {
                     keys.push(s(Key::F(6), "change_language", "language"));
+                }
+                if self.info.lan.as_ref().is_some_and(|lan| !lan.fixed) {
+                    keys.push(s(Key::F(7), "terminals", "lan"));
                 }
                 keys.push(s(Key::F(8), "set_up_again", "setup"));
                 keys.push(s(Key::Escape, "back", "back"));
@@ -280,17 +341,23 @@ impl Controller {
                 }
                 Step::default()
             }
+            Msg::LanSet(result) => Step {
+                effects: self.lan_set(result),
+                handled: false,
+            },
         }
     }
 
     fn on_action(&mut self, id: &str) -> Vec<Effect> {
-        if self.outcome.is_some() {
+        if self.outcome.is_some() || self.lan_busy {
             return Vec::new();
         }
         match (self.page, id) {
             (Page::Home, "register") => self.open(Choice::Register),
             (Page::Home, "backoffice") => self.open(Choice::BackOffice),
             (Page::Home, "settings") => {
+                // A register or back office still waiting for the check is not wanted any more.
+                self.pending = None;
                 self.page = Page::Settings;
                 self.notice = None;
                 Vec::new()
@@ -306,6 +373,7 @@ impl Controller {
             }
             (Page::Settings, "lang-id") if !self.confirm => self.set_language("id"),
             (Page::Settings, "lang-en") if !self.confirm => self.set_language("en"),
+            (Page::Settings, "lan") if !self.confirm => self.switch_lan(),
             (Page::Settings, "setup") => {
                 self.confirm = true;
                 Vec::new()
@@ -331,6 +399,38 @@ impl Controller {
         language.clone_into(&mut self.info.language);
         self.notice = None;
         vec![Effect::SetLanguage(language.to_owned())]
+    }
+
+    fn switch_lan(&mut self) -> Vec<Effect> {
+        let Some(lan) = self.info.lan.as_ref().filter(|lan| !lan.fixed) else {
+            return Vec::new();
+        };
+        let on = !lan.on;
+        self.lan_busy = true;
+        self.notice = None;
+        vec![Effect::SetLan(on)]
+    }
+
+    /// The server was restarted (or not): show the new setting and check it answers.
+    fn lan_set(&mut self, result: Result<LanChanged, StartError>) -> Vec<Effect> {
+        self.lan_busy = false;
+        match result {
+            Ok(changed) => {
+                self.info.lan = Some(changed.lan);
+                self.info.server = changed.server;
+                self.notice = None;
+                self.recheck(None)
+            }
+            Err(e) => {
+                let code = if e.code == "in_use" {
+                    "lan_in_use"
+                } else {
+                    "lan_failed"
+                };
+                self.notice = Some(Notice::new(code, e.detail, Tone::Bad));
+                Vec::new()
+            }
+        }
     }
 
     fn finish(&mut self, choice: Choice) -> Vec<Effect> {
@@ -362,9 +462,14 @@ impl Controller {
         }
     }
 
-    fn checked(&mut self, result: Result<(), StartError>) -> Vec<Effect> {
+    fn checked(&mut self, result: Result<Option<String>, StartError>) -> Vec<Effect> {
         self.conn = match result {
-            Ok(()) => Conn::Ok,
+            Ok(branch) => {
+                if let Some(branch) = branch.filter(|b| !b.is_empty()) {
+                    self.info.branch = branch;
+                }
+                Conn::Ok
+            }
             Err(e) if e.code == "unpaired" => Conn::Unpaired,
             Err(e) => Conn::Failed(e.detail),
         };
@@ -395,6 +500,7 @@ mod tests {
             version: "0.1.0".into(),
             language: "id".into(),
             language_fixed: fixed,
+            lan: None,
         }
     }
 
@@ -418,7 +524,7 @@ mod tests {
         // F2 after a failure checks again; this time it answers.
         assert_eq!(action(&mut c, "backoffice"), [Effect::Check]);
         assert_eq!(c.notice, None);
-        assert_eq!(c.update(Msg::Checked(Ok(()))).effects, [Effect::Close]);
+        assert_eq!(c.update(Msg::Checked(Ok(None))).effects, [Effect::Close]);
         assert_eq!(c.outcome, Some(Choice::BackOffice));
         // Nothing else happens once chosen.
         assert_eq!(action(&mut c, "register"), []);
@@ -447,7 +553,7 @@ mod tests {
     #[test]
     fn settings_switch_the_language_and_set_up_again() {
         let (mut c, _) = Controller::new(info(false));
-        c.update(Msg::Checked(Ok(())));
+        c.update(Msg::Checked(Ok(None)));
         assert!(c.update(Msg::Key(Key::F(3))).handled);
         assert_eq!(c.page, Page::Settings);
         assert!(!c.update(Msg::Key(Key::F(1))).handled, "F1 is a home key");
@@ -480,6 +586,112 @@ mod tests {
         c.update(Msg::Key(Key::Escape));
         assert_eq!(c.page, Page::Home);
         assert!(!c.update(Msg::Key(Key::Escape)).handled);
+    }
+
+    fn single(on: bool, fixed: bool) -> StartInfo {
+        StartInfo {
+            kind: AppKind::Single,
+            lan: Some(Lan {
+                on,
+                port: 8080,
+                addresses: Vec::new(),
+                fixed,
+                failed_port: None,
+            }),
+            ..info(false)
+        }
+    }
+
+    fn changed(on: bool) -> LanChanged {
+        LanChanged {
+            lan: Lan {
+                on,
+                port: 8080,
+                addresses: vec!["192.168.1.10:8080".into()],
+                fixed: false,
+                failed_port: None,
+            },
+            server: "http://127.0.0.1:8080".into(),
+        }
+    }
+
+    #[test]
+    fn the_check_refreshes_the_branch() {
+        let (mut c, _) = Controller::new(info(false));
+        c.update(Msg::Checked(Ok(Some("JKT01 · Toko".into()))));
+        assert_eq!(c.info.branch, "JKT01 · Toko");
+        c.update(Msg::Checked(Ok(Some(String::new()))));
+        assert_eq!(
+            c.info.branch, "JKT01 · Toko",
+            "an empty label changes nothing"
+        );
+    }
+
+    #[test]
+    fn terminals_are_switched_on_and_off_on_a_single_app() {
+        let (mut c, _) = Controller::new(single(false, false));
+        // Settings cancel a choice that waits for the check.
+        action(&mut c, "register");
+        action(&mut c, "settings");
+        assert_eq!(c.update(Msg::Checked(Ok(None))).effects, []);
+        assert_eq!(c.outcome, None);
+        action(&mut c, "back");
+        action(&mut c, "lan");
+        assert!(!c.lan_busy, "not on the home page");
+        action(&mut c, "settings");
+        assert!(c.shortcuts().iter().any(|s| s.key == Key::F(7)));
+        assert_eq!(
+            c.update(Msg::Key(Key::F(7))).effects,
+            [Effect::SetLan(true)]
+        );
+        assert!(c.lan_busy);
+        // Everything waits for the restart.
+        assert_eq!(action(&mut c, "back"), []);
+        assert_eq!(c.page, Page::Settings);
+        assert_eq!(
+            c.update(Msg::LanSet(Ok(changed(true)))).effects,
+            [Effect::Check]
+        );
+        assert!(!c.lan_busy);
+        assert_eq!(c.conn, Conn::Checking);
+        assert!(c.info.lan.as_ref().unwrap().on);
+        assert_eq!(c.info.server, "http://127.0.0.1:8080");
+        c.update(Msg::Checked(Ok(None)));
+        // Off again, but the port is taken: the old setting stays, the screen says why.
+        assert_eq!(action(&mut c, "lan"), [Effect::SetLan(false)]);
+        let in_use = Err(StartError::new("in_use", "8080"));
+        assert_eq!(c.update(Msg::LanSet(in_use)).effects, []);
+        assert!(c.info.lan.as_ref().unwrap().on);
+        let notice = c.notice.as_ref().unwrap();
+        assert_eq!((notice.code, notice.arg.as_str()), ("lan_in_use", "8080"));
+        action(&mut c, "lan");
+        c.update(Msg::LanSet(Err(StartError::new("failed", "disk full"))));
+        assert_eq!(c.notice.as_ref().unwrap().code, "lan_failed");
+        assert_eq!(c.conn, Conn::Ok);
+        // Not while "set up again?" is asked.
+        action(&mut c, "setup");
+        assert_eq!(action(&mut c, "lan"), []);
+    }
+
+    #[test]
+    fn a_port_that_failed_at_start_is_shown() {
+        let mut start = single(false, false);
+        start.lan.as_mut().unwrap().failed_port = Some(8080);
+        let (c, _) = Controller::new(start);
+        let notice = c.notice.as_ref().unwrap();
+        assert_eq!((notice.code, notice.arg.as_str()), ("lan_start", "8080"));
+    }
+
+    #[test]
+    fn sultan_listen_and_terminals_lock_the_switch() {
+        let (mut c, _) = Controller::new(single(true, true));
+        action(&mut c, "settings");
+        assert!(c.shortcuts().iter().all(|s| s.action != "lan"));
+        assert_eq!(action(&mut c, "lan"), []);
+        let (mut c, _) = Controller::new(info(false));
+        action(&mut c, "settings");
+        assert!(c.shortcuts().iter().all(|s| s.action != "lan"));
+        assert_eq!(action(&mut c, "lan"), []);
     }
 
     #[test]

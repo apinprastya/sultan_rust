@@ -5,7 +5,8 @@
 //! [`Runner::Spawn`] runs it on the runtime and wakes the window through `pump`.
 //!
 //! [`Effect::SetLanguage`] saves the choice and switches the bundled translation at once, so the
-//! window re-renders in the new language. [`Effect::Close`] hides the window; [`run`] then
+//! window re-renders in the new language. [`Effect::SetLan`] restarts a single app's server like
+//! a check: awaited on the spot or spawned, its answer comes back as [`Msg::LanSet`]. [`Effect::Close`] hides the window; [`run`] then
 //! returns the choice, or `None` when the window was closed (quit).
 
 use std::cell::{Cell, Ref, RefCell};
@@ -105,22 +106,8 @@ impl State {
     fn run(&self, effects: Vec<Effect>) {
         for effect in effects {
             match effect {
-                Effect::Check => {
-                    let future = self.service.check();
-                    match &self.runner {
-                        Runner::Block(handle) => {
-                            push(&self.inbox, Msg::Checked(handle.block_on(future)));
-                        }
-                        Runner::Spawn(handle) => {
-                            let inbox = self.inbox.clone();
-                            let wake = self.wake.clone();
-                            handle.spawn(async move {
-                                push(&inbox, Msg::Checked(future.await));
-                                wake();
-                            });
-                        }
-                    }
-                }
+                Effect::Check => self.call(self.service.check(), Msg::Checked),
+                Effect::SetLan(on) => self.call(self.service.set_lan(on), Msg::LanSet),
                 Effect::SetLanguage(language) => {
                     select_language(&language);
                     push(
@@ -134,6 +121,26 @@ impl State {
                         let _ = ui.hide();
                     }
                 }
+            }
+        }
+    }
+
+    /// Runs a service call: awaited on the spot ([`Runner::Block`]) or spawned, its answer
+    /// queued as `msg`.
+    fn call<T: Send + 'static>(
+        &self,
+        future: impl std::future::Future<Output = T> + Send + 'static,
+        msg: fn(T) -> Msg,
+    ) {
+        match &self.runner {
+            Runner::Block(handle) => push(&self.inbox, msg(handle.block_on(future))),
+            Runner::Spawn(handle) => {
+                let inbox = self.inbox.clone();
+                let wake = self.wake.clone();
+                handle.spawn(async move {
+                    push(&inbox, msg(future.await));
+                    wake();
+                });
             }
         }
     }
@@ -176,6 +183,13 @@ fn render(ui: &StartWindow, c: &Controller, chips: &VecModel<Chip>) {
     ui.set_version(info.version.as_str().into());
     ui.set_language(info.language.as_str().into());
     ui.set_language_fixed(info.language_fixed);
+    let lan = info.lan.clone().unwrap_or_default();
+    ui.set_lan_shown(info.lan.is_some());
+    ui.set_lan_on(lan.on);
+    ui.set_lan_fixed(lan.fixed);
+    ui.set_lan_busy(c.lan_busy);
+    ui.set_lan_port(lan.port.to_string().into());
+    ui.set_lan_addresses(lan.addresses.join("\n").into());
     ui.set_note(c.note_view());
     // The home tiles carry F1–F3 and the dialog its own buttons.
     let rows: Vec<Chip> = c

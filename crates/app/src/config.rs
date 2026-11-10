@@ -15,7 +15,8 @@
 //!
 //! The database defaults to `sultan.db` **next to the config file**, so one directory holds a
 //! node: `sultan.toml`, `sultan.db` and, on a register, `register.token`. The listen address
-//! defaults to loopback; pass `--listen 0.0.0.0:8080` to serve registers on the shop LAN.
+//! defaults to loopback; pass `--listen 0.0.0.0:8080` to serve registers on the shop LAN (a
+//! single app writes `listen` from Start screen → Settings → "Allow terminals to connect").
 //!
 //! `language` is written by the Start screen's settings ([`set_language`]); `SULTAN_LANG`
 //! overrides it ([`resolve_language`]).

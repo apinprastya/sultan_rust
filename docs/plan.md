@@ -208,7 +208,9 @@ audit log viewer · light/dark theme · i18n ID/EN.
   everything is reachable from a window: choosing register or back office, setup, pairing,
   language. CLI subcommands stay for scripts but are never the only way. Built as the **Start
   screen** a bare `sultan` opens (F1 register, F2 back office, F3 settings: language,
-  connection, set up again, version; F9 on the lock / back-office login screen goes back).
+  connection, set up again, version; F9 on the lock / back-office login screen goes back). A
+  single app opens to its terminals from Settings too ("Allow terminals to connect": restarts its
+  server on the shop network and shows the address to type in the terminal's wizard).
 
 ## 4. Release phases
 | Phase | Content |

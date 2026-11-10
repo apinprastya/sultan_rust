@@ -91,7 +91,9 @@ cargo run -p sultan-ui --example screenshots -- docs/screenshots 1366x768 en
 - **UI only, except HQ** (`docs/plan.md` §3): on a single app or a terminal everything must be
   reachable from a window. A bare `sultan` opens the Start screen (F1 register, F2 back office,
   F3 settings); the register's lock screen and the back office's login screen go back to it
-  with F9. A CLI subcommand may exist for scripts, but never as the only way. New windows are
+  with F9. A CLI subcommand may exist for scripts, but never as the only way, and neither is
+  editing `sultan.toml` (e.g. a single app lets terminals connect from Settings, F7, which writes
+  `listen` and restarts its server: `crates/app/src/single.rs`, `Embedded`). New windows are
   opened through a hook in `sultan_app::Context` (`open_ui`, `open_setup`, `open_backoffice`,
   `open_start`) so the flow is tested without a display.
 - The register is keyboard-first, and every key also has an on-screen button. Keep the key

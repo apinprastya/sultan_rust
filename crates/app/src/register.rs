@@ -6,8 +6,9 @@
 //!   (owner-only). The spec only says the server stores a hash; on the register the token is a
 //!   bearer secret, so it is kept out of `sultan.toml`, which people copy around and paste into
 //!   support tickets;
-//! - the **non-secret details** (server URL, register and branch IDs, code, name) go to the
-//!   `[register]` table of `sultan.toml`.
+//! - the **non-secret details** (server URL, register and branch IDs, code, name, and the branch
+//!   label `JKT01 · Toko Jakarta` from the answer's branch code and name) go to the `[register]`
+//!   table of `sultan.toml`.
 //!
 //! Pairing again replaces both. `sultan register status` prints the paired status; `sultan
 //! register` opens the register window (plan Phase 8, `crates/ui`) with [`paired`].
@@ -48,6 +49,24 @@ pub(crate) struct PairResponse {
     pub(crate) branch_id: String,
     pub(crate) register_code: String,
     pub(crate) register_name: String,
+    /// Branch code; servers before the branch was added to the answer leave it out.
+    #[serde(default)]
+    pub(crate) branch_code: Option<String>,
+    /// Branch name, as `branch_code`.
+    #[serde(default)]
+    pub(crate) branch_name: Option<String>,
+}
+
+impl PairResponse {
+    /// The branch as shown on the Start screen (`JKT01 · Toko Jakarta`), when the server sent it.
+    fn branch_label(&self) -> Option<String> {
+        match (self.branch_code.as_deref(), self.branch_name.as_deref()) {
+            (Some(code), Some(name)) if !code.is_empty() => {
+                Some(crate::single::branch_label(code, name))
+            }
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -86,7 +105,8 @@ pub async fn pair(server: &str, code: &str, config_path: &Path) -> Result<Regist
 }
 
 /// Saves a pairing: the device token to `register.token`, the details to `[register]` with
-/// `server` as the server URL and `branch` as the branch shown on the Start screen.
+/// `server` as the server URL and `branch` as the branch shown on the Start screen (by default
+/// the branch code and name of the server's answer).
 ///
 /// # Errors
 /// [`AppError::File`] / [`AppError::Config`].
@@ -97,6 +117,7 @@ pub(crate) fn store(
     config_path: &Path,
 ) -> Result<RegisterConfig> {
     config::write_private(&token_path(config_path), paired.device_token.as_bytes())?;
+    let branch = branch.or_else(|| paired.branch_label());
     let register = RegisterConfig {
         server: server.to_owned(),
         register_id: paired.register_id,
@@ -163,7 +184,7 @@ pub fn status(config_path: &Path) -> Result<String> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use sultan_core::time::Timestamp;
 
     use super::*;
@@ -190,8 +211,8 @@ mod tests {
         );
     }
 
-    /// Logs in as the owner and issues a pairing code for a new register at `JKT01`.
-    async fn issue_code(base: &str) -> String {
+    /// Logs in as the owner and issues a pairing code for a new register `code` at `JKT01`.
+    pub(crate) async fn issue_code(base: &str, code: &str) -> String {
         let client = reqwest::Client::new();
         let login: serde_json::Value = client
             .post(format!("{base}/auth/password"))
@@ -208,7 +229,7 @@ mod tests {
         let created = client
             .put(format!("{base}/registers/{register_id}"))
             .bearer_auth(&token)
-            .json(&serde_json::json!({"branch_id": branch_id, "code": "R1", "name": "Kasir 1"}))
+            .json(&serde_json::json!({"branch_id": branch_id, "code": code, "name": "Kasir 1"}))
             .send()
             .await
             .unwrap();
@@ -247,12 +268,14 @@ mod tests {
         let config_path = dir.0.join("till/sultan.toml");
         assert!(status(&config_path).unwrap().starts_with("not paired"));
 
-        let code = issue_code(&format!("{root}/api/v1")).await;
+        let code = issue_code(&format!("{root}/api/v1"), "R1").await;
         let register = pair(&format!("{root}/"), &code, &config_path)
             .await
             .unwrap();
         assert_eq!(register.register_code, "R1");
         assert_eq!(register.server, root);
+        // The branch label comes from the server's answer.
+        assert_eq!(register.branch.as_deref(), Some("JKT01 · Toko Jakarta"));
         let token = device_token(&config_path).unwrap().unwrap();
         assert!(!fs::read_to_string(&config_path).unwrap().contains(&token));
         assert_eq!(config::load(&config_path).unwrap().register, Some(register));
@@ -301,6 +324,35 @@ mod tests {
             err.to_string().starts_with("pairing failed: cannot reach"),
             "{err}"
         );
+    }
+
+    #[test]
+    fn branch_labels_need_the_code_and_the_name() {
+        let answer = |code: Option<&str>, name: Option<&str>| PairResponse {
+            device_token: "t".into(),
+            register_id: "r".into(),
+            branch_id: "b".into(),
+            register_code: "R2".into(),
+            register_name: "Kasir 2".into(),
+            branch_code: code.map(str::to_owned),
+            branch_name: name.map(str::to_owned),
+        };
+        assert_eq!(
+            answer(Some("JKT01"), Some("Toko"))
+                .branch_label()
+                .as_deref(),
+            Some("JKT01 · Toko")
+        );
+        assert_eq!(answer(None, Some("Toko")).branch_label(), None);
+        assert_eq!(answer(Some("JKT01"), None).branch_label(), None);
+        assert_eq!(answer(Some(""), Some("Toko")).branch_label(), None);
+        // An older server's answer without the branch still parses.
+        let old: PairResponse = serde_json::from_value(serde_json::json!({
+            "device_token": "t", "register_id": "r", "branch_id": "b",
+            "register_code": "R2", "register_name": "Kasir 2"
+        }))
+        .unwrap();
+        assert_eq!(old.branch_label(), None);
     }
 
     #[tokio::test]

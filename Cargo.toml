@@ -55,6 +55,10 @@ toml = "1.1.5"
 rpassword = "7.5.4"
 # HTTP only for now (the server has no TLS yet); Phase 8's client crate reuses it.
 reqwest = { version = "0.12.28", default-features = false, features = ["json"] }
+# Single app (Start screen → Settings → terminals): this computer's network addresses, shown to
+# the owner so terminals know what to type. std cannot list interfaces; the UDP-connect trick
+# finds one address only, and none on a shop network without a default route.
+if-addrs = "0.15.0"
 # Register UI (Phase 8): Slint, pinned exactly; the testing backend must match it to the patch.
 slint = "=1.18.1"
 slint-build = "=1.18.1"

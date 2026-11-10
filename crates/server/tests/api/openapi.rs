@@ -23,6 +23,7 @@ async fn openapi_lists_the_routes(h: &Harness) {
         ("/api/v1/auth/me", "get"),
         ("/api/v1/auth/logout", "post"),
         ("/api/v1/registers/pair", "post"),
+        ("/api/v1/registers/me", "get"),
         ("/api/v1/registers/me/users", "get"),
         ("/api/v1/registers", "get"),
         ("/api/v1/registers/{id}", "get"), ("/api/v1/registers/{id}", "put"), ("/api/v1/registers/{id}", "delete"),
@@ -104,6 +105,8 @@ async fn openapi_lists_the_routes(h: &Harness) {
         "GeneratedDto",
         "ProblemItem",
         "MeResponse",
+        "PairResponse",
+        "RegisterMe",
     ] {
         assert!(components["schemas"].get(schema).is_some(), "{schema}");
     }

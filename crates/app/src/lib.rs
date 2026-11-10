@@ -125,6 +125,18 @@ pub struct SetupUi {
     pub language: Option<String>,
 }
 
+/// A single app's embedded server, as handed to the Start screen (compared by identity).
+#[derive(Debug, Clone)]
+pub struct EmbeddedHandle(pub Arc<single::Embedded>);
+
+impl PartialEq for EmbeddedHandle {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+    }
+}
+
+impl Eq for EmbeddedHandle {}
+
 /// What the Start screen needs.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StartUi {
@@ -134,6 +146,8 @@ pub struct StartUi {
     pub info: StartInfo,
     /// The device token, for the connection check.
     pub device_token: String,
+    /// A single app's server, which the settings can restart on another address.
+    pub embedded: Option<EmbeddedHandle>,
 }
 
 /// Opens the Start window and blocks until a choice is made (`Some`) or it is closed (`None`).
@@ -142,11 +156,10 @@ pub struct StartUi {
 /// # Errors
 /// [`AppError::Ui`] when the window cannot be opened.
 pub fn open_start_window(ui: StartUi) -> Result<Option<Choice>> {
-    let service = Arc::new(start::AppStartService::new(
-        &ui.config_path,
-        &ui.info.server,
-        &ui.device_token,
-    ));
+    let service = Arc::new(
+        start::AppStartService::new(&ui.config_path, &ui.info.server, &ui.device_token)
+            .with_embedded(ui.embedded.map(|e| e.0)),
+    );
     sultan_ui::start_app::run(service, tokio::runtime::Handle::current(), ui.info)
         .map_err(|e| AppError::Ui(e.to_string()))
 }

@@ -2,7 +2,7 @@
 // `start_app.rs` sets these properties and receives the callbacks): big tiles for the cash
 // register (F1), the back office (F2) and the settings (F3), and a footer that says what this
 // computer is connected to. Settings: language (F6), connection details, set up again (F8),
-// version. One FocusScope hands every key to Rust; tiles and chips are buttons for the same
+// version, and on a single app "Terminals in this shop" (F7 or the switch). One FocusScope hands every key to Rust; tiles and chips are buttons for the same
 // actions.
 
 import { Theme } from "theme.slint";
@@ -21,6 +21,15 @@ export global StartStrings {
         }
         if (code == "file") {
             return @tr("Cannot save the settings: {}", arg);
+        }
+        if (code == "lan_failed") {
+            return @tr("Terminals could not be switched: {}. The previous setting stays.", arg);
+        }
+        if (code == "lan_in_use") {
+            return @tr("Port {} is already used by another program on this computer. The previous setting stays.", arg);
+        }
+        if (code == "lan_start") {
+            return @tr("Terminals cannot connect: port {} could not be opened on this computer (another program may use it), so only this computer uses its server now. Switch terminals on again in Settings.", arg);
         }
         return @tr("Something went wrong ({}).", arg);
     }
@@ -43,6 +52,9 @@ export global StartStrings {
         }
         if (code == "set_up_again") {
             return @tr("Set up again");
+        }
+        if (code == "terminals") {
+            return @tr("Allow terminals");
         }
         if (code == "back") {
             return @tr("Back");
@@ -198,6 +210,61 @@ component InfoRow inherits HorizontalLayout {
     }
 }
 
+// An on / off switch with its label; a tap or the default action switches it.
+component Switch inherits Rectangle {
+    in property <string> text;
+    in property <bool> on;
+    in property <bool> enabled: true;
+    callback clicked;
+    accessible-role: switch;
+    accessible-label: root.text;
+    accessible-checked: root.on;
+    accessible-enabled: root.enabled;
+    accessible-action-default => {
+        if (root.enabled) {
+            root.clicked();
+        }
+    }
+    height: 48px;
+    opacity: root.enabled ? 1 : 0.5;
+    touch := TouchArea {
+        enabled: root.enabled;
+        mouse-cursor: root.enabled ? pointer : default;
+        clicked => {
+            root.clicked();
+        }
+    }
+    HorizontalLayout {
+        spacing: 14px;
+        VerticalLayout {
+            alignment: center;
+            Rectangle {
+                width: 52px;
+                height: 30px;
+                border-radius: 15px;
+                background: root.on ? Theme.accent : Theme.key;
+                border-width: 1px;
+                border-color: touch.has-hover && root.enabled ? Theme.accent : Theme.border;
+                Rectangle {
+                    x: root.on ? parent.width - self.width - 4px : 4px;
+                    width: 22px;
+                    height: 22px;
+                    border-radius: 11px;
+                    background: white;
+                }
+            }
+        }
+        Text {
+            text: root.text;
+            color: Theme.text;
+            font-size: 16px;
+            font-weight: 600;
+            vertical-alignment: center;
+            wrap: word-wrap;
+        }
+    }
+}
+
 component SectionTitle inherits Text {
     color: Theme.text;
     font-size: 17px;
@@ -228,6 +295,16 @@ export component StartWindow inherits Window {
     in property <string> version;
     in property <string> language;
     in property <bool> language-fixed;
+    // A single app: the "Terminals in this shop" section.
+    in property <bool> lan-shown;
+    in property <bool> lan-on;
+    // SULTAN_LISTEN sets the address: the switch is locked.
+    in property <bool> lan-fixed;
+    // The server is being restarted on the new address.
+    in property <bool> lan-busy;
+    in property <string> lan-port;
+    // What terminals type in their wizard, one per line; empty: none found.
+    in property <string> lan-addresses;
     in property <Note> note;
     // The footer's key chips (the home tiles carry their own keys).
     in property <[Chip]> chips;
@@ -371,102 +448,191 @@ export component StartWindow inherits Window {
                 }
 
                 if root.page == "settings": VerticalLayout {
-                    padding: 32px;
-                    padding-top: 24px;
+                    padding: 24px;
+                    padding-left: 32px;
+                    padding-right: 32px;
                     spacing: 16px;
-                    Text {
-                        text: StartStrings.chip("settings");
-                        color: Theme.text;
-                        font-size: 26px;
-                        font-weight: 700;
+                    // The title, and any message beside it (the page is full at 1024×768).
+                    HorizontalLayout {
+                        spacing: 24px;
+                        Text {
+                            text: StartStrings.chip("settings");
+                            color: Theme.text;
+                            font-size: 26px;
+                            font-weight: 700;
+                            vertical-alignment: center;
+                        }
+                        StartNote {
+                            horizontal-stretch: 1;
+                            note: root.note;
+                            horizontal-alignment: right;
+                            vertical-alignment: center;
+                        }
                     }
-                    Card {
+                    HorizontalLayout {
+                        spacing: 16px;
                         VerticalLayout {
-                            padding: 20px;
-                            spacing: 12px;
-                            SectionTitle {
-                                text: @tr("Language");
-                            }
-                            HorizontalLayout {
-                                spacing: 12px;
-                                alignment: start;
-                                Choice {
-                                    text: "Bahasa Indonesia";
-                                    selected: root.language == "id";
-                                    enabled: !root.language-fixed;
-                                    clicked => {
-                                        root.action("lang-id");
+                            horizontal-stretch: 1;
+                            spacing: 16px;
+                            alignment: start;
+                            Card {
+                                VerticalLayout {
+                                    padding: 20px;
+                                    spacing: 12px;
+                                    SectionTitle {
+                                        text: @tr("Language");
+                                    }
+                                    HorizontalLayout {
+                                        spacing: 12px;
+                                        alignment: start;
+                                        Choice {
+                                            text: "Bahasa Indonesia";
+                                            selected: root.language == "id";
+                                            enabled: !root.language-fixed;
+                                            clicked => {
+                                                root.action("lang-id");
+                                            }
+                                        }
+                                        Choice {
+                                            text: "English";
+                                            selected: root.language == "en";
+                                            enabled: !root.language-fixed;
+                                            clicked => {
+                                                root.action("lang-en");
+                                            }
+                                        }
+                                    }
+                                    Text {
+                                        text: root.language-fixed ? @tr("Set by SULTAN_LANG on this computer.") : @tr("F6 switches. Saved for the next start.");
+                                        color: Theme.muted;
+                                        font-size: 13px;
+                                        wrap: word-wrap;
                                     }
                                 }
-                                Choice {
-                                    text: "English";
-                                    selected: root.language == "en";
-                                    enabled: !root.language-fixed;
+                            }
+                            Card {
+                                VerticalLayout {
+                                    padding: 20px;
+                                    spacing: 6px;
+                                    SectionTitle {
+                                        text: @tr("Connection");
+                                    }
+                                    InfoRow {
+                                        label: @tr("App type");
+                                        value: root.kind == "single" ? @tr("Single app") : @tr("Terminal");
+                                    }
+                                    InfoRow {
+                                        label: @tr("Server address");
+                                        value: root.server;
+                                    }
+                                    InfoRow {
+                                        label: StartStrings.chip("register");
+                                        value: root.register-text;
+                                    }
+                                    InfoRow {
+                                        label: @tr("Branch");
+                                        value: root.branch == "" ? "–" : root.branch;
+                                    }
+                                    InfoRow {
+                                        label: @tr("Status");
+                                        value: root.connection-text();
+                                        value-color: root.conn-color;
+                                    }
+                                    InfoRow {
+                                        label: @tr("Version");
+                                        value: "Sultan POS " + root.version;
+                                    }
+                                }
+                            }
+                            Card {
+                                VerticalLayout {
+                                    padding: 20px;
+                                    spacing: 8px;
+                                    SectionTitle {
+                                        text: StartStrings.chip("set_up_again");
+                                    }
+                                    Text {
+                                        text: @tr("F8 opens the setup wizard, e.g. to make this computer a terminal of another server. A database that is already set up is never overwritten.");
+                                        color: Theme.muted;
+                                        wrap: word-wrap;
+                                    }
+                                }
+                            }
+                        }
+                        if root.lan-shown: Card {
+                            horizontal-stretch: 1;
+                            VerticalLayout {
+                                padding: 20px;
+                                spacing: 12px;
+                                alignment: start;
+                                SectionTitle {
+                                    text: @tr("Terminals in this shop");
+                                }
+                                Text {
+                                    text: @tr("Other cash registers (terminals) on the shop network can use this computer's server.");
+                                    color: Theme.muted;
+                                    wrap: word-wrap;
+                                }
+                                Switch {
+                                    text: @tr("Allow terminals to connect");
+                                    on: root.lan-on;
+                                    enabled: !root.lan-fixed && !root.lan-busy;
                                     clicked => {
-                                        root.action("lang-en");
+                                        root.action("lan");
                                     }
                                 }
                                 Text {
-                                    text: root.language-fixed ? @tr("Set by SULTAN_LANG on this computer.") : @tr("F6 switches. Saved for the next start.");
+                                    text: root.lan-busy ? @tr("Restarting the server…") : root.lan-fixed ? @tr("Set by SULTAN_LISTEN on this computer.") : @tr("F7 switches. Saved for the next start.");
+                                    color: root.lan-busy ? Theme.warn : Theme.muted;
+                                    font-size: 13px;
+                                    wrap: word-wrap;
+                                }
+                                if root.lan-on && root.lan-addresses != "": VerticalLayout {
+                                    spacing: 8px;
+                                    Text {
+                                        text: @tr("In the terminal's setup wizard, type this server address:");
+                                        color: Theme.text;
+                                        wrap: word-wrap;
+                                    }
+                                    Rectangle {
+                                        border-radius: 10px;
+                                        background: Theme.raised;
+                                        VerticalLayout {
+                                            padding: 12px;
+                                            padding-left: 16px;
+                                            Text {
+                                                text: root.lan-addresses;
+                                                color: Theme.text;
+                                                font-size: 22px;
+                                                font-weight: 700;
+                                            }
+                                        }
+                                    }
+                                }
+                                if root.lan-on && root.lan-addresses == "": Text {
+                                    text: @tr("No network address was found on this computer. Connect it to the shop network, then open Settings again.");
+                                    color: Theme.warn;
+                                    wrap: word-wrap;
+                                }
+                                if !root.lan-on: Text {
+                                    text: @tr("Off: only this computer uses its server. Turn it on to add terminals.");
+                                    color: Theme.text;
+                                    wrap: word-wrap;
+                                }
+                                Text {
+                                    text: @tr("Terminals still need a manager login or a pairing code to connect. Turn this on only in a trusted shop network.");
                                     color: Theme.muted;
                                     font-size: 13px;
-                                    vertical-alignment: center;
+                                    wrap: word-wrap;
+                                }
+                                Text {
+                                    text: @tr("If a terminal cannot connect, allow incoming TCP port {} in this computer's firewall.", root.lan-port);
+                                    color: Theme.muted;
+                                    font-size: 13px;
                                     wrap: word-wrap;
                                 }
                             }
                         }
-                    }
-                    Card {
-                        VerticalLayout {
-                            padding: 20px;
-                            spacing: 8px;
-                            SectionTitle {
-                                text: @tr("Connection");
-                            }
-                            InfoRow {
-                                label: @tr("App type");
-                                value: root.kind == "single" ? @tr("Single app") : @tr("Terminal");
-                            }
-                            InfoRow {
-                                label: @tr("Server address");
-                                value: root.server;
-                            }
-                            InfoRow {
-                                label: StartStrings.chip("register");
-                                value: root.register-text;
-                            }
-                            InfoRow {
-                                label: @tr("Branch");
-                                value: root.branch == "" ? "–" : root.branch;
-                            }
-                            InfoRow {
-                                label: @tr("Status");
-                                value: root.connection-text();
-                                value-color: root.conn-color;
-                            }
-                        }
-                    }
-                    Card {
-                        VerticalLayout {
-                            padding: 20px;
-                            spacing: 8px;
-                            SectionTitle {
-                                text: StartStrings.chip("set_up_again");
-                            }
-                            Text {
-                                text: @tr("F8 opens the setup wizard, e.g. to make this computer a terminal of another server. A database that is already set up is never overwritten.");
-                                color: Theme.muted;
-                                wrap: word-wrap;
-                            }
-                        }
-                    }
-                    StartNote {
-                        note: root.note;
-                    }
-                    Text {
-                        text: @tr("Sultan POS version {}", root.version);
-                        color: Theme.muted;
-                        font-size: 13px;
                     }
                     Rectangle {
                         vertical-stretch: 1;

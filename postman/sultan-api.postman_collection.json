@@ -361,6 +361,8 @@
               "    const body = pm.response.json();",
               "    pm.expect(body.register_id).to.eql(pm.collectionVariables.get('registerId'));",
               "    pm.expect(body.branch_id).to.eql(pm.collectionVariables.get('branchId'));",
+              "    pm.expect(body.branch_code).to.eql(pm.collectionVariables.get('branchCode'));",
+              "    pm.expect(body.branch_name).to.eql('Toko Postman');",
               "    pm.collectionVariables.set('deviceToken', body.device_token);",
               "});"
             ]
@@ -539,7 +541,51 @@
       }
     },
     {
-      "name": "12 PIN login at the register",
+      "name": "12 Register and branch of the device (device token)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('the paired register and its branch', () => {",
+              "    pm.response.to.have.status(200);",
+              "    const me = pm.response.json();",
+              "    pm.expect(me.register_id).to.eql(pm.collectionVariables.get('registerId'));",
+              "    pm.expect(me.branch_id).to.eql(pm.collectionVariables.get('branchId'));",
+              "    pm.expect(me.branch_code).to.eql(pm.collectionVariables.get('branchCode'));",
+              "    pm.expect(me.branch_name).to.eql('Toko Postman');",
+              "    pm.expect(me).to.have.property('register_code');",
+              "    pm.expect(me).to.have.property('register_name');",
+              "    pm.expect(me).to.not.have.property('device_token');",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "X-Register-Token",
+            "value": "{{deviceToken}}"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/registers/me",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "registers",
+            "me"
+          ]
+        },
+        "description": "The register of the device token and its branch (code and name), e.g. for a terminal's Start screen."
+      }
+    },
+    {
+      "name": "13 PIN login at the register",
       "event": [
         {
           "listen": "test",
@@ -592,7 +638,7 @@
       }
     },
     {
-      "name": "13 List users (owner)",
+      "name": "14 List users (owner)",
       "event": [
         {
           "listen": "test",
@@ -630,7 +676,7 @@
       }
     },
     {
-      "name": "14 Cashier cannot list users",
+      "name": "15 Cashier cannot list users",
       "event": [
         {
           "listen": "test",
@@ -676,7 +722,7 @@
       }
     },
     {
-      "name": "15 Cashier cannot create a branch",
+      "name": "16 Cashier cannot create a branch",
       "event": [
         {
           "listen": "test",
@@ -736,7 +782,7 @@
       }
     },
     {
-      "name": "16 Last Owner cannot be archived",
+      "name": "17 Last Owner cannot be archived",
       "event": [
         {
           "listen": "test",
@@ -776,7 +822,7 @@
       }
     },
     {
-      "name": "17 Permission catalog",
+      "name": "18 Permission catalog",
       "event": [
         {
           "listen": "test",
@@ -817,7 +863,7 @@
       }
     },
     {
-      "name": "18 Audit: branch writes by the owner",
+      "name": "19 Audit: branch writes by the owner",
       "event": [
         {
           "listen": "test",
@@ -866,7 +912,7 @@
       }
     },
     {
-      "name": "19 Audit: register history",
+      "name": "20 Audit: register history",
       "event": [
         {
           "listen": "test",
@@ -909,7 +955,7 @@
       }
     },
     {
-      "name": "20 Open cashier session (Idempotency-Key)",
+      "name": "21 Open cashier session (Idempotency-Key)",
       "event": [
         {
           "listen": "test",
@@ -974,7 +1020,7 @@
       }
     },
     {
-      "name": "21 Retried open replays the first response",
+      "name": "22 Retried open replays the first response",
       "event": [
         {
           "listen": "test",
@@ -1032,7 +1078,7 @@
       }
     },
     {
-      "name": "22 Second open session is rejected",
+      "name": "23 Second open session is rejected",
       "event": [
         {
           "listen": "test",
@@ -1086,7 +1132,7 @@
       }
     },
     {
-      "name": "23 Current session at the register",
+      "name": "24 Current session at the register",
       "event": [
         {
           "listen": "test",
@@ -1129,7 +1175,7 @@
       }
     },
     {
-      "name": "24 Discount above the cashier limit needs an override",
+      "name": "25 Discount above the cashier limit needs an override",
       "event": [
         {
           "listen": "test",
@@ -1186,7 +1232,7 @@
       }
     },
     {
-      "name": "25 Manager approves the override with their PIN",
+      "name": "26 Manager approves the override with their PIN",
       "event": [
         {
           "listen": "test",
@@ -1243,7 +1289,7 @@
       }
     },
     {
-      "name": "26 Use the override (X-Override)",
+      "name": "27 Use the override (X-Override)",
       "event": [
         {
           "listen": "test",
@@ -1301,7 +1347,7 @@
       }
     },
     {
-      "name": "27 Reused override token is rejected",
+      "name": "28 Reused override token is rejected",
       "event": [
         {
           "listen": "test",
@@ -1359,7 +1405,7 @@
       }
     },
     {
-      "name": "28 Blind close returns the close report",
+      "name": "29 Blind close returns the close report",
       "event": [
         {
           "listen": "test",
@@ -1429,7 +1475,7 @@
       }
     },
     {
-      "name": "29 Closed session cannot be closed again",
+      "name": "30 Closed session cannot be closed again",
       "event": [
         {
           "listen": "test",
@@ -1484,7 +1530,7 @@
       }
     },
     {
-      "name": "30 Past session with its stored close report",
+      "name": "31 Past session with its stored close report",
       "event": [
         {
           "listen": "test",
@@ -1529,7 +1575,7 @@
       }
     },
     {
-      "name": "31 Owner lists the register's closed sessions (paged)",
+      "name": "32 Owner lists the register's closed sessions (paged)",
       "event": [
         {
           "listen": "test",
@@ -1583,7 +1629,7 @@
       }
     },
     {
-      "name": "32 Next page is empty",
+      "name": "33 Next page is empty",
       "event": [
         {
           "listen": "test",
@@ -1637,7 +1683,7 @@
       }
     },
     {
-      "name": "33 Unknown status filter is rejected",
+      "name": "34 Unknown status filter is rejected",
       "event": [
         {
           "listen": "test",
@@ -1679,7 +1725,7 @@
       }
     },
     {
-      "name": "34 Cashier logout",
+      "name": "35 Cashier logout",
       "event": [
         {
           "listen": "test",
@@ -1721,7 +1767,7 @@
       "description": "Catalog flow of docs/spec/2.2-catalog.md §12 (phase C3). Runs after the 2.1 flow: it uses the owner token, the paired register's device token and its branch.",
       "item": [
         {
-          "name": "35 Create category (PUT)",
+          "name": "36 Create category (PUT)",
           "event": [
             {
               "listen": "prerequest",
@@ -1804,7 +1850,7 @@
           }
         },
         {
-          "name": "36 Create brand (PUT)",
+          "name": "37 Create brand (PUT)",
           "event": [
             {
               "listen": "test",
@@ -1854,7 +1900,7 @@
           }
         },
         {
-          "name": "37 Tax classes (device token)",
+          "name": "38 Tax classes (device token)",
           "event": [
             {
               "listen": "test",
@@ -1891,7 +1937,7 @@
           }
         },
         {
-          "name": "38 Create product with options, units and barcodes (PUT)",
+          "name": "39 Create product with options, units and barcodes (PUT)",
           "event": [
             {
               "listen": "test",
@@ -1949,7 +1995,7 @@
           }
         },
         {
-          "name": "39 Replay product PUT (idempotent)",
+          "name": "40 Replay product PUT (idempotent)",
           "event": [
             {
               "listen": "test",
@@ -1999,7 +2045,7 @@
           }
         },
         {
-          "name": "40 Get product (device token)",
+          "name": "41 Get product (device token)",
           "event": [
             {
               "listen": "test",
@@ -2036,7 +2082,7 @@
           }
         },
         {
-          "name": "41 Duplicate barcode on another product",
+          "name": "42 Duplicate barcode on another product",
           "event": [
             {
               "listen": "test",
@@ -2090,7 +2136,7 @@
           }
         },
         {
-          "name": "42 Invalid product lists every error",
+          "name": "43 Invalid product lists every error",
           "event": [
             {
               "listen": "test",
@@ -2143,7 +2189,7 @@
           }
         },
         {
-          "name": "43 Lookup by barcode (device token)",
+          "name": "44 Lookup by barcode (device token)",
           "event": [
             {
               "listen": "test",
@@ -2197,7 +2243,7 @@
           }
         },
         {
-          "name": "44 Lookup the box barcode",
+          "name": "45 Lookup the box barcode",
           "event": [
             {
               "listen": "test",
@@ -2241,7 +2287,7 @@
           }
         },
         {
-          "name": "45 Search (device token)",
+          "name": "46 Search (device token)",
           "event": [
             {
               "listen": "test",
@@ -2289,7 +2335,7 @@
           }
         },
         {
-          "name": "46 Block the product at the register's branch",
+          "name": "47 Block the product at the register's branch",
           "event": [
             {
               "listen": "test",
@@ -2340,7 +2386,7 @@
           }
         },
         {
-          "name": "47 Get branch blocks",
+          "name": "48 Get branch blocks",
           "event": [
             {
               "listen": "test",
@@ -2378,7 +2424,7 @@
           }
         },
         {
-          "name": "48 Lookup at the blocked branch",
+          "name": "49 Lookup at the blocked branch",
           "event": [
             {
               "listen": "test",
@@ -2421,7 +2467,7 @@
           }
         },
         {
-          "name": "49 Search hides the blocked product",
+          "name": "50 Search hides the blocked product",
           "event": [
             {
               "listen": "test",
@@ -2469,7 +2515,7 @@
           }
         },
         {
-          "name": "50 Unblock",
+          "name": "51 Unblock",
           "event": [
             {
               "listen": "test",
@@ -2520,7 +2566,7 @@
           }
         },
         {
-          "name": "51 Archive the product (Idempotency-Key)",
+          "name": "52 Archive the product (Idempotency-Key)",
           "event": [
             {
               "listen": "test",
@@ -2564,7 +2610,7 @@
           }
         },
         {
-          "name": "52 Lookup the archived product",
+          "name": "53 Lookup the archived product",
           "event": [
             {
               "listen": "test",
@@ -2607,7 +2653,7 @@
           }
         },
         {
-          "name": "53 List archived products (owner)",
+          "name": "54 List archived products (owner)",
           "event": [
             {
               "listen": "test",
@@ -2650,7 +2696,7 @@
           }
         },
         {
-          "name": "54 Archived list needs catalog.view_archived",
+          "name": "55 Archived list needs catalog.view_archived",
           "event": [
             {
               "listen": "test",
@@ -2694,7 +2740,7 @@
           }
         },
         {
-          "name": "55 Unarchive",
+          "name": "56 Unarchive",
           "event": [
             {
               "listen": "test",
@@ -2732,7 +2778,7 @@
           }
         },
         {
-          "name": "56 Upload a product image (800x400 PNG)",
+          "name": "57 Upload a product image (800x400 PNG)",
           "event": [
             {
               "listen": "test",
@@ -2784,7 +2830,7 @@
           }
         },
         {
-          "name": "57 Download the image (device token)",
+          "name": "58 Download the image (device token)",
           "event": [
             {
               "listen": "test",
@@ -2823,7 +2869,7 @@
           }
         },
         {
-          "name": "58 Download again with If-None-Match",
+          "name": "59 Download again with If-None-Match",
           "event": [
             {
               "listen": "test",
@@ -2864,7 +2910,7 @@
           }
         },
         {
-          "name": "59 A non-image upload is rejected",
+          "name": "60 A non-image upload is rejected",
           "event": [
             {
               "listen": "test",
@@ -2910,7 +2956,7 @@
           }
         },
         {
-          "name": "60 Catalog settings",
+          "name": "61 Catalog settings",
           "event": [
             {
               "listen": "test",
@@ -2951,7 +2997,7 @@
           }
         },
         {
-          "name": "61 Overlapping scale prefix is rejected",
+          "name": "62 Overlapping scale prefix is rejected",
           "event": [
             {
               "listen": "test",
@@ -3001,7 +3047,7 @@
           }
         },
         {
-          "name": "62 Generate a product code (Idempotency-Key)",
+          "name": "63 Generate a product code (Idempotency-Key)",
           "event": [
             {
               "listen": "test",
@@ -3045,7 +3091,7 @@
           }
         },
         {
-          "name": "63 Retried generate replays the first value",
+          "name": "64 Retried generate replays the first value",
           "event": [
             {
               "listen": "test",
@@ -3088,7 +3134,7 @@
           }
         },
         {
-          "name": "64 Generate an internal barcode",
+          "name": "65 Generate an internal barcode",
           "event": [
             {
               "listen": "test",
@@ -3126,7 +3172,7 @@
           }
         },
         {
-          "name": "65 A device token cannot write the catalog",
+          "name": "66 A device token cannot write the catalog",
           "event": [
             {
               "listen": "test",
@@ -3176,7 +3222,7 @@
           }
         },
         {
-          "name": "66 Delete the image",
+          "name": "67 Delete the image",
           "event": [
             {
               "listen": "test",
@@ -3213,7 +3259,7 @@
           }
         },
         {
-          "name": "67 Who am I: permissions for the back office",
+          "name": "68 Who am I: permissions for the back office",
           "event": [
             {
               "listen": "test",

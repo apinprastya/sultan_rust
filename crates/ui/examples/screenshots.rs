@@ -1,4 +1,5 @@
-//! Renders the Start screen (files `0a`–`0c`), every register screen (with the barcode lookup of
+//! Renders the Start screen (files `0a`–`0d`, `0d` the single app's settings with terminals
+//! allowed), every register screen (with the barcode lookup of
 //! phase C5, files `5a`–`5c`) and every back-office screen (phase C4, files `bo-*`) to PNG
 //! with Slint's software renderer (no display needed), driven by keys against the fake service,
 //! like the headless tests.
@@ -20,7 +21,9 @@ use slint::{ComponentHandle, PhysicalSize, PlatformError, SharedString};
 use sultan_client::fake::{BRANCH_ID, FakeService, STANDARD_TAX_CLASS};
 use sultan_client::{BackOffice, CategoryBody, Product};
 use sultan_core::catalog::gtin_check_digit;
-use sultan_ui::start::{AppKind, StartError, StartFuture, StartInfo, StartService};
+use sultan_ui::start::{
+    AppKind, Lan, LanChanged, LanFuture, StartError, StartFuture, StartInfo, StartService,
+};
 use sultan_ui::{
     App, BackOfficeApp, BackOfficeOptions, Options, Runner, build_app, build_backoffice,
     build_start,
@@ -32,7 +35,7 @@ struct Reachable(bool);
 impl StartService for Reachable {
     fn check(&self) -> StartFuture {
         let answer = if self.0 {
-            Ok(())
+            Ok(None)
         } else {
             Err(StartError::new("network", "192.168.1.10:8080"))
         };
@@ -41,6 +44,20 @@ impl StartService for Reachable {
 
     fn set_language(&self, _: &str) -> Result<(), String> {
         Ok(())
+    }
+
+    fn set_lan(&self, on: bool) -> LanFuture {
+        Box::pin(async move {
+            Ok(LanChanged {
+                lan: Lan {
+                    on,
+                    port: 8080,
+                    addresses: vec!["192.168.1.10:8080".into()],
+                    ..Lan::default()
+                },
+                server: "http://127.0.0.1:8080".into(),
+            })
+        })
     }
 }
 
@@ -384,6 +401,7 @@ fn start(
         version: env!("CARGO_PKG_VERSION").into(),
         language: language.to_owned(),
         language_fixed: false,
+        lan: None,
     };
     for reachable in [true, false] {
         let start = build_start(
@@ -401,6 +419,27 @@ fn start(
             shot("0c-start-offline")?;
         }
     }
+    // A single app: terminals allowed (F7 in the settings).
+    let single = StartInfo {
+        kind: AppKind::Single,
+        server: "http://127.0.0.1:41234".into(),
+        register_code: "R1".into(),
+        register_name: "Kasir 1".into(),
+        lan: Some(Lan {
+            port: 8080,
+            ..Lan::default()
+        }),
+        ..info
+    };
+    let start = build_start(
+        Arc::new(Reachable(true)),
+        Runner::Block(runtime.handle().clone()),
+        single,
+    )?;
+    start.ui.show()?;
+    key(start.ui.window(), &[Key::F3.into()]);
+    key(start.ui.window(), &[Key::F7.into()]);
+    shot("0d-settings-single")?;
     Ok(())
 }
 

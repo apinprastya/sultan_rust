@@ -520,6 +520,9 @@ msgstr "Semua siap"
 msgid "The shop {} (branch {}) is ready. The Start screen opens next: F1 opens the register; log in with the owner PIN."
 msgstr "Toko {} (cabang {}) sudah siap. Berikutnya layar awal terbuka: F1 membuka kasir; masuk dengan PIN pemilik."
 
+msgid "More cash registers later? Start screen → Settings (F3) → Terminals in this shop: allow terminals to connect, then set up each terminal with the address shown there."
+msgstr "Nanti perlu kasir tambahan? Layar awal → Pengaturan (F3) → Terminal di toko ini: izinkan terminal terhubung, lalu siapkan setiap terminal dengan alamat yang ditampilkan di sana."
+
 msgid "The HQ server for {} (branch {}) is set up."
 msgstr "Server HQ untuk {} (cabang {}) sudah disiapkan."
 
@@ -1243,11 +1246,57 @@ msgstr "Status"
 msgid "F8 opens the setup wizard, e.g. to make this computer a terminal of another server. A database that is already set up is never overwritten."
 msgstr "F8 membuka panduan penyiapan, misalnya untuk menjadikan komputer ini terminal dari server lain. Database yang sudah disiapkan tidak pernah ditimpa."
 
-msgid "Sultan POS version {}"
-msgstr "Sultan POS versi {}"
+msgid "Version"
+msgstr "Versi"
 
 msgid "Open the setup wizard?"
 msgstr "Buka panduan penyiapan?"
 
 msgid "This window closes while the wizard is open. A database that is already set up is never overwritten; closing the wizard brings you back here."
 msgstr "Jendela ini ditutup selama panduan terbuka. Database yang sudah disiapkan tidak pernah ditimpa; menutup panduan akan membawa Anda kembali ke sini."
+
+# Start screen → Settings → Terminals in this shop (single app only).
+msgid "Terminals could not be switched: {}. The previous setting stays."
+msgstr "Terminal tidak bisa diubah: {}. Pengaturan sebelumnya tetap berlaku."
+
+msgid "Port {} is already used by another program on this computer. The previous setting stays."
+msgstr "Port {} sudah dipakai program lain di komputer ini. Pengaturan sebelumnya tetap berlaku."
+
+msgid "Terminals cannot connect: port {} could not be opened on this computer (another program may use it), so only this computer uses its server now. Switch terminals on again in Settings."
+msgstr "Terminal tidak bisa terhubung: port {} tidak bisa dibuka di komputer ini (mungkin dipakai program lain), jadi sekarang hanya komputer ini yang memakai servernya. Aktifkan terminal lagi di Pengaturan."
+
+msgid "Allow terminals"
+msgstr "Izinkan terminal"
+
+msgid "Terminals in this shop"
+msgstr "Terminal di toko ini"
+
+msgid "Other cash registers (terminals) on the shop network can use this computer's server."
+msgstr "Kasir lain (terminal) di jaringan toko dapat memakai server komputer ini."
+
+msgid "Allow terminals to connect"
+msgstr "Izinkan terminal terhubung"
+
+msgid "Restarting the server…"
+msgstr "Server sedang dimulai ulang…"
+
+msgid "Set by SULTAN_LISTEN on this computer."
+msgstr "Diatur oleh SULTAN_LISTEN di komputer ini."
+
+msgid "F7 switches. Saved for the next start."
+msgstr "F7 untuk mengganti. Disimpan untuk saat dibuka berikutnya."
+
+msgid "In the terminal's setup wizard, type this server address:"
+msgstr "Di panduan penyiapan terminal, ketik alamat server ini:"
+
+msgid "No network address was found on this computer. Connect it to the shop network, then open Settings again."
+msgstr "Tidak ditemukan alamat jaringan di komputer ini. Hubungkan ke jaringan toko, lalu buka Pengaturan lagi."
+
+msgid "Off: only this computer uses its server. Turn it on to add terminals."
+msgstr "Nonaktif: hanya komputer ini yang memakai servernya. Aktifkan untuk menambah terminal."
+
+msgid "Terminals still need a manager login or a pairing code to connect. Turn this on only in a trusted shop network."
+msgstr "Terminal tetap memerlukan login manajer atau kode pairing untuk terhubung. Aktifkan hanya di jaringan toko yang tepercaya."
+
+msgid "If a terminal cannot connect, allow incoming TCP port {} in this computer's firewall."
+msgstr "Jika terminal tidak bisa terhubung, izinkan koneksi masuk ke port TCP {} di firewall komputer ini."

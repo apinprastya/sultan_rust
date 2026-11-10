@@ -547,6 +547,14 @@ mod tests {
             .await
             .unwrap_err();
         assert_eq!(err.code, "conflict");
+        // A pairing code: the branch label comes from the server's answer.
+        let other = TempDir::new("setup-terminal-code");
+        let coded = AppSetupService::new(&other.0.join("sultan.toml"));
+        let code = register::tests::issue_code(&format!("{}/api/v1", server.root), "R3").await;
+        let paired = coded.pair_with_code(&server.root, &code).await.unwrap();
+        assert_eq!(paired.register_code, "R3");
+        let (register, _) = register::paired(&other.0.join("sultan.toml")).unwrap();
+        assert_eq!(register.branch.as_deref(), Some("JKT01 · Toko Jakarta"));
         // A used or unknown pairing code.
         let err = service
             .pair_with_code(&server.root, "AAAA-BBBB")

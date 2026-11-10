@@ -9,26 +9,33 @@ use std::sync::{Arc, Mutex};
 use i_slint_backend_testing::{AccessibleRole, ElementHandle};
 use slint::platform::{Key, PointerEventButton, WindowEvent};
 use slint::{ComponentHandle, LogicalSize, Model, SharedString};
-use sultan_ui::start::{AppKind, Choice, StartError, StartFuture, StartInfo, StartService};
+use sultan_ui::start::{
+    AppKind, Choice, Lan, LanChanged, LanFuture, StartError, StartFuture, StartInfo, StartService,
+};
 use sultan_ui::{Runner, Start, build_start};
 
-/// Answers checks from a script (then "ok") and records every call.
+type Check = Result<Option<String>, StartError>;
+
+/// Answers checks from a script (then "ok") and records every call. Terminals are switched as
+/// asked, unless `lan_error` says otherwise; the addresses are `addresses`.
 #[derive(Default)]
 struct FakeStart {
-    checks: Mutex<VecDeque<Result<(), StartError>>>,
+    checks: Mutex<VecDeque<Check>>,
     calls: Mutex<Vec<String>>,
     read_only: bool,
+    lan_error: Option<StartError>,
+    addresses: Vec<String>,
 }
 
 impl FakeStart {
-    fn answering(checks: Vec<Result<(), StartError>>) -> Self {
+    fn answering(checks: Vec<Check>) -> Self {
         Self {
             checks: Mutex::new(checks.into()),
             ..Self::default()
         }
     }
 
-    fn then(&self, answer: Result<(), StartError>) {
+    fn then(&self, answer: Check) {
         self.checks.lock().unwrap().push_back(answer);
     }
 
@@ -40,7 +47,32 @@ impl FakeStart {
 impl StartService for FakeStart {
     fn check(&self) -> StartFuture {
         self.calls.lock().unwrap().push("check".into());
-        let answer = self.checks.lock().unwrap().pop_front().unwrap_or(Ok(()));
+        let answer = self.checks.lock().unwrap().pop_front().unwrap_or(Ok(None));
+        Box::pin(async move { answer })
+    }
+
+    fn set_lan(&self, on: bool) -> LanFuture {
+        self.calls.lock().unwrap().push(format!("lan {on}"));
+        let answer = match &self.lan_error {
+            Some(e) => Err(e.clone()),
+            None => Ok(LanChanged {
+                lan: Lan {
+                    on,
+                    port: 8080,
+                    addresses: if on {
+                        self.addresses.clone()
+                    } else {
+                        Vec::new()
+                    },
+                    ..Lan::default()
+                },
+                server: if on {
+                    "http://127.0.0.1:8080".into()
+                } else {
+                    "http://127.0.0.1:41234".into()
+                },
+            }),
+        };
         Box::pin(async move { answer })
     }
 
@@ -57,7 +89,7 @@ impl StartService for FakeStart {
     }
 }
 
-fn network() -> Result<(), StartError> {
+fn network() -> Check {
     Err(StartError::new("network", "192.168.1.10:8080"))
 }
 
@@ -71,6 +103,30 @@ fn terminal(language: &str, fixed: bool) -> StartInfo {
         version: "0.1.0".into(),
         language: language.into(),
         language_fixed: fixed,
+        lan: None,
+    }
+}
+
+/// A single app; terminals `on` (or not), `fixed` by `SULTAN_LISTEN` (or not).
+fn single(language: &str, on: bool, fixed: bool) -> StartInfo {
+    StartInfo {
+        kind: AppKind::Single,
+        server: "http://127.0.0.1:41234".into(),
+        register_code: "R1".into(),
+        register_name: "Kasir 1".into(),
+        branch: "JKT01 · Toko Jakarta".into(),
+        lan: Some(Lan {
+            on,
+            port: 8080,
+            addresses: if on {
+                vec!["192.168.1.10:8080".into()]
+            } else {
+                Vec::new()
+            },
+            fixed,
+            failed_port: None,
+        }),
+        ..terminal(language, false)
     }
 }
 
@@ -111,6 +167,7 @@ fn key_text(name: &str) -> SharedString {
         "F3" => Key::F3.into(),
         "F5" => Key::F5.into(),
         "F6" => Key::F6.into(),
+        "F7" => Key::F7.into(),
         "F8" => Key::F8.into(),
         other => other.into(),
     }
@@ -134,6 +191,35 @@ impl Screen {
             .collect();
         assert_eq!(found.len(), 1, "exactly one button labelled {label:?}");
         found[0].mock_single_click(PointerEventButton::Left);
+    }
+
+    /// The "Allow terminals to connect" switch (in the window's language): on, enabled.
+    #[track_caller]
+    fn switch(&self, label: &str) -> (bool, bool) {
+        let found: Vec<_> = ElementHandle::find_by_accessible_label(&self.start.ui, label)
+            .filter(|e| e.accessible_role() == Some(AccessibleRole::Switch))
+            .collect();
+        assert_eq!(found.len(), 1, "exactly one switch labelled {label:?}");
+        (
+            found[0].accessible_checked() == Some(true),
+            found[0].accessible_enabled() != Some(false),
+        )
+    }
+
+    /// Whether a text is on screen.
+    fn shows(&self, text: &str) -> bool {
+        ElementHandle::find_by_accessible_label(&self.start.ui, text)
+            .next()
+            .is_some()
+    }
+
+    #[track_caller]
+    fn toggle(&self, label: &str) {
+        let found: Vec<_> = ElementHandle::find_by_accessible_label(&self.start.ui, label)
+            .filter(|e| e.accessible_role() == Some(AccessibleRole::Switch))
+            .collect();
+        assert_eq!(found.len(), 1, "exactly one switch labelled {label:?}");
+        found[0].invoke_accessible_default_action();
     }
 
     fn page(&self) -> String {
@@ -364,4 +450,132 @@ fn a_single_app_says_so_in_both_languages() {
     s.press("F1");
     s.press("x");
     assert!(s.open());
+}
+
+const ALLOW: &str = "Allow terminals to connect";
+
+#[test]
+fn a_single_app_lets_terminals_connect_from_the_settings() {
+    let fake = FakeStart {
+        addresses: vec!["192.168.1.10:8080".into(), "10.0.0.5:8080".into()],
+        ..FakeStart::default()
+    };
+    let s = open(fake, single("en", false, false));
+    s.press("F3");
+    assert_eq!(s.chips(), ["F6 language", "F7 lan", "F8 setup", "Esc back"]);
+    assert!(s.shows("Terminals in this shop"));
+    assert_eq!(s.switch(ALLOW), (false, true));
+    assert!(s.shows("Off: only this computer uses its server. Turn it on to add terminals."));
+    assert!(s.shows(
+        "If a terminal cannot connect, allow incoming TCP port 8080 in this computer's firewall."
+    ));
+    // F7: the server restarts, the addresses to type are shown, the connection is checked.
+    s.press("F7");
+    assert_eq!(s.switch(ALLOW), (true, true));
+    assert_eq!(
+        s.start.ui.get_lan_addresses(),
+        "192.168.1.10:8080\n10.0.0.5:8080"
+    );
+    assert!(s.shows("192.168.1.10:8080\n10.0.0.5:8080"));
+    assert!(s.shows("In the terminal's setup wizard, type this server address:"));
+    assert_eq!(s.start.ui.get_server(), "127.0.0.1:8080");
+    assert_eq!(s.note(), "");
+    // The switch itself turns it off again.
+    s.toggle(ALLOW);
+    assert_eq!(s.switch(ALLOW), (false, true));
+    assert_eq!(s.start.ui.get_server(), "127.0.0.1:41234");
+    assert_eq!(
+        s.fake.calls(),
+        ["check", "lan true", "check", "lan false", "check"]
+    );
+    assert!(s.open());
+
+    // In Indonesian.
+    let s = open(FakeStart::default(), single("id", false, false));
+    s.press("F3");
+    assert!(s.shows("Terminal di toko ini"));
+    assert_eq!(s.switch("Izinkan terminal terhubung"), (false, true));
+    // No address found.
+    s.press("F7");
+    assert!(s.start.ui.get_lan_on());
+    assert!(s.note().is_empty());
+    assert!(s.shows(
+        "Tidak ditemukan alamat jaringan di komputer ini. Hubungkan ke jaringan toko, lalu buka Pengaturan lagi."
+    ));
+}
+
+#[test]
+fn a_port_in_use_keeps_the_previous_setting() {
+    let fake = FakeStart {
+        lan_error: Some(StartError::new("in_use", "8080")),
+        ..FakeStart::default()
+    };
+    let s = open(fake, single("en", false, false));
+    s.press("F3");
+    s.press("F7");
+    assert_eq!(s.switch(ALLOW), (false, true));
+    assert_eq!(
+        s.note(),
+        "Port 8080 is already used by another program on this computer. The previous setting stays."
+    );
+    assert!(s.shows(&s.note()));
+    assert_eq!(s.fake.calls(), ["check", "lan true"]);
+
+    let fake = FakeStart {
+        lan_error: Some(StartError::new("failed", "disk full")),
+        ..FakeStart::default()
+    };
+    let s = open(fake, single("id", true, false));
+    s.press("F3");
+    s.press("F7");
+    assert!(s.start.ui.get_lan_on());
+    assert_eq!(
+        s.note(),
+        "Terminal tidak bisa diubah: disk full. Pengaturan sebelumnya tetap berlaku."
+    );
+
+    // At start: the saved port could not be opened.
+    let mut info = single("en", false, false);
+    info.lan.as_mut().unwrap().failed_port = Some(8080);
+    let s = open(FakeStart::default(), info);
+    assert!(
+        s.note().starts_with("Terminals cannot connect: port 8080"),
+        "{}",
+        s.note()
+    );
+}
+
+#[test]
+fn sultan_listen_locks_the_switch() {
+    let s = open(FakeStart::default(), single("en", true, true));
+    s.press("F3");
+    assert_eq!(s.chips(), ["F6 language", "F8 setup", "Esc back"]);
+    assert_eq!(s.switch(ALLOW), (true, false));
+    assert!(s.shows("Set by SULTAN_LISTEN on this computer."));
+    s.press("F7");
+    s.toggle(ALLOW);
+    assert!(s.start.ui.get_lan_on());
+    assert_eq!(s.fake.calls(), ["check"]);
+    assert!(s.shows("192.168.1.10:8080"));
+}
+
+#[test]
+fn terminals_have_no_terminals_section() {
+    let s = open(FakeStart::default(), terminal("en", false));
+    s.press("F3");
+    assert!(!s.start.ui.get_lan_shown());
+    assert!(!s.shows("Terminals in this shop"));
+    assert!(!s.shows(ALLOW));
+    s.press("F7");
+    assert_eq!(s.fake.calls(), ["check"]);
+}
+
+#[test]
+fn the_check_refreshes_the_branch_label() {
+    let s = open(
+        FakeStart::answering(vec![Ok(Some("JKT01 · Toko Jakarta".into()))]),
+        terminal("en", false),
+    );
+    assert_eq!(s.start.ui.get_branch(), "JKT01 · Toko Jakarta");
+    assert_eq!(s.start.controller().info.branch, "JKT01 · Toko Jakarta");
 }

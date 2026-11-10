@@ -32,18 +32,31 @@ Everything on a shop computer is done in windows; only an HQ server needs the co
    `sultan.toml`; `SULTAN_LANG` overrides it), the connection (app type, server, register,
    branch, status), the version, and **F8 Set up again**, which opens the setup wizard (e.g. to
    make this computer a terminal of another server). The wizard never overwrites a database
-   that is already set up; closing it returns to the Start screen.
+   that is already set up; closing it returns to the Start screen. On a single app, Settings
+   also has **Terminals in this shop** (see below).
+5. **Add a terminal to a single app** (no file editing): on the single app, Start screen →
+   **F3 Settings** → **F7** (or the switch) **Allow terminals to connect**. The app's server
+   restarts on the shop network (port 8080) and Settings shows the address to type, e.g.
+   `192.168.1.10:8080`. On the new computer, open Sultan, choose **Terminal** in the wizard, type
+   that address, then log in as a manager (or use a pairing code). Terminals still need that
+   login or code; turn this on only in a trusted shop network, and if a terminal cannot connect,
+   allow incoming TCP port 8080 in the single app's firewall. F7 again turns it off (loopback
+   only). If the port is taken by another program, Settings says so and keeps the previous
+   setting; `SULTAN_LISTEN` fixes the address and locks the switch.
 
 On a terminal whose server cannot be reached, the Start screen still opens and says so; F1 / F2
 check again and show the problem instead of opening a window that cannot work. A register the
 server no longer knows (unpaired) can still open the back office; set it up again from Settings.
 
-Terminals register against an HQ server, or a single app that listens on the shop network
-(`listen = "0.0.0.0:8080"` in its `sultan.toml`; by default a single app listens on loopback
-only). A branch server answers `read_only_replica`. The manager's login is used once and not
-stored.
+Terminals register against an HQ server, or a single app that allows terminals (step 5; it is
+saved as `listen = "0.0.0.0:8080"` in its `sultan.toml`; by default a single app listens on
+loopback only). A branch server answers `read_only_replica`. The manager's login is used once and
+not stored. A terminal stores its branch (`JKT01 · Toko Jakarta`) when it pairs, also with a
+pairing code, and refreshes it each time the Start screen checks the connection.
 
 ![Start screen](docs/screenshots/0a-start-en-1366x768.png)
+
+![Settings of a single app with terminals allowed](docs/screenshots/0d-settings-single-en-1366x768.png)
 
 ### Commands (for scripts)
 
@@ -84,7 +97,7 @@ button on screen:
 | Start screen | Keys |
 |---|---|
 | Home | F1 cash register · F2 back office · F3 settings · F5 check the connection again |
-| Settings | F6 switch the language (Indonesian / English) · F8 set up again (Enter continue, Esc cancel) · Esc back |
+| Settings | F6 switch the language (Indonesian / English) · F7 allow terminals to connect, on / off (single app only) · F8 set up again (Enter continue, Esc cancel) · Esc back |
 
 | Register screen | Keys |
 |---|---|
@@ -121,7 +134,7 @@ Every setting is taken from, in order: **command-line flag > environment variabl
 |---|---|---|---|---|
 | config file | `--config` | `SULTAN_CONFIG` | – | `./sultan.toml` |
 | database URL | `--db` | `SULTAN_DB` | `db` | `sqlite://<config dir>/sultan.db` (absolute path) |
-| listen address | `--listen` | `SULTAN_LISTEN` | `listen` | `127.0.0.1:8080` (loopback only) |
+| listen address | `--listen` | `SULTAN_LISTEN` | `listen` (single app: Start screen → Settings → Allow terminals) | `127.0.0.1:8080` (loopback only; a single app: a free loopback port) |
 | node role | `--role` | `SULTAN_ROLE` | `role` | `standalone` |
 | app type of a bare `sultan` (`single`, `server`, `client`) | – | – | `mode` | the setup wizard |
 | Owner password (`init`) | `--owner-password` | `SULTAN_OWNER_PASSWORD` | – | hidden prompt |
@@ -134,8 +147,9 @@ Every setting is taken from, in order: **command-line flag > environment variabl
   The wizard writes `mode` (and `db`, `listen`, `role`, `[register]` as needed); a file without
   `mode` counts as `client` when it has `[register]` and as `server` when it has `db`.
   `init` writes `db` to `sultan.toml`; `register pair` writes a `[register]` table (server URL,
-  register/branch IDs, code, name, and the branch label when the wizard knows it). The Start
-  screen's settings write `language`. Both files are written with mode `0600` on Unix, because
+  register/branch IDs, code, name, and the branch label from the pairing answer). The Start
+  screen's settings write `language` and, on a single app, `listen` (`0.0.0.0:<port>` when
+  terminals are allowed; removed again, i.e. loopback, when not). Both files are written with mode `0600` on Unix, because
   `db` may contain a `MySQL` password.
 - The `SQLite` database `sultan.db` and its `-wal` / `-shm` / `-journal` side files are owner-only
   (`0600`) on Unix: `init` creates them so, and `serve` (any open of the database) tightens

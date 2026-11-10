@@ -5,8 +5,8 @@
 //! - [`AppState`] (database, node role, clock) and [`ApiError`] (problem+json with a stable code).
 //! - Extractors [`RegisterCtx`](extract::RegisterCtx), [`UserSession`](extract::UserSession),
 //!   [`RequireHq`](extract::RequireHq).
-//! - Endpoints (spec 2.1 §8): `POST /registers/pair`, `GET /registers/me/users`,
-//!   `POST /auth/pin`, `POST /auth/password`, `POST /auth/logout`, `POST /users/{id}/unlock`.
+//! - Endpoints (spec 2.1 §8): `POST /registers/pair`, `GET /registers/me`,
+//!   `GET /registers/me/users`, `POST /auth/pin`, `POST /auth/password`, `POST /auth/logout`, `POST /users/{id}/unlock`.
 //!
 //! Tokens are 32 random bytes (base64url); only their SHA-256 is stored ([`token`]).
 //!
@@ -93,6 +93,7 @@ pub fn routes(state: &AppState) -> Router<AppState> {
         .route("/auth/password", post(auth::password_login))
         .route("/auth/me", get(auth::me))
         .route("/registers/pair", post(registers::pair))
+        .route("/registers/me", get(registers::me))
         .route("/registers/me/users", get(registers::me_users))
         .route("/registers", get(registers::list))
         .route(

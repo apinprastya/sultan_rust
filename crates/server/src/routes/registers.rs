@@ -8,6 +8,8 @@
 //!   `POST /registers/pair {code}` trades the code for a device token.
 //!   `POST /registers/{id}/unpair` (HQ only, `org.manage`) revokes every device token and unused
 //!   code of the register.
+//! - `GET /registers/me`: the calling device's register and branch (code and name), e.g. for a
+//!   terminal's Start screen.
 //! - `GET /registers/me/users`: the lock-screen user list for the calling device.
 
 use axum::Json;
@@ -53,6 +55,10 @@ pub struct PairResponse {
     pub register_code: String,
     /// Register display name.
     pub register_name: String,
+    /// Branch code, e.g. `JKT01`.
+    pub branch_code: String,
+    /// Branch display name, e.g. `Toko Jakarta`.
+    pub branch_name: String,
 }
 
 /// `POST /api/v1/registers/pair {code}` → `201` with a new device token (spec 2.1 §2).
@@ -80,6 +86,9 @@ pub async fn pair(
         .await?
         .filter(|r| !r.archived)
         .ok_or_else(ApiError::invalid_pairing_code)?;
+    let branch = org::get_branch(&mut tx, register.branch)
+        .await?
+        .ok_or_else(ApiError::invalid_pairing_code)?;
     let device_token = token::generate();
     devices::insert_device_token(&mut tx, &token::hash(&device_token), register.id, now).await?;
     let mut entry = AuditEntry::new(now, "register.pair");
@@ -97,8 +106,55 @@ pub async fn pair(
             branch_id: register.branch.to_string(),
             register_code: register.code,
             register_name: register.name,
+            branch_code: branch.code,
+            branch_name: branch.name,
         }),
     ))
+}
+
+/// Answer of `GET /registers/me`: the calling device's register and its branch.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct RegisterMe {
+    /// The register.
+    pub register_id: String,
+    /// Register code, e.g. `R2`.
+    pub register_code: String,
+    /// Register display name.
+    pub register_name: String,
+    /// Its branch.
+    pub branch_id: String,
+    /// Branch code, e.g. `JKT01`.
+    pub branch_code: String,
+    /// Branch display name, e.g. `Toko Jakarta`.
+    pub branch_name: String,
+}
+
+/// `GET /api/v1/registers/me`: the register of the device token and its branch, so a terminal
+/// can show (and refresh) what it is paired as.
+///
+/// # Errors
+/// `401 invalid_device_token`, or `500 internal`.
+#[utoipa::path(get, path = "/api/v1/registers/me", tag = "registers",
+    security(("register_token" = [])),
+    responses((status = 200, body = RegisterMe), (status = 401, body = crate::openapi::Problem)))]
+pub async fn me(
+    State(state): State<AppState>,
+    ctx: RegisterCtx,
+) -> Result<Json<RegisterMe>, ApiError> {
+    let register = org::get_register(&state.db, ctx.register)
+        .await?
+        .ok_or_else(ApiError::invalid_device_token)?;
+    let branch = org::get_branch(&state.db, ctx.branch)
+        .await?
+        .ok_or_else(ApiError::invalid_device_token)?;
+    Ok(Json(RegisterMe {
+        register_id: register.id.to_string(),
+        register_code: register.code,
+        register_name: register.name,
+        branch_id: branch.id.to_string(),
+        branch_code: branch.code,
+        branch_name: branch.name,
+    }))
 }
 
 /// One tile on the register lock screen.
