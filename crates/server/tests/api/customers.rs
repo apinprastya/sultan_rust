@@ -29,6 +29,7 @@ api_tests!(
     merge_moves_the_balance,
     groups_and_tiers,
     review_lists_and_history,
+    permissions_count_from_any_assignment,
 );
 
 /// `PUT /customers/{id}` URI.
@@ -1224,4 +1225,81 @@ async fn review_lists_and_history(h: &Harness) {
     )
     .await
     .assert_problem(404, "not_found");
+}
+
+/// §18 item 16 (decided 2026-11-12): customer permissions count from any role assignment, like
+/// `catalog.manage`. `duo` is Manager at JKT01 and Cashier at BDG01; logged in to the back office
+/// at BDG01 (where the Cashier role has no `customer.manage`), it still manages customers.
+async fn permissions_count_from_any_assignment(h: &Harness) {
+    use sultan_core::access::BranchScope;
+    use sultan_db::{roles, seed};
+
+    let duo = h
+        .add_user("duo", seed::CASHIER_ROLE, BranchScope::Branch(h.bdg.id))
+        .await;
+    let mut tx = h.db.begin().await.unwrap();
+    roles::replace_assignments(
+        &mut tx,
+        duo.id,
+        &[
+            (seed::MANAGER_ROLE, BranchScope::Branch(h.jkt.id)),
+            (seed::CASHIER_ROLE, BranchScope::Branch(h.bdg.id)),
+        ],
+        crate::common::T0,
+    )
+    .await
+    .unwrap();
+    tx.commit().await.unwrap();
+    let r = h
+        .send(
+            Method::POST,
+            "/api/v1/auth/password",
+            &[],
+            Some(json!({
+                "username": "duo",
+                "password": crate::common::BUDI_PASSWORD,
+                "branch_id": h.bdg.id.to_string(),
+            })),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    let token = r.token();
+
+    // Name search (`customer.search`) and a tier write (`customer.manage`) both work.
+    let r = h
+        .call(&token, Method::GET, "/api/v1/customers?q=x", None)
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    let group = new_id();
+    let r = h
+        .call(
+            &token,
+            Method::PUT,
+            &format!("/api/v1/customer-groups/{group}"),
+            Some(json!({ "name": "Duo grosir" })),
+        )
+        .await;
+    assert_eq!(r.status.as_u16(), 201, "{}", r.body);
+    let created = create(h, &token, body("Duo Customer", None)).await;
+    let mut edit = body("Duo Customer", None);
+    edit["group_id"] = json!(group);
+    let r = h
+        .call(&token, Method::PUT, &uri(&id(&created)), Some(edit))
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    assert_eq!(r.body["group_id"], json!(group));
+
+    // A Cashier with no other assignment still may not.
+    h.add_user(
+        "kasir-bdg",
+        seed::CASHIER_ROLE,
+        BranchScope::Branch(h.bdg.id),
+    )
+    .await;
+    let kasir = h
+        .password_token("kasir-bdg", crate::common::BUDI_PASSWORD)
+        .await;
+    h.call(&kasir, Method::GET, "/api/v1/customers?q=x", None)
+        .await
+        .assert_problem(403, "permission_denied");
 }

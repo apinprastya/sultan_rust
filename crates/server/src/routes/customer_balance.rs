@@ -4,7 +4,7 @@
 //!   entries, newest first; any user session.
 //! - `POST /customers/{id}/balance/payout {amount}` with `Idempotency-Key`: a manager pays the
 //!   balance out in cash at the till. Needs a PIN session at the register
-//!   (`403 register_session_required`), `customer.balance_payout` at its branch (not
+//!   (`403 register_session_required`), `customer.balance_payout` from any role assignment (not
 //!   overridable, spec 2.5 §18.6) and an **open cashier session of the caller on this register**
 //!   (`409 no_open_session`). `amount` > 0 pays out a positive balance (`0 < amount ≤ balance`);
 //!   `amount` < 0 writes off a negative balance (`balance ≤ amount < 0`) and needs the Owner role at
@@ -188,7 +188,7 @@ pub async fn payout(
 ) -> Result<Json<PayoutDto>, ApiError> {
     let id: Uuid = parse_id(&id, "id")?;
     let access = Caller::load(&state.db, &caller.user).await?;
-    access.require(Permission::CustomerBalancePayout)?;
+    access.require_anywhere(Permission::CustomerBalancePayout)?;
     if body.amount < 0 && !access.has_role_at(seed::OWNER_ROLE, caller.register.branch) {
         return Err(ApiError::new(
             axum::http::StatusCode::FORBIDDEN,
@@ -302,7 +302,7 @@ pub async fn put_settings(
 ) -> Result<Json<BalanceSettingsDto>, ApiError> {
     Caller::load(&state.db, &session)
         .await?
-        .require(Permission::CustomerManage)?;
+        .require_anywhere(Permission::CustomerManage)?;
     let checked = BalanceSettings {
         max_saved_per_sale: Money::from_minor(body.max_saved_per_sale),
         max_balance: Money::from_minor(body.max_balance),

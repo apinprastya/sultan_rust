@@ -27,8 +27,9 @@
 //! replay) is allowed; every other write is `403 read_only_replica`. Forwarding a till's profile
 //! edit to HQ (and `503 hq_unreachable`) comes with sync. Reads work everywhere.
 //!
-//! Permissions are checked at the session's branch (`core::access::effective_permissions`), like
-//! the cashier's other actions. Every write stores the change, one audit row and one outbox row
+//! Customer permissions count from any of the caller's role assignments
+//! ([`Caller::require_anywhere`]; spec 2.5 §18 item 16, decided 2026-11-12), like `catalog.manage`:
+//! customers are company-wide master data. Every write stores the change, one audit row and one outbox row
 //! per customer in one transaction (`sultan_db::customers`), reruns the transaction after a lost
 //! race ([`run`]) and publishes `customer.changed {customer_id}` to every socket when something
 //! changed.
@@ -318,9 +319,9 @@ fn check_put(
     new: &Customer,
 ) -> Result<(), ApiError> {
     let Some(old) = old else {
-        caller.require(Permission::CustomerCreate)?;
+        caller.require_anywhere(Permission::CustomerCreate)?;
         if tier_part(new) != (None, None, None, false) {
-            caller.require(Permission::CustomerManage)?;
+            caller.require_anywhere(Permission::CustomerManage)?;
         }
         return Ok(());
     };
@@ -329,14 +330,15 @@ fn check_put(
     same.signed_up_branch = old.customer.signed_up_branch;
     same.signed_up_at = old.customer.signed_up_at;
     if same == old.customer {
-        return caller.require_any(&[Permission::CustomerCreate, Permission::CustomerEdit]);
+        return caller
+            .require_any_anywhere(&[Permission::CustomerCreate, Permission::CustomerEdit]);
     }
     if !hq {
         return Err(ApiError::read_only_replica());
     }
-    caller.require(Permission::CustomerEdit)?;
+    caller.require_anywhere(Permission::CustomerEdit)?;
     if tier_part(&old.customer) != tier_part(new) {
-        caller.require(Permission::CustomerManage)?;
+        caller.require_anywhere(Permission::CustomerManage)?;
     }
     Ok(())
 }
@@ -577,7 +579,7 @@ pub async fn get(
     if !record.is_active() {
         Caller::load(&state.db, &session)
             .await?
-            .require(Permission::CustomerManage)?;
+            .require_anywhere(Permission::CustomerManage)?;
     }
     Ok(Json(Names::load(&state, &session).await?.dto(&record)))
 }
@@ -690,7 +692,7 @@ pub async fn list(
     ApiQuery(query): ApiQuery<ListQuery>,
 ) -> Result<Json<CustomerPage>, ApiError> {
     let caller = Caller::load(&state.db, &session).await?;
-    caller.require(Permission::CustomerSearch)?;
+    caller.require_anywhere(Permission::CustomerSearch)?;
     let limit = query.limit.unwrap_or(SEARCH_PAGE);
     if !(1..=SEARCH_PAGE).contains(&limit) {
         return Err(ApiError::invalid_field(
@@ -701,7 +703,7 @@ pub async fn list(
     let (offset, limit) = page_window(query.page, limit)?;
     let records = if query.q.trim().is_empty() {
         if query.include_archived {
-            caller.require(Permission::CustomerManage)?;
+            caller.require_anywhere(Permission::CustomerManage)?;
         }
         cust::list_customers(&state.db, query.include_archived, offset, limit).await?
     } else {
@@ -757,7 +759,7 @@ async fn review(
 ) -> Result<Json<CustomerPage>, ApiError> {
     Caller::load(&state.db, session)
         .await?
-        .require(Permission::CustomerManage)?;
+        .require_anywhere(Permission::CustomerManage)?;
     let (offset, limit) = page_window(page, REVIEW_PAGE)?;
     let records = if negative {
         cust::list_negative_balances(&state.db, offset, limit).await?
@@ -852,7 +854,7 @@ async fn set_state(
     };
     Caller::load(&state.db, session)
         .await?
-        .require(permission)?;
+        .require_anywhere(permission)?;
     let (actor, now) = (&actor(session), state.now());
     let (written, stored) = run(|| async move {
         let mut tx = state.db.begin().await?;
@@ -909,7 +911,7 @@ pub async fn merge(
     let from: Uuid = parse_id(&body.from, "from")?;
     Caller::load(&state.db, &session)
         .await?
-        .require(Permission::CustomerManage)?;
+        .require_anywhere(Permission::CustomerManage)?;
     let (state, actor, now) = (&state, &actor(&session), state.now());
     let stored = run(|| async move {
         let mut tx = state.db.begin().await?;
