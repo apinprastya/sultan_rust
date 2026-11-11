@@ -171,8 +171,9 @@ pub trait Service: Send + Sync {
     /// `token` quotes with the device token alone.
     fn quote(&self, token: &str, request: &QuoteRequest) -> BoxFuture<Quote>;
 
-    /// `GET /auth/me`'s permission keys at the session's branch (the register's PIN session),
-    /// so the register shows only what the user may do (spec 2.5 M5: name search, sign-up,
+    /// `GET /auth/me`'s permission keys at the session's branch plus those held through any role
+    /// assignment (customer permissions count from any assignment, spec 2.5 §18 item 16), so the
+    /// register shows only what the user may do (spec 2.5 M5: name search, sign-up,
     /// balance payout). The server still checks every call.
     fn permissions(&self, token: &str) -> BoxFuture<Vec<String>>;
 }

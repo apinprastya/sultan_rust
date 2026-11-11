@@ -86,6 +86,19 @@ impl Caller {
         }
     }
 
+    /// `403 permission_denied` (naming the first) unless [`Caller::holds_anywhere`] one of
+    /// `permissions` (spec 2.5 §18 item 16: customer permissions count from any assignment).
+    ///
+    /// # Errors
+    /// See above.
+    pub fn require_any_anywhere(&self, permissions: &[Permission]) -> Result<(), ApiError> {
+        if permissions.iter().any(|p| self.holds_anywhere(*p)) {
+            Ok(())
+        } else {
+            self.require_anywhere(permissions[0])
+        }
+    }
+
     /// Assignments whose role still exists (archived roles grant nothing).
     fn live_assignments(&self) -> impl Iterator<Item = &Assignment> {
         self.access

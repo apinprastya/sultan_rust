@@ -3,7 +3,8 @@
 //! `GET|PUT /membership-tiers/{id}`.
 //!
 //! Reads: any user session; lists leave archived entries out unless `include_archived=true`.
-//! Writes: HQ only (`403 read_only_replica`) and `customer.manage` at the session's branch.
+//! Writes: HQ only (`403 read_only_replica`) and `customer.manage` from any role assignment
+//! (spec 2.5 §18 item 16).
 //! Archiving is `archived: true` in the `PUT` body (customers keep the link; an archived tier
 //! stops applying). Names are unique, and so are tier ranks (`409 conflict` with `field`). `201`
 //! on create, `200` on update and on a replay. Audit and outbox rows come from
@@ -105,7 +106,7 @@ impl From<&MembershipTier> for TierDto {
 async fn require_manage(state: &AppState, session: &UserSession) -> Result<(), ApiError> {
     Caller::load(&state.db, session)
         .await?
-        .require(Permission::CustomerManage)
+        .require_anywhere(Permission::CustomerManage)
 }
 
 /// `GET /api/v1/customer-groups`: groups by name.
