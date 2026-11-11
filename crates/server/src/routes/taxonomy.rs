@@ -1,13 +1,15 @@
-//! Categories and brands (spec 2.2 §8, §12): `GET /categories` (tree), `GET|PUT /categories/{id}`,
-//! `GET /brands`, `GET|PUT /brands/{id}`.
+//! Categories and brands (spec 2.2 §8, §9, §12): `GET /categories` (tree),
+//! `GET|PUT|DELETE /categories/{id}`, `GET /brands`, `GET|PUT|DELETE /brands/{id}`.
 //!
 //! Reads: a session or a device token. Lists leave archived entries out; `include_archived=true`
-//! adds them and needs `catalog.view_archived` for all branches (decided in C3). `GET` of one
-//! archived category or brand needs nothing extra: products keep showing their (archived)
-//! category and brand. Writes: see [`super::catalog`]; archiving is `archived: true` in the `PUT`
-//! body (there is no `DELETE`: they are never deleted). `201` on create, `200` on update and on a
-//! replay. Every write that changed something publishes `catalog.changed {scope: "category",
-//! category_id}` / `{scope: "brand", brand_id}`.
+//! adds them and needs `catalog.view_archived` (any role assignment). `GET` of one archived
+//! category or brand needs nothing extra: products keep showing their (archived) category and
+//! brand. Writes: see [`super::catalog`]; archiving is `archived: true` in the `PUT` body. `201`
+//! on create, `200` on update and on a replay. `DELETE` hard-deletes a never-used entry (§9, C3b)
+//! → `204`: a category without products (archived ones count) or child categories, a brand
+//! without products; otherwise `409 in_use` (`reason`: `has_products` / `has_children`), so
+//! archive it instead. Every write that changed something publishes `catalog.changed {scope:
+//! "category", category_id}` / `{scope: "brand", brand_id}` (a delete too).
 
 use axum::Json;
 use axum::extract::{Path, State};
@@ -16,7 +18,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sultan_core::catalog::{Brand, Category};
 use sultan_core::ids::{BrandId, CategoryId};
-use sultan_db::catalog::{self, CategoryNode};
+use sultan_db::catalog::{self, CategoryNode, Written};
 use utoipa::{IntoParams, ToSchema};
 
 use super::catalog::{
@@ -196,6 +198,43 @@ pub async fn put_category(
     Ok((written_status(written), Json(CategoryDto::from(&stored))))
 }
 
+/// `DELETE /api/v1/categories/{id}`: hard-deletes a category without products (archived ones
+/// count) or child categories (spec 2.2 §9, C3b) → `204`. Audited (`catalog.category.delete`),
+/// with an outbox row, and publishes `catalog.changed {scope: "category", category_id}`.
+///
+/// # Errors
+/// `403 read_only_replica` / `permission_denied`, `400 invalid_body`, `404 not_found`,
+/// `409 in_use` (`reason`: `has_products` / `has_children`).
+#[utoipa::path(delete, path = "/api/v1/categories/{id}", tag = "catalog",
+    security(("bearer" = [])), params(("id" = String, Path, description = "Category ID")),
+    responses((status = 204, description = "Deleted"),
+        (status = 403, body = crate::openapi::Problem), (status = 404, body = crate::openapi::Problem),
+        (status = 409, body = crate::openapi::Problem)))]
+pub async fn delete_category(
+    State(state): State<AppState>,
+    _hq: RequireHq,
+    session: UserSession,
+    Path(id): Path<String>,
+) -> Result<StatusCode, ApiError> {
+    let id: CategoryId = parse_id(&id, "id")?;
+    require_manage(&state, &session).await?;
+    let (state, actor, now) = (&state, &actor(&session), state.now());
+    retrying(|| async move {
+        let mut tx = state.db.begin().await?;
+        catalog::delete_category(&mut tx, id, actor, now).await?;
+        tx.commit().await?;
+        Ok(())
+    })
+    .await?;
+    publish_changed(
+        state,
+        Written::Updated,
+        "category",
+        json!({ "category_id": id.to_string() }),
+    );
+    Ok(StatusCode::NO_CONTENT)
+}
+
 /// Body of `PUT /brands/{id}`.
 #[derive(Debug, Clone, Deserialize, ToSchema)]
 pub struct BrandBody {
@@ -309,4 +348,41 @@ pub async fn put_brand(
         json!({ "brand_id": id.to_string() }),
     );
     Ok((written_status(written), Json(BrandDto::from(&stored))))
+}
+
+/// `DELETE /api/v1/brands/{id}`: hard-deletes a brand without products (archived ones count;
+/// spec 2.2 §9, C3b) → `204`. Audited (`catalog.brand.delete`), with an outbox row, and
+/// publishes `catalog.changed {scope: "brand", brand_id}`.
+///
+/// # Errors
+/// `403 read_only_replica` / `permission_denied`, `400 invalid_body`, `404 not_found`,
+/// `409 in_use` (`reason`: `has_products`).
+#[utoipa::path(delete, path = "/api/v1/brands/{id}", tag = "catalog",
+    security(("bearer" = [])), params(("id" = String, Path, description = "Brand ID")),
+    responses((status = 204, description = "Deleted"),
+        (status = 403, body = crate::openapi::Problem), (status = 404, body = crate::openapi::Problem),
+        (status = 409, body = crate::openapi::Problem)))]
+pub async fn delete_brand(
+    State(state): State<AppState>,
+    _hq: RequireHq,
+    session: UserSession,
+    Path(id): Path<String>,
+) -> Result<StatusCode, ApiError> {
+    let id: BrandId = parse_id(&id, "id")?;
+    require_manage(&state, &session).await?;
+    let (state, actor, now) = (&state, &actor(&session), state.now());
+    retrying(|| async move {
+        let mut tx = state.db.begin().await?;
+        catalog::delete_brand(&mut tx, id, actor, now).await?;
+        tx.commit().await?;
+        Ok(())
+    })
+    .await?;
+    publish_changed(
+        state,
+        Written::Updated,
+        "brand",
+        json!({ "brand_id": id.to_string() }),
+    );
+    Ok(StatusCode::NO_CONTENT)
 }

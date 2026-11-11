@@ -427,6 +427,41 @@ async fn override_flow() {
     );
 }
 
+/// C3b: a register without a session (an empty token) listens with its device token alone and
+/// gets `catalog.changed`.
+#[tokio::test]
+async fn device_token_alone_gets_catalog_changed() {
+    use sultan_client::{BackOffice, BrandBody};
+    let s = serve().await;
+    let c = s.client();
+    let seen: Arc<Mutex<Vec<ServerEvent>>> = Arc::default();
+    let sink: EventSink = {
+        let seen = seen.clone();
+        Arc::new(move |e| seen.lock().unwrap().push(e))
+    };
+    let watcher = tokio::spawn(c.watch_events("", sink));
+    // Budi (Manager at JKT01: `catalog.manage` counts from any assignment) adds brands until the
+    // socket, which may subscribe after the first write, has seen one.
+    let budi = c.pin_login(&s.budi, BUDI_PIN).await.unwrap().token;
+    for attempt in 0..50 {
+        let body = BrandBody {
+            name: format!("Merek {attempt}"),
+            archived: false,
+        };
+        c.put_brand(&budi, &UserId::generate().to_string(), &body)
+            .await
+            .unwrap();
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        if !seen.lock().unwrap().is_empty() {
+            break;
+        }
+    }
+    let first = seen.lock().unwrap().first().cloned().unwrap();
+    assert_eq!(first.kind, "catalog.changed");
+    assert_eq!(first.data["scope"], "brand");
+    watcher.abort();
+}
+
 #[tokio::test]
 async fn events_report_the_logout() {
     let s = serve().await;

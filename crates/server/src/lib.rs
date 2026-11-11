@@ -26,6 +26,15 @@
 //! `/catalog/lookup`, `/catalog/search`, `/settings/catalog` and `/catalog/generate/…`, with
 //! `catalog.changed` events ([`routes::catalog`]).
 //!
+//! Phase M3 (spec 2.5) adds customers: `/customers` (sign-up and edit, lookup, name search,
+//! archive, merge, erase, duplicates, negative balances, history), `/customer-groups`,
+//! `/membership-tiers`, the customer balance (`/customers/{id}/balance`, cash payout) and
+//! `/settings/customer-balance`, with `customer.changed` events ([`routes::customers`]).
+//! Phase R3 (spec 2.3) adds pricing: `/price-lists` with their entries, `/products/{id}/prices`,
+//! `/tax-classes/{id}/rates`, `/settings/pricing`, `POST /pricing/quote` and the price in
+//! `/catalog/lookup`, with `price.changed` events ([`routes::pricing`],
+//! [`routes::pricing_quote`]).
+//!
 //! Phase 7 adds request logging to [`router`]: one `tracing` span per request with the method and
 //! the path only, and the status and latency when it finishes. Header values (`Authorization`,
 //! `X-Register-Token`, `X-Override`), query strings and bodies are never logged.
@@ -53,8 +62,9 @@ use tower_http::trace::{DefaultOnRequest, DefaultOnResponse, TraceLayer};
 use tracing::Level;
 
 use routes::{
-    audit, auth, branches, cashier_sessions, catalog, locations, overrides as override_routes,
-    permissions, product_images, products, registers, roles, taxonomy, users,
+    audit, auth, branches, cashier_sessions, catalog, customer_balance, customer_groups, customers,
+    locations, overrides as override_routes, permissions, pricing, pricing_quote, product_images,
+    products, registers, roles, taxonomy, users,
 };
 
 pub use error::ApiError;
@@ -85,6 +95,8 @@ pub fn routes(state: &AppState) -> Router<AppState> {
             post(override_routes::demo_protected),
         )
         .merge(catalog_actions())
+        .merge(customer_actions())
+        .merge(pricing_actions())
         .route_layer(from_fn_with_state(state.clone(), idempotency::middleware));
     let api = Router::new()
         .route("/openapi.json", get(openapi::openapi_json))
@@ -137,6 +149,8 @@ pub fn routes(state: &AppState) -> Router<AppState> {
         .route("/cashier-sessions/{id}", get(cashier_sessions::get))
         .route("/overrides", post(override_routes::approve))
         .merge(catalog_routes())
+        .merge(customer_routes())
+        .merge(pricing_routes())
         .merge(idempotent)
         .method_not_allowed_fallback(async || ApiError::method_not_allowed());
     Router::new()
@@ -160,7 +174,12 @@ fn catalog_actions() -> Router<AppState> {
 fn catalog_routes() -> Router<AppState> {
     Router::new()
         .route("/products", get(products::list))
-        .route("/products/{id}", get(products::get).put(products::put))
+        .route(
+            "/products/{id}",
+            get(products::get)
+                .put(products::put)
+                .delete(products::delete),
+        )
         .route(
             "/products/{id}/branch-blocks",
             get(products::get_branch_blocks).put(products::put_branch_blocks),
@@ -174,12 +193,16 @@ fn catalog_routes() -> Router<AppState> {
         .route("/categories", get(taxonomy::list_categories))
         .route(
             "/categories/{id}",
-            get(taxonomy::get_category).put(taxonomy::put_category),
+            get(taxonomy::get_category)
+                .put(taxonomy::put_category)
+                .delete(taxonomy::delete_category),
         )
         .route("/brands", get(taxonomy::list_brands))
         .route(
             "/brands/{id}",
-            get(taxonomy::get_brand).put(taxonomy::put_brand),
+            get(taxonomy::get_brand)
+                .put(taxonomy::put_brand)
+                .delete(taxonomy::delete_brand),
         )
         .route("/tax-classes", get(catalog::tax_classes))
         .route("/catalog/lookup", get(catalog::lookup))
@@ -188,6 +211,81 @@ fn catalog_routes() -> Router<AppState> {
             "/settings/catalog",
             get(catalog::get_settings).put(catalog::put_settings),
         )
+}
+
+/// The customer action `POST`s (spec 2.5 §13); they get the `Idempotency-Key` middleware.
+fn customer_actions() -> Router<AppState> {
+    Router::new()
+        .route("/customers/{id}/archive", post(customers::archive))
+        .route("/customers/{id}/unarchive", post(customers::unarchive))
+        .route("/customers/{id}/merge", post(customers::merge))
+        .route("/customers/{id}/erase", post(customers::erase))
+        .route(
+            "/customers/{id}/balance/payout",
+            post(customer_balance::payout),
+        )
+}
+
+/// The customer resources (spec 2.5 §13).
+fn customer_routes() -> Router<AppState> {
+    Router::new()
+        .route("/customers", get(customers::list))
+        .route("/customers/lookup", get(customers::lookup))
+        .route("/customers/duplicates", get(customers::duplicates))
+        .route(
+            "/customers/negative-balances",
+            get(customers::negative_balances),
+        )
+        .route("/customers/{id}", get(customers::get).put(customers::put))
+        .route("/customers/{id}/history", get(customers::history))
+        .route("/customers/{id}/balance", get(customer_balance::get))
+        .route("/customer-groups", get(customer_groups::list_groups))
+        .route(
+            "/customer-groups/{id}",
+            get(customer_groups::get_group).put(customer_groups::put_group),
+        )
+        .route("/membership-tiers", get(customer_groups::list_tiers))
+        .route(
+            "/membership-tiers/{id}",
+            get(customer_groups::get_tier).put(customer_groups::put_tier),
+        )
+        .route(
+            "/settings/customer-balance",
+            get(customer_balance::get_settings).put(customer_balance::put_settings),
+        )
+}
+
+/// The pricing action `POST`s (spec 2.3 §10); they get the `Idempotency-Key` middleware.
+fn pricing_actions() -> Router<AppState> {
+    Router::new().route("/price-lists/{id}/archive", post(pricing::archive_list))
+}
+
+/// The pricing resources and the quote (spec 2.3 §10). The quote is a read: it stores nothing,
+/// so it takes no `Idempotency-Key`.
+fn pricing_routes() -> Router<AppState> {
+    Router::new()
+        .route("/price-lists", get(pricing::list_lists))
+        .route(
+            "/price-lists/{id}",
+            get(pricing::get_list).put(pricing::put_list),
+        )
+        .route("/price-lists/{id}/entries", get(pricing::list_entries))
+        .route(
+            "/price-lists/{id}/entries/{entry_id}",
+            get(pricing::get_entry)
+                .put(pricing::put_entry)
+                .delete(pricing::delete_entry),
+        )
+        .route("/products/{id}/prices", get(pricing::product_prices))
+        .route(
+            "/tax-classes/{id}/rates",
+            get(pricing::list_rates).put(pricing::put_rate),
+        )
+        .route(
+            "/settings/pricing",
+            get(pricing::get_settings).put(pricing::put_settings),
+        )
+        .route("/pricing/quote", post(pricing_quote::quote))
 }
 
 /// The span of one request: method and path only. The query string is left out because it is

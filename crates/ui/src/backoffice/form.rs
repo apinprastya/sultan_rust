@@ -41,11 +41,13 @@ pub enum Tab {
     Variants,
     /// Units, barcodes and bundle components.
     Units,
+    /// The product's prices in every list (spec 2.3, R4; not part of the product document).
+    Prices,
 }
 
 impl Tab {
     /// Every tab, in order.
-    pub const ALL: [Self; 3] = [Self::General, Self::Variants, Self::Units];
+    pub const ALL: [Self; 4] = [Self::General, Self::Variants, Self::Units, Self::Prices];
 
     /// Index for the view.
     #[must_use]
@@ -54,6 +56,7 @@ impl Tab {
             Self::General => 0,
             Self::Variants => 1,
             Self::Units => 2,
+            Self::Prices => 3,
         }
     }
 

@@ -3,7 +3,13 @@
 REST/JSON API of a Sultan POS node (`axum`, `/api/v1`, problem+json errors), see `docs/plan.md` §1
 and `docs/spec/2.1-organization-access.md`.
 
-- `src/routes/`: one module per resource (spec 2.1 §8).
+- `src/routes/`: one module per resource (spec 2.1 §8); the catalog (spec 2.2) and customers
+  (spec 2.5: `customers.rs`, `customer_groups.rs`, `customer_balance.rs`).
+- `src/movements.rs`: what a cashier session's close report counts. Customer balance payouts are
+  added as cash out (`session_movements`); sales plug in later (spec 2.6).
+- `src/routes/`: one module per resource (spec 2.1 §8); pricing (spec 2.3) is
+  `routes/pricing.rs` (price lists, entries, tax rates, settings, `price.changed`) and
+  `routes/pricing_quote.rs` (`POST /pricing/quote` and the lookup's `unit_price`).
 - `src/access.rs`: permission checks, branch visibility and the Owner invariant over `core::access`.
 - `src/openapi.rs`: the OpenAPI document (`utoipa`), served at `GET /api/v1/openapi.json`.
 

@@ -295,6 +295,9 @@ fn settings_change_the_language_and_save_it() {
     assert_eq!(s.page(), "settings");
     assert_eq!(s.chips(), ["F6 language", "F8 setup", "Esc back"]);
     assert_eq!(s.start.ui.get_language(), "en");
+    // A terminal shows the server it uses.
+    assert!(s.shows("Server address"));
+    assert!(!s.shows("This computer's address"));
     s.press("F6");
     assert_eq!(s.start.ui.get_language(), "id");
     // The window speaks Indonesian at once.
@@ -441,11 +444,15 @@ fn a_single_app_says_so_in_both_languages() {
     assert_eq!(s.start.ui.get_version(), "0.1.0");
     assert_eq!(s.start.controller().info.register_code, "R1");
     s.press("F3");
+    // The single app's own address, not the one terminals type.
+    assert!(s.shows("Alamat komputer ini"));
+    assert!(!s.shows("Alamat server"));
     s.press("F6");
     assert_eq!(
         s.connection(),
         "Single app: the server runs on this computer"
     );
+    assert!(s.shows("This computer's address"));
     // Keys that mean nothing here are left alone.
     s.press("F1");
     s.press("x");

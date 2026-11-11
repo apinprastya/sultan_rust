@@ -28,13 +28,10 @@ export global BoStrings {
             return @tr("Your login ended. Please log in again.");
         }
         if (code == "read_only") {
-            return @tr("Read-only: changing the catalog needs the permission catalog.manage from a role for all branches. Ask the owner.");
-        }
-        if (code == "read_only_branch") {
-            return @tr("Read-only: you hold catalog.manage at this branch only. The catalog is shared by all branches, so the permission must come from a role assigned for all branches. Ask the owner.");
+            return @tr("Read-only: changing the catalog needs the permission catalog.manage. Ask the owner.");
         }
         if (code == "permission_denied_catalog") {
-            return @tr("Not allowed: this needs the permission {} from a role for all branches.", arg);
+            return @tr("Not allowed: this needs the permission {}.", arg);
         }
         if (code == "read_only_replica") {
             return @tr("This is a branch server. Change the catalog at the HQ server.");
@@ -50,6 +47,24 @@ export global BoStrings {
         }
         if (code == "unarchived_done") {
             return @tr("The product is active again.");
+        }
+        if (code == "deleted_done") {
+            return @tr("Deleted.");
+        }
+        if (code == "in_use" && arg == "used") {
+            return @tr("Cannot delete: the product has been sold, stocked or priced. Archive it instead.");
+        }
+        if (code == "in_use" && arg == "bundle_component") {
+            return @tr("Cannot delete: the product is part of a bundle. Archive it instead.");
+        }
+        if (code == "in_use" && arg == "has_products") {
+            return @tr("Cannot delete: products use it (archived ones too). Archive it instead.");
+        }
+        if (code == "in_use" && arg == "has_children") {
+            return @tr("Cannot delete: the category has subcategories. Delete or move them first, or archive it.");
+        }
+        if (code == "in_use") {
+            return @tr("Cannot delete: it is in use. Archive it instead.");
         }
         if (code == "file_error") {
             return @tr("Cannot read the file: {}", arg);
@@ -217,6 +232,146 @@ export global BoStrings {
         if (code == "frozen_options" || code == "frozen_options_values") {
             return @tr("Options cannot be added or removed after the product was used.");
         }
+        // Customers (spec 2.5, M4).
+        if (code == "customer_search_needed") {
+            return @tr("Listing and searching customers needs the permission {}. You can still add a customer (Ctrl+N).", arg);
+        }
+        if (code == "invalid_customer_name") {
+            return @tr("Type a name (1 to 100 characters).");
+        }
+        if (code == "invalid_phone") {
+            return @tr("Not a phone number: use 8 to 15 digits, e.g. 0812-3456-789.");
+        }
+        if (code == "invalid_email") {
+            return @tr("Not an email address.");
+        }
+        if (code == "invalid_tax_id") {
+            return @tr("A tax ID (NPWP or NIK) has 15 or 16 digits.");
+        }
+        if (code == "invalid_birthday") {
+            return @tr("Not a date: type the day and the month (the year is optional).");
+        }
+        if (code == "invalid_date") {
+            return @tr("Type the date as YYYY-MM-DD, e.g. 2027-12-31.");
+        }
+        if (code == "valid_until_needs_tier") {
+            return @tr("Pick a tier first.");
+        }
+        if (code == "phone_taken") {
+            return @tr("This phone is already used by the customer {}.", arg);
+        }
+        if (code == "customer_archived") {
+            return @tr("The customer is archived. Unarchive the customer first.");
+        }
+        if (code == "customer_merged") {
+            return @tr("This customer was merged into another customer.");
+        }
+        if (code == "balance_not_zero") {
+            return @tr("Cannot erase: the balance is {}. It must be spent or paid out at the till first.", arg);
+        }
+        if (code == "customer_reference_gone") {
+            return @tr("The group or tier no longer exists. Refresh and pick again.");
+        }
+        if (code == "customer_archived_done") {
+            return @tr("The customer is archived. The till no longer finds the customer.");
+        }
+        if (code == "customer_unarchived_done") {
+            return @tr("The customer is active again.");
+        }
+        if (code == "erased_done") {
+            return @tr("The personal data is erased.");
+        }
+        if (code == "merged_done") {
+            return @tr("Merged. The customer {} was kept.", arg);
+        }
+        if (code == "merge_pick_both") {
+            return @tr("Pick the duplicate in the list and the customer to keep.");
+        }
+        if (code == "merge_same") {
+            return @tr("That is the same customer. Type the code of the customer to keep.");
+        }
+        if (code == "partner_not_found") {
+            return @tr("No active customer has this code or phone.");
+        }
+        if (code == "invalid_rank") {
+            return @tr("The rank is a whole number.");
+        }
+        if (code == "duplicate_rank") {
+            return @tr("Another tier has this rank.");
+        }
+        if (code == "invalid_amount") {
+            return @tr("Type an amount in Rupiah, 0 or more.");
+        }
+        // Pricing (spec 2.3, R4).
+        if (code == "price_read_only") {
+            return @tr("Read-only: changing prices needs the permission price.manage. Ask the owner.");
+        }
+        if (code == "default_list_fixed") {
+            return @tr("The default list cannot be archived, switched off or given a rule.");
+        }
+        if (code == "price_list_conflict") {
+            return @tr("Another active price list already applies to this target ({}). Switch it off or archive it first.", arg);
+        }
+        if (code == "price_target_gone") {
+            return @tr("The branch, group, tier or customer no longer exists. Pick again.");
+        }
+        if (code == "invalid_list_name") {
+            return @tr("Type a name (1 to 100 characters).");
+        }
+        if (code == "pick_target") {
+            return @tr("Pick what the list applies to.");
+        }
+        if (code == "invalid_rule_value") {
+            return @tr("Type a number, e.g. -5 for 5% off or -500 for Rp 500 off.");
+        }
+        if (code == "invalid_rule") {
+            return @tr("This rule is not allowed: the default list takes fixed prices only, and a discount must be less than 100%.");
+        }
+        if (code == "price_list_archived") {
+            return @tr("The price list {} is archived. It no longer applies.", arg);
+        }
+        if (code == "pick_variant") {
+            return @tr("Pick a variant.");
+        }
+        if (code == "pick_unit") {
+            return @tr("Pick a unit.");
+        }
+        if (code == "dates_reversed") {
+            return @tr("The last day is before the first day.");
+        }
+        if (code == "invalid_tiers") {
+            return @tr("A price has 1 to 10 tiers.");
+        }
+        if (code == "duplicate_min_qty") {
+            return @tr("Another tier starts at this quantity.");
+        }
+        if (code == "pick_entry_first") {
+            return @tr("Pick a price in the list first.");
+        }
+        if (code == "schedule_hint") {
+            return @tr("The new price starts on its first day; saving it ends the current price the day before.");
+        }
+        if (code == "schedule_after") {
+            return @tr("The new price must start after the current one starts.");
+        }
+        if (code == "price_overlap") {
+            return @tr("The dates overlap another price of the same variant and unit ({}). Give that one a last day first, or use “Schedule new price”.", arg);
+        }
+        if (code == "dates_overlap") {
+            return @tr("Overlaps another price.");
+        }
+        if (code == "price_reference_gone") {
+            return @tr("The variant or unit no longer exists. Reload the product.");
+        }
+        if (code == "invalid_tier_qty") {
+            return @tr("Each tier needs a quantity above zero (at most 3 decimals), used once.");
+        }
+        if (code == "invalid_tier_price") {
+            return @tr("A fixed price is 0 or more.");
+        }
+        if (code == "invalid_rate") {
+            return @tr("Type a rate between 0 and 100, e.g. 11 or 11.5.");
+        }
         if (code == "error") {
             return @tr("Something went wrong ({}).", arg);
         }
@@ -252,6 +407,62 @@ export global BoStrings {
         if (code == "top_level") {
             return @tr("(Top level)");
         }
+        if (code == "no_group") {
+            return @tr("(No group)");
+        }
+        if (code == "no_tier") {
+            return @tr("(No tier)");
+        }
+        // Customer balance entries (spec 2.5 §11).
+        if (code == "change_saved") {
+            return @tr("Change saved");
+        }
+        if (code == "payment") {
+            return @tr("Paid with the balance");
+        }
+        if (code == "change_saved_reversed") {
+            return @tr("Saved change reversed");
+        }
+        if (code == "payment_reversed") {
+            return @tr("Payment reversed");
+        }
+        if (code == "payout") {
+            return @tr("Paid out in cash");
+        }
+        if (code == "merge_out") {
+            return @tr("Moved by a merge");
+        }
+        if (code == "merge_in") {
+            return @tr("Received by a merge");
+        }
+        // Pricing (spec 2.3, R4): list kinds, row states.
+        if (code == "kind_default") {
+            return @tr("Default");
+        }
+        if (code == "kind_branch") {
+            return @tr("Branch");
+        }
+        if (code == "kind_group") {
+            return @tr("Customer group");
+        }
+        if (code == "kind_tier") {
+            return @tr("Membership tier");
+        }
+        if (code == "kind_customer") {
+            return @tr("Customer");
+        }
+        if (code == "pick_target_choice") {
+            return @tr("(Pick…)");
+        }
+        if (code == "current") {
+            return @tr("Current");
+        }
+        if (code == "scheduled") {
+            return @tr("Scheduled");
+        }
+        if (code == "ended") {
+            return @tr("Ended");
+        }
         return code;
     }
 }
@@ -267,6 +478,8 @@ export component Field inherits VerticalLayout {
     callback edited(string);
     callback accepted();
     spacing: 3px;
+    // Next to a taller neighbour (one with an error line) the field keeps its height.
+    alignment: start;
     public function focus-edit() {
         edit.focus();
     }

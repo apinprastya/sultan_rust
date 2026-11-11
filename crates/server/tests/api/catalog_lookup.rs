@@ -20,6 +20,7 @@ api_tests!(
     lookup_steps_and_errors,
     branch_blocks_drive_lookup_and_search,
     catalog_changed_reaches_connected_registers,
+    search_pages,
 );
 
 /// Device token alone, a PIN session at a register, and back office with an optional
@@ -53,6 +54,7 @@ async fn lookup_by_device_token_or_session(h: &Harness) {
             "qty_thousandths": 1000,
             "amount": null,
             "branch_id": h.jkt.id.to_string(),
+            "unit_price": null,
         })
     );
     // The query cannot move a register to another branch.
@@ -218,6 +220,40 @@ async fn lookup_steps_and_errors(h: &Harness) {
         .assert_problem(422, "invalid_field");
     let r = device("/api/v1/catalog/search?q=nosale".into()).await;
     assert_eq!(r.body["items"], json!([]), "not sellable is hidden");
+}
+
+/// Paging of the search (§6, C3b): full pages carry `next_after_variant_id`; the pages add up to
+/// the whole result.
+async fn search_pages(h: &Harness) {
+    let owner = h.owner_token().await;
+    create(h, &owner, &kaos("KAOS09", "899209")).await;
+    let device = |uri: String| async move { as_device(h, &h.jkt_device, &uri).await };
+    let all = device("/api/v1/catalog/search?q=kaos".into()).await;
+    let items = all.body["items"].as_array().unwrap().clone();
+    assert_eq!(items.len(), 4);
+    assert_eq!(all.body["next_after_variant_id"], Value::Null, "not full");
+    let r = device("/api/v1/catalog/search?q=kaos&limit=2".into()).await;
+    let cursor = r.body["next_after_variant_id"].as_str().unwrap().to_owned();
+    assert_eq!(r.body["items"][1]["variant_id"], cursor.as_str());
+    let next = device(format!(
+        "/api/v1/catalog/search?q=kaos&limit=2&after_variant_id={cursor}"
+    ))
+    .await;
+    assert_eq!(next.body["items"][0], items[2]);
+    assert_eq!(next.body["items"][1], items[3]);
+    let last = next.body["next_after_variant_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let end = device(format!(
+        "/api/v1/catalog/search?q=kaos&limit=2&after_variant_id={last}"
+    ))
+    .await;
+    assert_eq!(end.body["items"], json!([]));
+    assert_eq!(end.body["next_after_variant_id"], Value::Null);
+    device("/api/v1/catalog/search?q=kaos&after_variant_id=nope".into())
+        .await
+        .assert_problem(400, "invalid_body");
 }
 
 /// §14 item 18.

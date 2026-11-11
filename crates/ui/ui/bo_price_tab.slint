@@ -1,0 +1,448 @@
+// The product form's Prices tab (spec 2.3, phase R4): the product's entries in one price list
+// (picked at the top) and an entry editor with its quantity tiers. Rust
+// (`crates/ui/src/backoffice/pricing.rs`) decides everything; edits arrive as
+// `edit("price-entry" | "price-tier", row, 0, field, text)`, pickers as `choose(…)`, rows as
+// `pick("price-entry" | "remove-tier", row, 0)`.
+//
+// The editor's text fields are rebuilt when Rust bumps `serial` (an entry is picked, a tier is
+// added or removed, a save answered).
+
+import { ComboBox, ListView } from "std-widgets.slint";
+import { Theme } from "theme.slint";
+import { Note, Card } from "widgets.slint";
+import { BoStrings, Field, SmallButton, KeyButton, Banner, SectionTitle } from "bo_widgets.slint";
+
+export struct BoPrices {
+    new-product: bool,
+    loading: bool,
+    can-edit: bool,
+    list-index: int,
+    list-kind: string,
+    list-rule: string,
+    cursor: int,
+    has-editor: bool,
+    editor-new: bool,
+    scheduling: bool,
+    variant-index: int,
+    unit-index: int,
+    unit-name: string,
+    valid-from: string,
+    valid-to: string,
+    can-add-tier: bool,
+    notice: Note,
+    variant-error: Note,
+    unit-error: Note,
+    from-error: Note,
+    to-error: Note,
+    tiers-error: Note,
+}
+
+export struct BoPriceEntryRow {
+    variant: string,
+    unit: string,
+    valid-from: string,
+    valid-to: string,
+    tiers: string,
+    status: string,
+}
+
+export struct BoPriceTierRow {
+    min-qty: string,
+    mode: int,
+    value: string,
+    qty-error: Note,
+    value-error: Note,
+}
+
+component Head inherits Text {
+    color: Theme.muted;
+    font-size: 12px;
+    vertical-alignment: center;
+    overflow: elide;
+}
+
+// A labelled picker with its error.
+component PricePicker inherits VerticalLayout {
+    in property <string> label;
+    in property <[string]> model;
+    in property <int> index;
+    in property <bool> enabled: true;
+    in property <Note> error;
+    callback selected(int);
+    spacing: 3px;
+    alignment: start;
+    Text {
+        text: root.label;
+        color: Theme.muted;
+        font-size: 12px;
+    }
+    ComboBox {
+        model: root.model;
+        current-index: root.index;
+        enabled: root.enabled;
+        accessible-label: root.label;
+        selected(v) => {
+            root.selected(self.current-index);
+        }
+    }
+    if root.error.code != "": Text {
+        text: BoStrings.message(root.error.code, root.error.arg);
+        color: Theme.danger;
+        font-size: 12px;
+        wrap: word-wrap;
+    }
+}
+
+// The editor's fields (rebuilt on `serial`).
+component EntryFields inherits VerticalLayout {
+    in property <BoPrices> prices;
+    in property <[BoPriceTierRow]> tiers;
+    in property <[string]> variant-choices;
+    in property <[string]> unit-choices;
+    in property <string> focus-target;
+    callback edit(string, int, int, string, string);
+    callback choose(string, int, string, int);
+    callback pick(string, int, int);
+    callback action(string);
+    spacing: 12px;
+
+    HorizontalLayout {
+        spacing: 12px;
+        PricePicker {
+            horizontal-stretch: 2;
+            label: @tr("Variant");
+            model: root.variant-choices;
+            index: root.prices.variant-index;
+            enabled: root.prices.can-edit;
+            error: root.prices.variant-error;
+            selected(i) => {
+                root.choose("price-entry", 0, "variant", i);
+            }
+        }
+        PricePicker {
+            horizontal-stretch: 1;
+            label: @tr("Unit");
+            model: root.unit-choices;
+            index: root.prices.unit-index;
+            enabled: root.prices.can-edit;
+            error: root.prices.unit-error;
+            selected(i) => {
+                root.choose("price-entry", 0, "unit", i);
+            }
+        }
+        Field {
+            horizontal-stretch: 1;
+            label: @tr("First day (empty = always)");
+            placeholder: "YYYY-MM-DD";
+            text: root.prices.valid-from;
+            enabled: root.prices.can-edit;
+            error: root.prices.from-error;
+            edited(t) => {
+                root.edit("price-entry", 0, 0, "valid_from", t);
+            }
+        }
+        Field {
+            horizontal-stretch: 1;
+            label: @tr("Last day (empty = open)");
+            placeholder: "YYYY-MM-DD";
+            text: root.prices.valid-to;
+            enabled: root.prices.can-edit;
+            error: root.prices.to-error;
+            edited(t) => {
+                root.edit("price-entry", 0, 0, "valid_to", t);
+            }
+        }
+    }
+    HorizontalLayout {
+        spacing: 10px;
+        Head { width: 160px; text: @tr("From quantity ({})", root.prices.unit-name); }
+        Head { width: 150px; text: @tr("Price"); }
+        Head { horizontal-stretch: 1; text: @tr("Amount (Rp), or the rule in % or Rp"); }
+        Rectangle { width: 110px; }
+    }
+    for tier[i] in root.tiers: HorizontalLayout {
+        spacing: 10px;
+        qty := Field {
+            width: 160px;
+            placeholder: @tr("From quantity");
+            text: tier.min-qty;
+            enabled: root.prices.can-edit;
+            error: tier.qty-error;
+            edited(t) => {
+                root.edit("price-tier", i, 0, "min_qty", t);
+            }
+            accepted => {
+                root.action("price-save");
+            }
+        }
+        VerticalLayout {
+            width: 150px;
+            alignment: start;
+            ComboBox {
+                model: [@tr("Fixed price"), @tr("± %"), @tr("± Rp")];
+                current-index: tier.mode;
+                enabled: root.prices.can-edit;
+                accessible-label: @tr("Price");
+                selected(v) => {
+                    root.choose("price-tier", i, "mode", self.current-index);
+                }
+            }
+        }
+        value := Field {
+            horizontal-stretch: 1;
+            placeholder: tier.mode == 0 ? "5.000" : tier.mode == 1 ? "-5" : "-500";
+            text: tier.value;
+            enabled: root.prices.can-edit;
+            error: tier.value-error;
+            edited(t) => {
+                root.edit("price-tier", i, 0, "value", t);
+            }
+            accepted => {
+                root.action("price-save");
+            }
+        }
+        VerticalLayout {
+            width: 110px;
+            alignment: start;
+            SmallButton {
+                text: @tr("Remove tier");
+                enabled: root.prices.can-edit && root.tiers.length > 1;
+                clicked => {
+                    root.pick("remove-tier", i, 0);
+                }
+            }
+        }
+        Timer {
+            interval: 1ms;
+            triggered => {
+                self.running = false;
+                if (i == 0 && root.focus-target == "price-value-0") {
+                    value.focus-edit();
+                }
+            }
+        }
+    }
+    if root.prices.tiers-error.code != "": Text {
+        text: BoStrings.message(root.prices.tiers-error.code, root.prices.tiers-error.arg);
+        color: Theme.danger;
+        font-size: 12px;
+        wrap: word-wrap;
+    }
+}
+
+export component PricesTab inherits VerticalLayout {
+    in property <BoPrices> prices;
+    in property <[string]> list-choices;
+    in property <[BoPriceEntryRow]> entries;
+    in property <[BoPriceTierRow]> tiers;
+    in property <[string]> variant-choices;
+    in property <[string]> unit-choices;
+    in property <int> serial;
+    in property <string> focus-target;
+    callback action(string);
+    callback edit(string, int, int, string, string);
+    callback choose(string, int, string, int);
+    callback pick(string, int, int);
+    spacing: 12px;
+    alignment: start;
+
+    if root.prices.new-product: Text {
+        text: @tr("Save the product first; then its prices can be set here.");
+        color: Theme.muted;
+        wrap: word-wrap;
+    }
+    if !root.prices.new-product: HorizontalLayout {
+        spacing: 10px;
+        PricePicker {
+            width: 280px;
+            label: @tr("Price list");
+            model: root.list-choices;
+            index: root.prices.list-index;
+            selected(i) => {
+                root.choose("prices", 0, "list", i);
+            }
+        }
+        VerticalLayout {
+            alignment: end;
+            KeyButton {
+                keys: "Ctrl+L";
+                text: @tr("Next list");
+                clicked => {
+                    root.action("price-next-list");
+                }
+            }
+        }
+        VerticalLayout {
+            alignment: end;
+            horizontal-stretch: 1;
+            Text {
+                text: root.prices.list-kind == "" ? "" : root.prices.list-rule != "" ? @tr("{}; list rule {} for items without a price here.", BoStrings.label("kind_" + root.prices.list-kind), root.prices.list-rule) : BoStrings.label("kind_" + root.prices.list-kind);
+                color: Theme.muted;
+                font-size: 12px;
+                wrap: word-wrap;
+            }
+        }
+        VerticalLayout {
+            alignment: end;
+            KeyButton {
+                keys: "Ctrl+N";
+                text: @tr("New price");
+                enabled: root.prices.can-edit;
+                clicked => {
+                    root.action("price-new");
+                }
+            }
+        }
+        VerticalLayout {
+            alignment: end;
+            KeyButton {
+                keys: "Ctrl+Shift+N";
+                text: @tr("Schedule new price");
+                enabled: root.prices.can-edit && root.prices.cursor >= 0;
+                clicked => {
+                    root.action("price-schedule");
+                }
+            }
+        }
+    }
+    if !root.prices.new-product: Banner {
+        note: root.prices.notice;
+    }
+    if !root.prices.new-product: Rectangle {
+        height: 1px + 32px + max(1, root.entries.length) * 36px;
+        border-radius: 8px;
+        border-width: 1px;
+        border-color: Theme.border;
+        VerticalLayout {
+            padding: 1px;
+            HorizontalLayout {
+                height: 32px;
+                padding-left: 12px;
+                padding-right: 12px;
+                spacing: 10px;
+                Head { horizontal-stretch: 2; preferred-width: 0px; text: @tr("Variant"); }
+                Head { width: 80px; text: @tr("Unit"); }
+                Head { width: 200px; text: @tr("Valid"); }
+                Head { horizontal-stretch: 3; preferred-width: 0px; text: @tr("Quantity → price"); }
+                Head { width: 80px; text: ""; }
+            }
+            for row[i] in root.entries: Rectangle {
+                height: 36px;
+                background: i == root.prices.cursor ? Theme.accent-soft : touch.has-hover ? Theme.raised : transparent;
+                accessible-role: list-item;
+                accessible-label: row.variant + " " + row.unit + " " + row.valid-from;
+                accessible-action-default => {
+                    root.pick("price-entry", i, 0);
+                }
+                touch := TouchArea {
+                    clicked => {
+                        root.pick("price-entry", i, 0);
+                    }
+                }
+                HorizontalLayout {
+                    padding-left: 12px;
+                    padding-right: 12px;
+                    spacing: 10px;
+                    Text { horizontal-stretch: 2; preferred-width: 0px; text: row.variant; color: Theme.text; vertical-alignment: center; overflow: elide; }
+                    Text { width: 80px; text: row.unit; color: Theme.muted; vertical-alignment: center; overflow: elide; }
+                    Text {
+                        width: 200px;
+                        text: row.valid-from == "" && row.valid-to == "" ? @tr("Always") : (row.valid-from == "" ? "…" : row.valid-from) + " – " + (row.valid-to == "" ? "…" : row.valid-to);
+                        color: Theme.muted;
+                        vertical-alignment: center;
+                    }
+                    Text { horizontal-stretch: 3; preferred-width: 0px; text: row.tiers; color: Theme.text; vertical-alignment: center; overflow: elide; font-weight: 600; }
+                    Text {
+                        width: 80px;
+                        text: BoStrings.label(row.status);
+                        color: row.status == "current" ? Theme.success : row.status == "scheduled" ? Theme.accent : Theme.muted;
+                        font-size: 12px;
+                        vertical-alignment: center;
+                        horizontal-alignment: right;
+                    }
+                }
+            }
+            if root.entries.length == 0: Text {
+                height: 36px;
+                text: root.prices.loading ? @tr("Loading…") : root.prices.list-kind == "default" ? @tr("No price in the default list yet: the item has no price at the till.") : @tr("No price in this list: the item gets the price of the next list (with the list rule, if any).");
+                color: Theme.muted;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+        }
+    }
+    if !root.prices.new-product && root.prices.has-editor: Rectangle {
+        border-radius: 8px;
+        border-width: 1px;
+        border-color: Theme.border;
+        background: Theme.raised;
+        height: editor.preferred-height;
+        editor := VerticalLayout {
+            padding: 14px;
+            spacing: 12px;
+            SectionTitle {
+                text: root.prices.scheduling ? @tr("Schedule new price") : root.prices.editor-new ? @tr("New price") : @tr("Edit price");
+            }
+            for s in [root.serial]: EntryFields {
+                prices: root.prices;
+                tiers: root.tiers;
+                variant-choices: root.variant-choices;
+                unit-choices: root.unit-choices;
+                focus-target: root.focus-target;
+                edit(k, r, x, f, v) => {
+                    root.edit(k, r, x, f, v);
+                }
+                choose(k, r, f, i) => {
+                    root.choose(k, r, f, i);
+                }
+                pick(k, r, x) => {
+                    root.pick(k, r, x);
+                }
+                action(id) => {
+                    root.action(id);
+                }
+            }
+            Text {
+                text: @tr("A tier prices the whole line from its quantity on (the same variant across the cart counts). A rule is relative to the price the item would have without this list.");
+                color: Theme.muted;
+                font-size: 12px;
+                wrap: word-wrap;
+            }
+            HorizontalLayout {
+                spacing: 8px;
+                alignment: start;
+                KeyButton {
+                    keys: "Ctrl+Enter";
+                    text: @tr("Save price");
+                    primary: true;
+                    enabled: root.prices.can-edit;
+                    clicked => {
+                        root.action("price-save");
+                    }
+                }
+                KeyButton {
+                    keys: "Ctrl+T";
+                    text: @tr("Add tier");
+                    enabled: root.prices.can-edit && root.prices.can-add-tier;
+                    clicked => {
+                        root.action("price-add-tier");
+                    }
+                }
+                if !root.prices.editor-new: KeyButton {
+                    keys: "Ctrl+Shift+D";
+                    text: @tr("Delete price");
+                    enabled: root.prices.can-edit;
+                    clicked => {
+                        root.action("price-delete");
+                    }
+                }
+                SmallButton {
+                    text: @tr("Cancel");
+                    clicked => {
+                        root.action("price-cancel");
+                    }
+                }
+            }
+        }
+    }
+}

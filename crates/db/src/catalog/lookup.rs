@@ -417,7 +417,7 @@ pub struct SearchHit {
 /// contains `q` (folded with `core::search_key`), prefix matches first, then by search key.
 /// Archived products and variants, products blocked at `branch` and products that are not
 /// sellable are hidden. At most [`MAX_SEARCH_LIMIT`] hits (`0` = the maximum); an empty query
-/// finds nothing.
+/// finds nothing. The first page of [`search_page`].
 ///
 /// # Errors
 /// The database error.
@@ -427,40 +427,92 @@ pub async fn search<'c>(
     branch: BranchId,
     limit: u32,
 ) -> Result<Vec<SearchHit>> {
+    search_page(conn, q, branch, limit, None).await
+}
+
+/// One page of [`search`]: the hits after the variant `after` in the search order (prefix
+/// match, search key, product ID, variant position). The order is a keyset, so a page boundary
+/// does not move when products before it change. A variant `after` that no longer exists ends
+/// the search (an empty page).
+///
+/// # Errors
+/// The database error.
+pub async fn search_page<'c>(
+    conn: impl Into<Conn<'c>>,
+    q: &str,
+    branch: BranchId,
+    limit: u32,
+    after: Option<VariantId>,
+) -> Result<Vec<SearchHit>> {
     let mut conn = conn.into();
     let key = search_key(q);
     if key.is_empty() {
         return Ok(Vec::new());
     }
     let escaped = escape_like(&key);
-    let hits = sql::fetch_all(
-        conn.reborrow(),
+    let rank = "CASE WHEN p.search_key LIKE ? ESCAPE '!' THEN 0 ELSE 1 END";
+    let mut values = args![format!("%{escaped}%"), branch];
+    let mut keyset = String::new();
+    if let Some(after) = after {
+        let cursor = sql::fetch_optional(
+            conn.reborrow(),
+            "SELECT p.search_key, p.id, v.position FROM variant v \
+             JOIN product p ON p.id = v.product_id WHERE v.id = ?",
+            args![after],
+            |row| {
+                Ok((
+                    row.text("search_key")?,
+                    sql::id::<ProductId>(row, "id")?,
+                    row.i64("position")?,
+                ))
+            },
+        )
+        .await?;
+        let Some((after_key, product, position)) = cursor else {
+            return Ok(Vec::new());
+        };
+        let after_rank = i64::from(!after_key.starts_with(&key));
+        keyset = format!(
+            " AND ({rank} > ? OR ({rank} = ? AND (p.search_key > ? OR (p.search_key = ? \
+             AND (p.id > ? OR (p.id = ? AND v.position > ?))))))"
+        );
+        let prefix = format!("{escaped}%");
+        values.extend(args![
+            prefix.clone(),
+            after_rank,
+            prefix,
+            after_rank,
+            after_key.clone(),
+            after_key,
+            product,
+            product,
+            position,
+        ]);
+    }
+    values.extend(args![
+        format!("{escaped}%"),
+        i64::from(clamp_limit(limit, MAX_SEARCH_LIMIT)),
+    ]);
+    let sql = format!(
         "SELECT p.id, p.name, p.type, p.open_price, p.requires_note, p.default_sale_unit_id, \
          v.id AS variant_id, v.sku FROM product p JOIN variant v ON v.product_id = p.id \
          WHERE p.search_key LIKE ? ESCAPE '!' AND p.archived_at IS NULL AND v.archived = 0 \
          AND p.sellable = 1 AND NOT EXISTS (SELECT 1 FROM product_branch_block b \
-         WHERE b.product_id = p.id AND b.branch_id = ?) \
-         ORDER BY CASE WHEN p.search_key LIKE ? ESCAPE '!' THEN 0 ELSE 1 END, p.search_key, \
-         p.id, v.position LIMIT ?",
-        args![
-            format!("%{escaped}%"),
-            branch,
-            format!("{escaped}%"),
-            i64::from(clamp_limit(limit, MAX_SEARCH_LIMIT)),
-        ],
-        |row| {
-            Ok(SearchHit {
-                product: sql::id(row, "id")?,
-                variant: sql::id(row, "variant_id")?,
-                unit: sql::id(row, "default_sale_unit_id")?,
-                name: row.text("name")?,
-                sku: row.text("sku")?,
-                product_type: parse_product_type(&row.text("type")?)?,
-                open_price: row.bool("open_price")?,
-                requires_note: row.bool("requires_note")?,
-            })
-        },
-    )
+         WHERE b.product_id = p.id AND b.branch_id = ?){keyset} \
+         ORDER BY {rank}, p.search_key, p.id, v.position LIMIT ?"
+    );
+    let hits = sql::fetch_all(conn.reborrow(), &sql, values, |row| {
+        Ok(SearchHit {
+            product: sql::id(row, "id")?,
+            variant: sql::id(row, "variant_id")?,
+            unit: sql::id(row, "default_sale_unit_id")?,
+            name: row.text("name")?,
+            sku: row.text("sku")?,
+            product_type: parse_product_type(&row.text("type")?)?,
+            open_price: row.bool("open_price")?,
+            requires_note: row.bool("requires_note")?,
+        })
+    })
     .await?;
     let variants: Vec<VariantId> = hits.iter().map(|h| h.variant).collect();
     let names = value_names(conn, &variants).await?;

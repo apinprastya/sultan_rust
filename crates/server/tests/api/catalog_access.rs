@@ -10,7 +10,7 @@ use crate::catalog_fixtures::{as_device, create, simple};
 use crate::common::{ANI_PIN, Harness, api_tests, new_id};
 
 api_tests!(
-    every_write_needs_hq_and_catalog_manage_everywhere,
+    every_write_needs_hq_and_catalog_manage,
     archive_hides_and_archived_reads_need_view_archived,
 );
 
@@ -58,6 +58,13 @@ fn writes(product: &str) -> Vec<(Method, String, Option<Value>)> {
             format!("/api/v1/products/{product}/image"),
             None,
         ),
+        (Method::DELETE, format!("/api/v1/products/{product}"), None),
+        (
+            Method::DELETE,
+            format!("/api/v1/categories/{}", new_id()),
+            None,
+        ),
+        (Method::DELETE, format!("/api/v1/brands/{}", new_id()), None),
         (
             Method::PUT,
             "/api/v1/settings/catalog".to_owned(),
@@ -80,13 +87,18 @@ fn writes(product: &str) -> Vec<(Method, String, Option<Value>)> {
 }
 
 /// §14 item 17: a branch node refuses every catalog write (`read_only_replica`); a user without
-/// `catalog.manage` for **all** branches gets `permission_denied`, even a Manager (who holds it
-/// at JKT01 only). A Manager assigned for all branches may write.
-async fn every_write_needs_hq_and_catalog_manage_everywhere(h: &Harness) {
+/// `catalog.manage` gets `permission_denied`. Since C3b (§11, decided 2026-11-11) any role
+/// assignment counts: the Manager or Stock clerk at JKT01 may write, like one for all branches.
+async fn every_write_needs_hq_and_catalog_manage(h: &Harness) {
     let owner = h.owner_token().await;
     let product = simple("BASE1", "BASE1");
     create(h, &owner, &product).await;
-    let budi = h.manager_token().await;
+    // A Cashier with a password (back office), assigned at JKT01: no `catalog.manage`.
+    h.add_user("kasir", seed::CASHIER_ROLE, BranchScope::Branch(h.jkt.id))
+        .await;
+    let kasir = h
+        .password_token("kasir", crate::common::BUDI_PASSWORD)
+        .await;
     let ani = h.pin_token(&h.jkt_device, &h.ani, ANI_PIN).await;
     let branch_node = || router(h.state(NodeRole::Branch));
     let before = h.outbox_count().await;
@@ -101,7 +113,7 @@ async fn every_write_needs_hq_and_catalog_manage_everywhere(h: &Harness) {
         )
         .await;
         r.assert_problem(403, "read_only_replica");
-        let r = h.call(&budi, method.clone(), &uri, body.clone()).await;
+        let r = h.call(&kasir, method.clone(), &uri, body.clone()).await;
         r.assert_problem(403, "permission_denied");
         assert_eq!(r.body["permission"], "catalog.manage", "{method} {uri}");
         let r = h
@@ -131,15 +143,22 @@ async fn every_write_needs_hq_and_catalog_manage_everywhere(h: &Harness) {
         "no refused write left a trace"
     );
 
-    // A Manager for all branches holds `catalog.manage` everywhere.
+    // A Manager for all branches, Budi (Manager at JKT01) and a Stock clerk at BDG01 may write.
     h.add_user("mgr-all", seed::MANAGER_ROLE, BranchScope::All)
         .await;
-    let all = h
-        .password_token("mgr-all", crate::common::BUDI_PASSWORD)
-        .await;
-    let doc = simple("MGR1", "MGR1");
-    let r = crate::catalog_fixtures::put_product(h, &all, &doc.id, &doc.body).await;
-    assert_eq!(r.status.as_u16(), 201, "{}", r.body);
+    h.add_user(
+        "gudang",
+        seed::STOCK_CLERK_ROLE,
+        BranchScope::Branch(h.bdg.id),
+    )
+    .await;
+    let mut doc = simple("MGR1", "MGR1");
+    for (i, user) in ["mgr-all", "budi", "gudang"].into_iter().enumerate() {
+        let token = h.password_token(user, crate::common::BUDI_PASSWORD).await;
+        doc = simple(&format!("MGR{i}"), &format!("MGR{i}"));
+        let r = crate::catalog_fixtures::put_product(h, &token, &doc.id, &doc.body).await;
+        assert_eq!(r.status.as_u16(), 201, "{user}: {}", r.body);
+    }
     // Reads need no permission: the Cashier reads the product it may not write.
     let r = h
         .at_register(
@@ -154,7 +173,7 @@ async fn every_write_needs_hq_and_catalog_manage_everywhere(h: &Harness) {
 }
 
 /// §14 items 19 + 20: archive → lookup `archived`, search hides it, the list shows it only with
-/// `archived=true`; archived reads need `catalog.view_archived` for all branches.
+/// `archived=true`; archived reads need `catalog.view_archived` (any role assignment).
 async fn archive_hides_and_archived_reads_need_view_archived(h: &Harness) {
     let owner = h.owner_token().await;
     let doc = simple("ARSIP", "ARSIP-1");
@@ -185,18 +204,34 @@ async fn archive_hides_and_archived_reads_need_view_archived(h: &Harness) {
     assert_eq!(archived.body["items"][0]["id"], doc.id);
     assert!(archived.body["items"][0]["archived_at"].is_i64());
 
-    // `catalog.view_archived`: the Owner has it everywhere; Budi only at JKT01; a device never.
+    // `catalog.view_archived`: the Owner has it everywhere, Budi at JKT01 (enough since C3b);
+    // the Stock clerk has `catalog.manage` but not this; a device never.
     let budi = h.manager_token().await;
     let uri = format!("/api/v1/products/{}", doc.id);
-    assert_eq!(
-        h.call(&owner, Method::GET, &uri, None).await.status,
-        StatusCode::OK
-    );
+    for token in [&owner, &budi] {
+        assert_eq!(
+            h.call(token, Method::GET, &uri, None).await.status,
+            StatusCode::OK
+        );
+    }
+    let r = h
+        .call(&budi, Method::GET, "/api/v1/products?archived=true", None)
+        .await;
+    assert_eq!(r.body["items"][0]["id"], doc.id);
+    h.add_user(
+        "gudang",
+        seed::STOCK_CLERK_ROLE,
+        BranchScope::Branch(h.jkt.id),
+    )
+    .await;
+    let clerk = h
+        .password_token("gudang", crate::common::BUDI_PASSWORD)
+        .await;
     for r in [
         as_device(h, &h.jkt_device, &uri).await,
         as_device(h, &h.jkt_device, "/api/v1/products?archived=true").await,
-        h.call(&budi, Method::GET, &uri, None).await,
-        h.call(&budi, Method::GET, "/api/v1/products?archived=true", None)
+        h.call(&clerk, Method::GET, &uri, None).await,
+        h.call(&clerk, Method::GET, "/api/v1/products?archived=true", None)
             .await,
     ] {
         r.assert_problem(403, "permission_denied");

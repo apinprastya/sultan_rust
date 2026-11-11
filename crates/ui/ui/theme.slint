@@ -113,6 +113,59 @@ export global Strings {
         if (code == "scale_value_zero") {
             return @tr("The scale label {} shows 0. Weigh the item again.", arg);
         }
+        // Prices (spec 2.3, phase R5).
+        if (code == "no_price") {
+            return @tr("No price is set for this item.");
+        }
+        if (code == "price_reference") {
+            return @tr("This customer or item cannot be priced any more. Detach the customer and find them again.");
+        }
+        // Customers (spec 2.5, phase M5).
+        if (code == "customer_attached") {
+            return @tr("Customer attached: {}", arg);
+        }
+        if (code == "customer_detached") {
+            return @tr("Customer detached.");
+        }
+        if (code == "customer_not_found") {
+            return @tr("No customer has the phone or member code {}.", arg);
+        }
+        if (code == "invalid_phone") {
+            return @tr("That is not a valid phone number.");
+        }
+        if (code == "invalid_code") {
+            return @tr("{} is not a valid member code.", arg);
+        }
+        if (code == "phone_taken") {
+            return @tr("This phone already belongs to customer {}. F8 shows that customer.", arg);
+        }
+        if (code == "insufficient_balance") {
+            return @tr("The balance is only {}.", arg);
+        }
+        if (code == "invalid_name") {
+            return @tr("The name is too long or not valid.");
+        }
+        if (code == "invalid_customer_field") {
+            return @tr("A field is not valid ({}).", arg);
+        }
+        if (code == "type_phone_or_code") {
+            return @tr("Type a phone number or a member code first.");
+        }
+        if (code == "type_name") {
+            return @tr("Type part of a name first.");
+        }
+        if (code == "no_customer_named") {
+            return @tr("No customer is named “{}”.", arg);
+        }
+        if (code == "name_required") {
+            return @tr("The name is required.");
+        }
+        if (code == "signed_up") {
+            return @tr("Signed up. Member code {}. Enter attaches the customer.", arg);
+        }
+        if (code == "paid_out") {
+            return @tr("Paid out {} in cash.", arg);
+        }
         return @tr("Something went wrong ({}).", arg);
     }
 
@@ -169,6 +222,52 @@ export global Strings {
         if (code == "start") {
             return @tr("Start screen");
         }
+        // Customers (spec 2.5, phase M5).
+        if (code == "customer") {
+            return @tr("Customer");
+        }
+        if (code == "detach_customer") {
+            return @tr("Detach customer");
+        }
+        if (code == "find") {
+            return @tr("Find");
+        }
+        if (code == "open_customer") {
+            return @tr("Open");
+        }
+        if (code == "by_name") {
+            return @tr("Search by name");
+        }
+        if (code == "by_phone_or_code") {
+            return @tr("Phone or code");
+        }
+        if (code == "new_customer") {
+            return @tr("New customer");
+        }
+        if (code == "close") {
+            return @tr("Close");
+        }
+        if (code == "attach") {
+            return @tr("Attach");
+        }
+        if (code == "pay_out") {
+            return @tr("Pay out");
+        }
+        if (code == "confirm_payout") {
+            return @tr("Yes, pay out");
+        }
+        if (code == "edit_amount") {
+            return @tr("Change amount");
+        }
+        if (code == "sign_up") {
+            return @tr("Sign up");
+        }
+        if (code == "next_field") {
+            return @tr("Next field");
+        }
+        if (code == "show_that_customer") {
+            return @tr("Show that customer");
+        }
         return code;
     }
 
@@ -210,6 +309,27 @@ export global Strings {
             return "PLU";
         }
         return code;
+    }
+
+    // Where a customer price comes from (a price list's kind, spec 2.3 §2); `name` is the
+    // customer's tier or group.
+    public pure function price-source(kind: string, name: string) -> string {
+        if (kind == "customer") {
+            return @tr("Contract price for this customer");
+        }
+        if (kind == "tier") {
+            return name != "" ? @tr("{} member price", name) : @tr("Member tier price");
+        }
+        if (kind == "group") {
+            return name != "" ? @tr("{} group price", name) : @tr("Customer group price");
+        }
+        if (kind == "branch") {
+            return @tr("This branch’s price");
+        }
+        if (kind == "default") {
+            return @tr("Default store price");
+        }
+        return kind;
     }
 
     // Product types (spec 2.2 §5).

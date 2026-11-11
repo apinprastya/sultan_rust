@@ -9,16 +9,22 @@
 //!   see (`403 branch_not_assigned` otherwise); without it no assortment applies (blocked
 //!   products are found / listed). Lookup errors: `404 not_found`, `422 archived` /
 //!   `not_sold_here` / `not_sellable` / `scale_value_zero` (with `errors`). Search hides archived,
-//!   unsellable and blocked products; it returns up to `limit` hits (1–50, default 20) and has no
-//!   cursor (decided in C3: the register shows the first page only).
+//!   unsellable and blocked products; it returns up to `limit` hits (1–50, default 20) per page.
+//!   Paging (C3b, spec 2.2 §6) is a keyset cursor like the other lists' `before_id`: a full page
+//!   answers `next_after_variant_id` (the last hit's variant), passed back as `after_variant_id`
+//!   for the next page; `null` when the page was not full. A cursor naming a variant that no
+//!   longer exists gives an empty last page.
+//!   A lookup also answers `unit_price`, the store chain's price of one unit (spec 2.3 §10; see
+//!   [`super::pricing_quote::lookup_price`]).
 //! - `GET /tax-classes`: session or device.
 //! - `GET /settings/catalog`: any session. `PUT /settings/catalog`: `catalog.manage`.
 //! - `POST /catalog/generate/product-code` and `/barcode` → `200 {"value"}`: `catalog.manage`;
 //!   they reserve the value (the counter moves past it) and accept `Idempotency-Key`.
 //!
 //! **Catalog writes** (every route of the catalog): HQ only (`403 read_only_replica`) and
-//! `catalog.manage` held through a role assigned for **all branches** (decided in C3: the
-//! catalog is company-wide, so a grant at one branch is not enough; `403 permission_denied`).
+//! `catalog.manage` held through **any** role assignment, for all branches or for one (spec 2.2
+//! §11, decided 2026-11-11; `403 permission_denied` otherwise). The same goes for
+//! `catalog.view_archived`.
 //! The repository writes the change, its audit row and its outbox row in one transaction; a
 //! transaction that loses a race is run again with a short backoff ([`retrying`], at most
 //! [`crate::retry::ATTEMPTS`] times; `409 conflict` when every attempt lost). Every write that
@@ -81,18 +87,19 @@ fn gave_up(error: CatalogDbError) -> ApiError {
     }
 }
 
-/// `403 permission_denied` unless the caller holds `catalog.manage` for all branches.
+/// `403 permission_denied` unless the caller holds `catalog.manage` through any role assignment
+/// (spec 2.2 §11).
 ///
 /// # Errors
 /// See above, or the database error.
 pub async fn require_manage(state: &AppState, session: &UserSession) -> Result<(), ApiError> {
     Caller::load(&state.db, session)
         .await?
-        .require_everywhere(Permission::CatalogManage)
+        .require_anywhere(Permission::CatalogManage)
 }
 
-/// Whether the reader may see archived catalog entries: `catalog.view_archived` for all branches
-/// (a device token alone never may).
+/// Whether the reader may see archived catalog entries: `catalog.view_archived` through any role
+/// assignment (a device token alone never may).
 ///
 /// # Errors
 /// The database error.
@@ -100,7 +107,7 @@ pub async fn may_view_archived(state: &AppState, reader: &CatalogReader) -> Resu
     match reader.user() {
         Some(user) => Ok(Caller::load(&state.db, user)
             .await?
-            .holds_everywhere(Permission::CatalogViewArchived)),
+            .holds_anywhere(Permission::CatalogViewArchived)),
         None => Ok(false),
     }
 }
@@ -252,13 +259,18 @@ pub struct LookupDto {
     /// The code that matched, as stored: the barcode (its UPC-A ↔ EAN-13 form for
     /// `normalized_barcode`), the scale code, the upper-cased SKU or the PLU as typed.
     pub matched_code: String,
-    /// Quantity in thousandths (`1000` = 1, `1250` = 1.250 kg); `null` for a price-embedded
-    /// scale code (it follows from the unit price, spec 2.3).
+    /// Quantity in thousandths (`1000` = 1, `1250` = 1.250 kg). A price-embedded scale code's
+    /// quantity is its amount ÷ `unit_price`, rounded to 3 dp (spec 2.3 §5); `null` when there is
+    /// no (positive) store price.
     pub qty_thousandths: Option<i64>,
     /// Line amount of a price-embedded scale code, in minor units (Rupiah).
     pub amount: Option<i64>,
     /// The branch whose assortment was applied; `null` = none (back office without `branch_id`).
     pub branch_id: Option<String>,
+    /// The unit price of one unit (this `unit_id`) from the store chain, branch → default list,
+    /// without a customer (spec 2.3 §10), in minor units; `null` when no list prices it. The
+    /// branch is the assortment's, else the session's.
+    pub unit_price: Option<i64>,
 }
 
 const fn source_str(source: MatchSource) -> &'static str {
@@ -290,6 +302,7 @@ fn lookup_dto(item: &LookupItem, branch: Option<BranchId>) -> LookupDto {
         qty_thousandths: item.qty.map(sultan_core::catalog::Qty::thousandths),
         amount: item.amount.map(sultan_core::money::Money::minor),
         branch_id: branch.map(|b| b.to_string()),
+        unit_price: None,
     }
 }
 
@@ -351,7 +364,21 @@ pub async fn lookup(
         return Err(ApiError::catalog_rules(&[CatalogError::NotFound]));
     }
     let item = catalog::lookup(&state.db, code, blocks_at(branch)).await?;
-    Ok(Json(lookup_dto(&item, branch)))
+    let mut dto = lookup_dto(&item, branch);
+    let label_amount = item.amount.filter(|_| item.qty.is_none());
+    let price = super::pricing_quote::lookup_price(
+        &state,
+        branch.or_else(|| super::pricing_quote::reader_branch(&reader)),
+        item.product,
+        (item.variant, item.unit),
+        label_amount,
+    )
+    .await?;
+    dto.unit_price = price.unit_price.map(sultan_core::money::Money::minor);
+    if let Some(qty) = price.label_qty {
+        dto.qty_thousandths = Some(qty.thousandths());
+    }
+    Ok(Json(dto))
 }
 
 /// Query of `GET /catalog/search`.
@@ -364,6 +391,8 @@ pub struct SearchQuery {
     pub limit: Option<u32>,
     /// Back office only: apply this branch's assortment (see `GET /catalog/lookup`).
     pub branch_id: Option<String>,
+    /// Page cursor: the `next_after_variant_id` of the previous page.
+    pub after_variant_id: Option<String>,
 }
 
 /// One search hit: a sellable variant.
@@ -395,6 +424,8 @@ pub struct SearchResult {
     pub items: Vec<SearchHitDto>,
     /// The branch whose assortment was applied; `null` = none.
     pub branch_id: Option<String>,
+    /// Pass as `after_variant_id` for the next page; `null` when this page was not full.
+    pub next_after_variant_id: Option<String>,
 }
 
 fn hit_dto(hit: SearchHit) -> SearchHitDto {
@@ -410,10 +441,11 @@ fn hit_dto(hit: SearchHit) -> SearchHitDto {
     }
 }
 
-/// `GET /api/v1/catalog/search?q=`: name search for the register and back office.
+/// `GET /api/v1/catalog/search?q=`: name search for the register and back office, one page.
 ///
 /// # Errors
-/// `401`, `403 branch_not_assigned`, `422 invalid_field` (`limit`).
+/// `401`, `400 invalid_body` (bad `after_variant_id` or `branch_id`), `403 branch_not_assigned`,
+/// `422 invalid_field` (`limit`).
 #[utoipa::path(get, path = "/api/v1/catalog/search", tag = "catalog",
     security(("register_token" = []), ("bearer" = []), ("bearer" = [], "register_token" = [])),
     params(SearchQuery),
@@ -431,11 +463,15 @@ pub async fn search(
             format!("`limit` must be 1 to {}", catalog::MAX_SEARCH_LIMIT),
         ));
     }
+    let after = parse_opt_id(query.after_variant_id.as_deref(), "after_variant_id")?;
     let branch = assortment_branch(&state, &reader, query.branch_id.as_deref()).await?;
-    let hits = catalog::search(&state.db, &query.q, blocks_at(branch), limit).await?;
+    let hits = catalog::search_page(&state.db, &query.q, blocks_at(branch), limit, after).await?;
+    let full = hits.len() == limit as usize;
+    let next_after_variant_id = hits.last().filter(|_| full).map(|h| h.variant.to_string());
     Ok(Json(SearchResult {
         items: hits.into_iter().map(hit_dto).collect(),
         branch_id: branch.map(|b| b.to_string()),
+        next_after_variant_id,
     }))
 }
 

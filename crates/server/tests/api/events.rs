@@ -18,6 +18,7 @@ api_tests!(
     session_revoked_after_logout_from_another_session,
     branch_scoped_events,
     user_changed_and_deactivation,
+    device_token_alone_gets_company_wide_events_only,
 );
 
 type Ws = WebSocketStream<MaybeTlsStream<TcpStream>>;
@@ -287,4 +288,78 @@ async fn user_changed_and_deactivation(h: &Harness) {
         json!({}),
     ));
     assert_eq!(next(&mut cici_ws).await, None);
+}
+
+/// Spec 2.1 §8 `/events` row, spec 2.2 §17 item 3 (C3b): a register with only its device token
+/// may open the socket and receives `Audience::Everyone` events (`catalog.changed`) only.
+async fn device_token_alone_gets_company_wide_events_only(h: &Harness) {
+    let addr = serve(h).await;
+    let owner = h.owner_token().await;
+    assert_eq!(
+        status_of(
+            connect(addr, &[("x-register-token", "nope")])
+                .await
+                .unwrap_err()
+        ),
+        401
+    );
+    let mut device = connect(addr, &[("x-register-token", &h.jkt_device)])
+        .await
+        .unwrap();
+    // Browsers: the device token as a subprotocol.
+    let protocols = format!("sultan.events.v1, register.{}", h.bdg_device);
+    let mut request = format!("ws://{addr}/api/v1/events")
+        .into_client_request()
+        .unwrap();
+    request
+        .headers_mut()
+        .insert("sec-websocket-protocol", protocols.parse().unwrap());
+    let (mut bdg, _) = connect_async(request).await.unwrap();
+
+    // A branch event (a cashier session at its own branch) and a logout are not for a device
+    // socket.
+    let ani = h.pin_token(&h.jkt_device, &h.ani, ANI_PIN).await;
+    let opened = h
+        .at_register(
+            (&ani, &h.jkt_device),
+            Method::POST,
+            "/api/v1/cashier-sessions",
+            &[],
+            Some(json!({ "opening_cash": 0 })),
+        )
+        .await;
+    assert_eq!(opened.status, StatusCode::CREATED, "{}", opened.body);
+    h.logout(&ani, Some(&h.jkt_device)).await;
+    // So the first event either socket gets is the catalog's.
+    let category = crate::common::new_id();
+    let r = h
+        .call(
+            &owner,
+            Method::PUT,
+            &format!("/api/v1/categories/{category}"),
+            Some(json!({ "name": "Minuman" })),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.body);
+    let changed = json!({
+        "type": "catalog.changed",
+        "data": { "scope": "category", "category_id": category },
+    });
+    assert_eq!(next(&mut device).await.unwrap(), changed);
+    assert_eq!(next(&mut bdg).await.unwrap(), changed);
+
+    // Unpairing the register closes its socket at the next event.
+    let r = h
+        .call(
+            &owner,
+            Method::POST,
+            &format!("/api/v1/registers/{}/unpair", h.jkt_register.id),
+            None,
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    h.events
+        .publish(sultan_server::events::Event::catalog_changed(json!({})));
+    assert_eq!(next(&mut device).await, None);
+    assert_eq!(next(&mut bdg).await.unwrap()["type"], "catalog.changed");
 }

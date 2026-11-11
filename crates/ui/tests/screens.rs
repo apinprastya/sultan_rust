@@ -587,6 +587,7 @@ fn override_dialog_approves_and_retries_with_the_token() {
         t.chips(),
         [
             ("F2".into(), "test_override".into()),
+            ("F3".into(), "customer".into()),
             ("F10".into(), "close_session".into()),
             ("F12".into(), "lock".into()),
             ("Enter".into(), "look_up".into()),

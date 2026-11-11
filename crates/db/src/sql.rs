@@ -10,6 +10,7 @@ use sultan_core::ids::{
     OptionValueId, ProductId, RegisterId, RoleId, TaxClassId, UnitId, UserId, VariantId,
 };
 use sultan_core::money::Money;
+use sultan_core::pricing::{PriceEntryId, PriceListId};
 use sultan_core::time::Timestamp;
 use uuid::Uuid;
 
@@ -61,6 +62,8 @@ arg_from_id!(
     LocationId,
     OptionId,
     OptionValueId,
+    PriceEntryId,
+    PriceListId,
     ProductId,
     RegisterId,
     RoleId,
@@ -73,6 +76,16 @@ arg_from_id!(
 impl From<Uuid> for Arg {
     fn from(id: Uuid) -> Self {
         Self::Bytes(id.as_bytes().to_vec())
+    }
+}
+impl From<Option<Uuid>> for Arg {
+    fn from(id: Option<Uuid>) -> Self {
+        Self::OptBytes(id.map(|id| id.as_bytes().to_vec()))
+    }
+}
+impl From<Option<String>> for Arg {
+    fn from(s: Option<String>) -> Self {
+        Self::OptText(s)
     }
 }
 impl From<Vec<u8>> for Arg {

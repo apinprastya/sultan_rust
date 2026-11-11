@@ -16,7 +16,7 @@ use sultan_core::access::{
     Assignment, BranchScope, Grant, Permission, PermissionSet, effective_permissions,
     ensure_active_owner_remains, ensure_can_grant, scope_permissions,
 };
-use sultan_core::ids::BranchId;
+use sultan_core::ids::{BranchId, RoleId};
 use sultan_db::roles::UserAccess;
 use sultan_db::{Db, Tx, roles, seed, users};
 
@@ -119,14 +119,22 @@ impl Caller {
         self.at_scope(BranchScope::All).contains(permission)
     }
 
-    /// `403 permission_denied` unless the caller holds `permission` through a role assigned for
-    /// **all** branches ([`Caller::holds_everywhere`]). Used for company-wide data such as the
-    /// catalog (spec 2.2 §11: products are global), where a grant at one branch is not enough.
+    /// Whether `permission` comes from **any** of the caller's role assignments, for all
+    /// branches or for one (spec 2.2 §11, decided 2026-11-11: `catalog.manage` and
+    /// `catalog.view_archived` count from any assignment, since catalog writes are HQ-only
+    /// anyway).
+    #[must_use]
+    pub fn holds_anywhere(&self, permission: Permission) -> bool {
+        self.live_assignments()
+            .any(|a| self.at_scope(a.scope).contains(permission))
+    }
+
+    /// `403 permission_denied` unless [`Caller::holds_anywhere`].
     ///
     /// # Errors
     /// See above.
-    pub fn require_everywhere(&self, permission: Permission) -> Result<(), ApiError> {
-        if self.holds_everywhere(permission) {
+    pub fn require_anywhere(&self, permission: Permission) -> Result<(), ApiError> {
+        if self.holds_anywhere(permission) {
             Ok(())
         } else {
             Err(sultan_core::access::AccessError::PermissionDenied { permission }.into())
@@ -151,6 +159,15 @@ impl Caller {
             .filter(|b| self.at_scope(BranchScope::Branch(*b)).contains(permission))
             .collect();
         Some(branches.into_iter().collect())
+    }
+
+    /// Whether the caller holds the (non-archived) role `role` through an assignment that covers
+    /// `branch`. Used where the spec names a role rather than a permission, e.g. "Owner only" for
+    /// writing off a negative customer balance (spec 2.5 §11).
+    #[must_use]
+    pub fn has_role_at(&self, role: RoleId, branch: BranchId) -> bool {
+        self.live_assignments()
+            .any(|a| a.role == role && a.scope.applies_to(branch))
     }
 
     /// The caller's permissions everywhere in `scope` (`core::access::scope_permissions`).

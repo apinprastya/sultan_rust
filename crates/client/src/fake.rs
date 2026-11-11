@@ -14,11 +14,18 @@
 //! [`Service::lookup`] resolves codes against the same in-memory catalog as the back office
 //! (seed it with [`FakeService::seed_product`]), at the fake register's branch [`BRANCH_ID`].
 //!
+//! Customers (spec 2.5, phase M3) live in `customers`: a seeded customer book (two customers, a
+//! group, Silver and Gold tiers; see [`SEED_BUDI`] and friends) behind the till's and the back
+//! office's customer methods. A balance payout lowers the expected cash of the caller's session.
+//! [`Service::quote`] prices carts with the fake's price lists (phase R3, `backoffice::pricing`),
+//! and lookups answer the store price; [`FakeService::seed_pricing_demo`] seeds priced products.
+//!
 //! The fake also implements [`crate::BackOffice`] with an in-memory catalog ([`backoffice`]):
 //! password users `owner` / `owner-pass-1` (all permissions) and `budi` / `budi-pass-1`
 //! (read-only in the catalog), the core catalog rules and the server's error shapes.
 
 mod backoffice;
+mod customers;
 
 use std::collections::HashMap;
 use std::sync::{Mutex, MutexGuard, PoisonError};
@@ -33,6 +40,8 @@ use crate::{
 };
 
 pub use backoffice::{BackOfficeUser, EXEMPT_TAX_CLASS, OTHER_BRANCH_ID, STANDARD_TAX_CLASS};
+pub use backoffice::{PriceCustomer, PricingDemo};
+pub use customers::{ERASED_NAME, SEED_BUDI, SEED_GOLD, SEED_GROUP, SEED_SILVER, SEED_SITI};
 
 /// Failures before a lockout (spec 2.1 §4).
 pub const MAX_FAILURES: u32 = 5;
@@ -106,6 +115,7 @@ struct State {
     fail_on: Option<(&'static str, ClientError)>,
     sink: Option<EventSink>,
     catalog: backoffice::Catalog,
+    customers: customers::Customers,
 }
 
 /// The fake service; see the module docs.
@@ -451,7 +461,9 @@ impl Service for FakeService {
         if session.user_id != user.id {
             return ready(Err(api(403, "not_session_owner")));
         }
-        let expected = session.opening_cash + s.cash_sales;
+        // Balance payouts (spec 2.5 §11) are cash out of the drawer.
+        let cash_out = s.customers.paid_out(&session.id);
+        let expected = session.opening_cash + s.cash_sales - cash_out;
         "closed".clone_into(&mut session.status);
         session.closed_at = Some(s.now);
         session.expected_cash = Some(expected);
@@ -480,7 +492,7 @@ impl Service for FakeService {
             cash_sales: s.cash_sales,
             cash_refunds: 0,
             cash_in: 0,
-            cash_out: 0,
+            cash_out,
             expected_cash: expected,
             counted_cash: body.counted_cash,
             over_short: body.counted_cash - expected,
@@ -675,6 +687,63 @@ impl Service for FakeService {
             return ready(Err(e));
         }
         ready(s.lookup(token, code))
+    }
+
+    fn permissions(&self, token: &str) -> crate::BoxFuture<Vec<String>> {
+        self.permissions_call(token)
+    }
+
+    fn customer_by_phone(&self, token: &str, phone: &str) -> crate::BoxFuture<crate::Customer> {
+        self.customer_by_phone_call(token, phone)
+    }
+
+    fn customer_by_code(&self, token: &str, code: &str) -> crate::BoxFuture<crate::Customer> {
+        self.customer_by_code_call(token, code)
+    }
+
+    fn search_customers(
+        &self,
+        token: &str,
+        query: &crate::CustomerQuery,
+    ) -> crate::BoxFuture<crate::CustomerPage> {
+        self.search_customers_call(token, query)
+    }
+
+    fn sign_up_customer(
+        &self,
+        token: &str,
+        id: &str,
+        body: &crate::CustomerBody,
+    ) -> crate::BoxFuture<crate::Customer> {
+        self.put_customer_call("sign_up_customer", token, id, body)
+    }
+
+    fn customer_balance(
+        &self,
+        token: &str,
+        id: &str,
+        before: Option<&str>,
+    ) -> crate::BoxFuture<crate::CustomerBalance> {
+        self.customer_balance_call(token, id, before)
+    }
+
+    fn balance_payout(
+        &self,
+        token: &str,
+        id: &str,
+        amount: i64,
+        key: &str,
+    ) -> crate::BoxFuture<crate::Payout> {
+        self.balance_payout_call(token, id, amount, key)
+    }
+
+    fn quote(&self, token: &str, request: &crate::QuoteRequest) -> crate::BoxFuture<crate::Quote> {
+        let detail = serde_json::to_string(request).unwrap_or_default();
+        let (s, failure) = self.begin("quote", detail);
+        if let Some(e) = failure {
+            return ready(Err(e));
+        }
+        ready(s.quote(token, request))
     }
 }
 

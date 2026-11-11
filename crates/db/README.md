@@ -7,8 +7,8 @@ Persistence for Sultan POS: sqlx migrations and repositories for SQLite and MySQ
   differs), embedded with `sqlx::migrate!` and applied by `Db::migrate()` (`build.rs` rebuilds the
   crate when a migration changes).
 - `src/`: one module per area (`org`, `users`, `roles`, `seed`, `devices`, `auth`, `overrides`,
-  `cashier_sessions`, `catalog`, `audit`, `outbox`, `idempotency`). The queries are shared between backends
-  and use the runtime query API, so building never needs a `DATABASE_URL`.
+  `cashier_sessions`, `catalog`, `customers`, `pricing`, `audit`, `outbox`, `idempotency`). The queries are
+  shared between backends and use the runtime query API, so building never needs a `DATABASE_URL`.
 
 ## Tests
 
@@ -69,9 +69,22 @@ kill %1 && rm -rf "$DIR"
   other cases, and `ORDER BY` sorted differently (`tests/db/consistency.rs`). MySQL flags `_bin`
   character columns `BINARY`, and sqlx 0.8 will not decode those as `String`, so `sql.rs` reads
   text columns of MySQL rows unchecked (the value is still validated as UTF-8).
-- The migration creates triggers that make `audit_log` append-only. With binary logging on
-  (the default), a user without `SUPER` needs `log_bin_trust_function_creators = 1` to create
-  them.
+- **Customer phone uniqueness** (spec 2.5 §2: unique among non-archived customers,
+  `20261111000002_customers.sql`). SQLite uses a partial unique index
+  (`ON customer (phone) WHERE archived_at IS NULL`). MySQL has no partial indexes, so
+  `customer.phone_active` is a `STORED` generated column, `CASE WHEN archived_at IS NULL THEN phone
+  END`, under a `UNIQUE` key (a unique key allows any number of `NULL`s). The repository never
+  writes the column; it checks the phone first to report the holder (`phone_taken`), and the
+  index catches races (a retryable `DbError::Conflict`).
+- **One live price list per target** (spec 2.3 §2, `20261111000003_pricing.sql`): at most one
+  active, non-archived list per (kind, target). SQLite uses partial unique indexes
+  (`ON price_list (kind, target_id) WHERE active = 1 AND archived_at IS NULL`, and one on `kind`
+  `WHERE kind = 'default'` for the single default list). MySQL uses `STORED` generated columns
+  `live_target` and `default_key` under `UNIQUE` keys, like the phone above. The repository reports
+  `price_list_conflict` first; the indexes catch races.
+- The migrations create triggers that make `audit_log` and `customer_balance_entry` append-only.
+  With binary logging on (the default), a user without `SUPER` needs
+  `log_bin_trust_function_creators = 1` to create them.
 - Session numbers (`cashier_sessions::insert`) are allocated as `MAX(seq) + 1` inside the open
   transaction, guarded by `UNIQUE (register_id, local_day, seq)`. Under `REPEATABLE READ` two
   racing opens can read the same maximum. The loser gets a duplicate key error (or a deadlock),

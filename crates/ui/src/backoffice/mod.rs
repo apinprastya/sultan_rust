@@ -5,27 +5,40 @@
 //!
 //! Screens ([`Screen`]):
 //! 1. **Login** — username + password (`POST /auth/password`), then `GET /auth/me`. Without
-//!    `catalog.manage` for all branches the catalog is read-only and a banner says why (a grant
-//!    at one branch is not enough, spec 2.2 §12); browsing still works.
+//!    `catalog.manage` (from any role assignment, spec 2.2 §11) the catalog is read-only and a
+//!    banner says why; browsing still works.
 //! 2. **Products** — search (debounced, `q`), filters category / brand / type and, with
 //!    `catalog.view_archived`, archived; pages of 50 with `before_id` ("load more", and moving
 //!    past the last row loads the next page). `/` or Ctrl+F search, ↑/↓ move, Enter open,
-//!    Ctrl+N new, F5 refresh.
+//!    Ctrl+N new, F5 refresh, Ctrl+Shift+D deletes the highlighted product (asking first; only a
+//!    never-used one, else `in_use` says to archive it, spec 2.2 §9).
 //! 3. **Product form** — [`form::ProductForm`]: tabs General / Variants / Units & barcodes
 //!    (Ctrl+1/2/3). Ctrl+S checks the core rules, then `PUT /products/{id}`, then the branch
 //!    blocks and the image; `422 errors[]` and `409 duplicate_*` go to their field and tab. Esc
 //!    goes back (asking first when there are unsaved changes); Ctrl+Shift+A archives or
 //!    unarchives (asking first).
-//! 4. **Categories** — the tree: add root / child, rename, move (parent), archive.
-//! 5. **Brands** — add, rename, archive.
+//! 4. **Categories** — the tree: add root / child, rename, move (parent), archive, delete
+//!    (Ctrl+Shift+D, asking first; only without products or children).
+//! 5. **Brands** — add, rename, archive, delete (Ctrl+Shift+D, asking first; only without
+//!    products).
 //!
-//! F2 / F3 / F4 switch between products, categories and brands; F12 logs out.
+//! 6. **Customers** (F6, spec 2.5 phase M4) — the list, the customer form, groups, tiers,
+//!    possible duplicates with merge, negative balances and the balance settings; see
+//!    [`customers`].
+//!
+//! 7. **Prices** (F7, spec 2.3 phase R4) — price lists, tax rates and the pricing settings, and
+//!    the product form's Prices tab (Ctrl+4); see [`pricing`].
+//!
+//! F2 / F3 / F4 / F6 / F7 switch between products, categories, brands, customers and prices; F12
+//! logs out.
 //!
 //! **Live refresh**: after login the glue watches `GET /events`; `catalog.changed` reloads the
 //! product list (or the taxonomy) and, for the product open in the form, fetches it: when it
 //! changed elsewhere the form shows a warning with "reload".
 
+pub mod customers;
 pub mod form;
+pub mod pricing;
 
 use std::collections::BTreeSet;
 
@@ -143,6 +156,26 @@ pub enum Screen {
     Categories,
     /// Brand list.
     Brands,
+    /// Customer list.
+    Customers,
+    /// Customer form.
+    CustomerForm,
+    /// Customer groups.
+    CustomerGroups,
+    /// Membership tiers.
+    CustomerTiers,
+    /// Possible duplicates (merge).
+    Duplicates,
+    /// Negative balances.
+    NegativeBalances,
+    /// Customer balance settings.
+    BalanceSettings,
+    /// Price lists.
+    PriceLists,
+    /// Tax rates.
+    TaxRates,
+    /// Pricing settings.
+    PricingSettings,
 }
 
 impl Screen {
@@ -155,6 +188,16 @@ impl Screen {
             Self::Form => "form",
             Self::Categories => "categories",
             Self::Brands => "brands",
+            Self::Customers => "customers",
+            Self::CustomerForm => "customer-form",
+            Self::CustomerGroups => "customer-groups",
+            Self::CustomerTiers => "customer-tiers",
+            Self::Duplicates => "duplicates",
+            Self::NegativeBalances => "negative-balances",
+            Self::BalanceSettings => "balance-settings",
+            Self::PriceLists => "price-lists",
+            Self::TaxRates => "tax-rates",
+            Self::PricingSettings => "pricing-settings",
         }
     }
 }
@@ -166,6 +209,31 @@ pub enum Confirm {
     Discard(Screen),
     /// Archive (or unarchive) the open product.
     Archive,
+    /// Delete [`Controller::deleting`] (a never-used product, category or brand; spec 2.2 §9).
+    Delete(Deletable),
+    /// Archive (or unarchive) the open customer.
+    CustomerArchive,
+    /// Merge the duplicates screen's B into A (spec 2.5 §8).
+    Merge,
+    /// Erase the open customer's personal data (spec 2.5 §7); needs its code typed.
+    Erase,
+    /// Archive the price list in the editor (spec 2.3 §2).
+    PriceListArchive,
+    /// Delete the price entry in the Prices tab's editor.
+    PriceEntryDelete,
+    /// Save the pricing settings with a changed tax mode (stored prices are not converted).
+    TaxMode,
+}
+
+/// What [`Confirm::Delete`] deletes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Deletable {
+    /// The highlighted product of the list.
+    Product,
+    /// The category in the editor.
+    Category,
+    /// The brand in the editor.
+    Brand,
 }
 
 /// The login screen.
@@ -191,26 +259,23 @@ pub struct Session {
 }
 
 impl Session {
-    /// `catalog.manage` for all branches.
+    /// `catalog.manage` through any role assignment (spec 2.2 §11).
     #[must_use]
     pub fn can_manage(&self) -> bool {
-        self.me.holds_everywhere(CATALOG_MANAGE)
+        self.me.holds_anywhere(CATALOG_MANAGE)
     }
 
-    /// `catalog.view_archived` for all branches.
+    /// `catalog.view_archived` through any role assignment.
     #[must_use]
     pub fn can_view_archived(&self) -> bool {
-        self.me.holds_everywhere(CATALOG_VIEW_ARCHIVED)
+        self.me.holds_anywhere(CATALOG_VIEW_ARCHIVED)
     }
 
-    /// Why the catalog is read-only, if it is: `read_only_branch` when `catalog.manage` is held
-    /// at the session's branch only, `read_only` otherwise.
+    /// Why the catalog is read-only, if it is: `read_only` without `catalog.manage`.
     #[must_use]
     pub fn read_only_reason(&self) -> Option<&'static str> {
         if self.me.user_id.is_empty() || self.can_manage() {
             None
-        } else if self.me.holds_here(CATALOG_MANAGE) {
-            Some("read_only_branch")
         } else {
             Some("read_only")
         }
@@ -319,7 +384,7 @@ pub struct ListState {
     pub cursor: usize,
     /// A page is loading.
     pub loading: bool,
-    /// Errors.
+    /// Errors, or "deleted" (kept while the list reloads, until the next message).
     pub notice: Option<Notice>,
 }
 
@@ -581,6 +646,29 @@ pub enum Effect {
         /// Body.
         body: BrandBody,
     },
+    /// `delete_product`, `delete_category` or `delete_brand`.
+    Delete {
+        /// Token.
+        token: String,
+        /// What.
+        what: Deletable,
+        /// Its ID.
+        id: String,
+    },
+    /// A customer call (spec 2.5, [`customers`]).
+    Customers {
+        /// Token.
+        token: String,
+        /// The call.
+        call: customers::Call,
+    },
+    /// A pricing call (spec 2.3, [`pricing`]).
+    Pricing {
+        /// Token.
+        token: String,
+        /// The call.
+        call: pricing::Call,
+    },
     /// `logout`.
     Logout(String),
     /// `watch_events`; events come back as [`Msg::Event`] with `generation`.
@@ -703,8 +791,14 @@ pub enum Msg {
     CategorySaved(Result<Category, ClientError>),
     /// Result of [`Effect::PutBrand`].
     BrandSaved(Result<Brand, ClientError>),
+    /// Result of [`Effect::Delete`].
+    Deleted(Deletable, Result<(), ClientError>),
     /// Result of [`Effect::Logout`].
     LoggedOut(Result<(), ClientError>),
+    /// Result of [`Effect::Customers`].
+    Customers(Box<customers::Reply>),
+    /// Result of [`Effect::Pricing`].
+    Pricing(Box<pricing::Reply>),
 }
 
 /// What [`Controller::update`] did.
@@ -767,11 +861,35 @@ pub fn notice_for(error: &ClientError) -> Notice {
         "duplicate_category_name" | "duplicate_brand_name" => Notice::bad("duplicate_name"),
         "category_cycle" => Notice::bad("category_cycle"),
         "category_too_deep" => Notice::bad("category_too_deep"),
+        "in_use" => notice(
+            "in_use",
+            p.reason().unwrap_or_default().to_owned(),
+            Tone::Bad,
+        ),
         "invalid_field" | "invalid_code" => notice(
             "invalid_input",
             p.field().unwrap_or_default().to_owned(),
             Tone::Bad,
         ),
+        // Customers (spec 2.5 §13).
+        "archived" => Notice::bad("customer_archived"),
+        "merged" => Notice::bad("customer_merged"),
+        "phone_taken" => notice(
+            "phone_taken",
+            [p.customer_code(), p.masked_phone()]
+                .into_iter()
+                .flatten()
+                .collect::<Vec<_>>()
+                .join(" · "),
+            Tone::Bad,
+        ),
+        "balance_not_zero" => notice(
+            "balance_not_zero",
+            crate::amount::rupiah(p.balance().unwrap_or_default()),
+            Tone::Bad,
+        ),
+        "invalid_phone" => Notice::bad("invalid_phone"),
+        "invalid_tax_id" => Notice::bad("invalid_tax_id"),
         other => notice("error", other.to_owned(), Tone::Bad),
     }
 }
@@ -801,10 +919,16 @@ pub struct Controller {
     pub form: Option<FormState>,
     /// The confirmation dialog.
     pub confirm: Option<Confirm>,
+    /// The ID and name of what [`Confirm::Delete`] deletes.
+    pub deleting: Option<(String, String)>,
     /// The category editor.
     pub categories: CategoryEditor,
     /// The brand list.
     pub brands: BrandEditor,
+    /// The customer section.
+    pub customers: customers::CustomerState,
+    /// The pricing section and the product form's Prices tab.
+    pub pricing: pricing::PricingState,
     /// A login is running.
     pub busy: bool,
     /// A field the view should focus (`search`, `name`, `category-name`, `brand-name`, or
@@ -853,7 +977,7 @@ impl Controller {
             .unwrap_or_default()
     }
 
-    /// Whether catalog writes are allowed (`catalog.manage` for all branches).
+    /// Whether catalog writes are allowed (`catalog.manage` from any role assignment).
     #[must_use]
     pub fn can_manage(&self) -> bool {
         self.session.as_ref().is_some_and(Session::can_manage)
@@ -898,6 +1022,9 @@ impl Controller {
                 index,
             } => Step::effects(self.on_choose(&kind, row, &field, index)),
             Msg::Pick { kind, row, sub } => Step::effects(self.on_pick(&kind, row, sub)),
+            Msg::SearchDue(serial) if self.screen() == Screen::Customers => {
+                Step::effects(self.customer_search_due(serial))
+            }
             Msg::SearchDue(serial) => {
                 if serial == self.list.search_serial && self.session.is_some() {
                     Step::effects(self.reload_list())
@@ -914,12 +1041,25 @@ impl Controller {
     /// keys (↑/↓/Enter) on the list screens.
     fn on_capture(&mut self, p: Press) -> Step {
         if let Some(confirm) = self.confirm {
+            if confirm == Confirm::Erase {
+                // The dialog has a text field: only Enter and Esc are the dialog's.
+                return match p.key {
+                    PressKey::Enter if !p.ctrl => Step::handled(self.confirmed(confirm)),
+                    PressKey::Escape => {
+                        self.confirm = None;
+                        self.customers.erase_code.clear();
+                        Step::handled(Vec::new())
+                    }
+                    _ => Step::default(),
+                };
+            }
             return match p.key {
                 PressKey::Enter | PressKey::Char('y') if !p.ctrl => {
                     Step::handled(self.confirmed(confirm))
                 }
                 PressKey::Escape | PressKey::Char('n') if !p.ctrl => {
                     self.confirm = None;
+                    self.deleting = None;
                     Step::handled(Vec::new())
                 }
                 _ => Step::handled(Vec::new()),
@@ -936,6 +1076,8 @@ impl Controller {
             (2, Screen::Products),
             (3, Screen::Categories),
             (4, Screen::Brands),
+            (6, Screen::Customers),
+            (7, Screen::PriceLists),
         ] {
             if p.f(n) {
                 return Step::handled(self.go(target));
@@ -949,6 +1091,8 @@ impl Controller {
             Screen::Form => self.form_capture(p),
             Screen::Categories | Screen::Brands => self.taxonomy_capture(p, screen),
             Screen::Login => Step::default(),
+            s if pricing::in_section(s) => self.pricing_capture(p, s),
+            _ => self.customers_capture(p, screen),
         }
     }
 
@@ -959,6 +1103,9 @@ impl Controller {
         }
         if p.ctrl_char('n') {
             return Step::handled(self.on_action("new-product"));
+        }
+        if p.ctrl_shift_char('d') {
+            return Step::handled(self.on_action("delete-product"));
         }
         if p.f(5) {
             return Step::handled(self.reload_list());
@@ -986,13 +1133,16 @@ impl Controller {
     }
 
     fn form_capture(&mut self, p: Press) -> Step {
+        if let Some(step) = self.prices_tab_capture(p) {
+            return step;
+        }
         if p.ctrl_char('s') {
             return Step::handled(self.on_action("save"));
         }
         if p.ctrl_shift_char('a') {
             return Step::handled(self.on_action("archive"));
         }
-        for (c, tab) in [('1', 0), ('2', 1), ('3', 2)] {
+        for (c, tab) in [('1', 0), ('2', 1), ('3', 2), ('4', 3)] {
             if p.ctrl_char(c) {
                 return Step::handled(self.on_action(&format!("tab-{tab}")));
             }
@@ -1022,6 +1172,9 @@ impl Controller {
         }
         if p.ctrl_shift_char('a') {
             return Step::handled(self.on_action(&format!("{prefix}-archive")));
+        }
+        if p.ctrl_shift_char('d') {
+            return Step::handled(self.on_action(&format!("{prefix}-delete")));
         }
         if p.f(5) {
             return Step::handled(self.load_taxonomy());
@@ -1058,14 +1211,14 @@ impl Controller {
         Step::default()
     }
 
-    /// Keys no widget took: `/` focuses the search on the product list.
+    /// Keys no widget took: `/` focuses the search on the product and customer lists.
     fn on_key(&mut self, p: Press) -> Step {
-        if self.confirm.is_none()
-            && self.screen() == Screen::Products
-            && p.key == PressKey::Char('/')
-            && !p.ctrl
-        {
-            self.focus("search");
+        if self.confirm.is_none() && p.key == PressKey::Char('/') && !p.ctrl {
+            match self.screen() {
+                Screen::Products => self.focus("search"),
+                Screen::Customers => self.focus("customer-search"),
+                _ => return Step::default(),
+            }
             return Step::handled(Vec::new());
         }
         Step::default()
@@ -1073,10 +1226,16 @@ impl Controller {
 
     /// Goes to `target`, asking first when the form has unsaved changes.
     fn go(&mut self, target: Screen) -> Vec<Effect> {
-        if self.screen() == Screen::Form
-            && self.form.as_ref().is_some_and(|f| f.form.is_dirty())
-            && target != Screen::Form
-        {
+        let dirty = match self.screen() {
+            Screen::Form => self.form.as_ref().is_some_and(|f| f.form.is_dirty()),
+            Screen::CustomerForm => self
+                .customers
+                .form
+                .as_ref()
+                .is_some_and(customers::CustomerForm::is_dirty),
+            _ => false,
+        };
+        if dirty && target != self.screen() {
             self.confirm = Some(Confirm::Discard(target));
             return Vec::new();
         }
@@ -1088,6 +1247,12 @@ impl Controller {
         self.screen = Some(target);
         if from == Screen::Form && target != Screen::Form {
             self.form = None;
+        }
+        if from == Screen::CustomerForm && target != Screen::CustomerForm {
+            self.customers.form = None;
+        }
+        if target != Screen::Form {
+            self.pricing.product = None;
         }
         match target {
             Screen::Products => {
@@ -1108,7 +1273,9 @@ impl Controller {
                 self.focus("brand-name");
                 Vec::new()
             }
-            Screen::Login | Screen::Form => Vec::new(),
+            Screen::Login | Screen::Form | Screen::CustomerForm => Vec::new(),
+            s if pricing::in_section(s) => self.enter_pricing(s),
+            _ => self.enter_customers(target, from),
         }
     }
 
@@ -1127,7 +1294,68 @@ impl Controller {
                     key: key(),
                 }]
             }
+            Confirm::Delete(what) => self
+                .deleting
+                .take()
+                .map(|(id, _)| {
+                    vec![Effect::Delete {
+                        token: self.token(),
+                        what,
+                        id,
+                    }]
+                })
+                .unwrap_or_default(),
+            Confirm::CustomerArchive | Confirm::Merge | Confirm::Erase => {
+                self.customer_confirmed(confirm)
+            }
+            Confirm::PriceListArchive | Confirm::PriceEntryDelete | Confirm::TaxMode => {
+                self.pricing_confirmed(confirm)
+            }
         }
+    }
+
+    /// Asks before deleting `what` (the highlighted product, or the edited category / brand).
+    fn ask_delete(&mut self, what: Deletable) -> Vec<Effect> {
+        let target = match what {
+            Deletable::Product => self
+                .list
+                .rows
+                .get(self.list.cursor)
+                .map(|p| (p.id.clone(), p.name.clone())),
+            Deletable::Category => self.categories.editing.as_ref().and_then(|id| {
+                self.reference
+                    .categories
+                    .iter()
+                    .find(|c| c.category.id == *id)
+                    .map(|c| (id.clone(), c.category.name.clone()))
+            }),
+            Deletable::Brand => self.brands.editing.as_ref().and_then(|id| {
+                self.reference
+                    .brands
+                    .iter()
+                    .find(|b| b.id == *id)
+                    .map(|b| (id.clone(), b.name.clone()))
+            }),
+        };
+        let Some(target) = target else {
+            return Vec::new();
+        };
+        if !self.can_manage() {
+            let denied = Some(notice(
+                "permission_denied_catalog",
+                CATALOG_MANAGE,
+                Tone::Bad,
+            ));
+            match what {
+                Deletable::Product => self.list.notice = denied,
+                Deletable::Category => self.categories.notice = denied,
+                Deletable::Brand => self.brands.notice = denied,
+            }
+            return Vec::new();
+        }
+        self.deleting = Some(target);
+        self.confirm = Some(Confirm::Delete(what));
+        Vec::new()
     }
 
     fn reload_list(&mut self) -> Vec<Effect> {
@@ -1185,10 +1413,18 @@ impl Controller {
                 "confirm-yes" => self.confirmed(confirm),
                 "confirm-no" => {
                     self.confirm = None;
+                    self.deleting = None;
+                    self.customers.erase_code.clear();
                     Vec::new()
                 }
                 _ => Vec::new(),
             };
+        }
+        if let Some(effects) = self.pricing_action(id) {
+            return effects;
+        }
+        if let Some(effects) = self.customer_action(id) {
+            return effects;
         }
         match id {
             "login" => self.start_login(),
@@ -1210,6 +1446,9 @@ impl Controller {
             "load-more" => self.load_more(),
             "open" => self.open_row(self.list.cursor),
             "new-product" => self.new_product(),
+            "delete-product" => self.ask_delete(Deletable::Product),
+            "cat-delete" => self.ask_delete(Deletable::Category),
+            "brand-delete" => self.ask_delete(Deletable::Brand),
             "save" => self.save(),
             "archive" => {
                 if self.form.as_ref().is_some_and(|f| !f.form.is_new) && self.can_manage() {
@@ -1598,6 +1837,10 @@ impl Controller {
                 self.brands.name = value;
                 return Vec::new();
             }
+            k if customers::EDIT_KINDS.contains(&k) => return self.customer_edit(k, field, value),
+            k if pricing::EDIT_KINDS.contains(&k) => {
+                return self.pricing_edit(k, row, field, value);
+            }
             _ => {}
         }
         let can = self.can_manage();
@@ -1696,6 +1939,12 @@ impl Controller {
             self.list.archived = on;
             return self.reload_list();
         }
+        if let Some(effects) = self.customer_toggle(kind, field, on) {
+            return effects;
+        }
+        if self.pricing_toggle(kind, field, on).is_some() {
+            return Vec::new();
+        }
         let can = self.can_manage();
         let branches: Vec<String> = self
             .reference
@@ -1739,6 +1988,12 @@ impl Controller {
 
     #[allow(clippy::too_many_lines)] // one arm per picker
     fn on_choose(&mut self, kind: &str, row: usize, field: &str, index: usize) -> Vec<Effect> {
+        if let Some(effects) = self.customer_choose(kind, field, index) {
+            return effects;
+        }
+        if let Some(effects) = self.pricing_choose(kind, row, field, index) {
+            return effects;
+        }
         match (kind, field) {
             ("list", "category") => {
                 self.list.category = self
@@ -1851,6 +2106,12 @@ impl Controller {
     }
 
     fn on_pick(&mut self, kind: &str, row: usize, sub: usize) -> Vec<Effect> {
+        if let Some(effects) = self.customer_pick(kind, row) {
+            return effects;
+        }
+        if let Some(effects) = self.pricing_pick(kind, row) {
+            return effects;
+        }
         match kind {
             "products" => {
                 if row < self.list.rows.len() {
@@ -1918,6 +2179,12 @@ impl Controller {
         if event.revokes_this_session() {
             self.logged_out(Some(Notice::bad("session_ended")));
             return Vec::new();
+        }
+        if event.kind == "customer.changed" {
+            return self.customer_event();
+        }
+        if event.kind == "price.changed" {
+            return self.pricing_event();
         }
         if event.kind != "catalog.changed" {
             return Vec::new();
@@ -2067,7 +2334,7 @@ impl Controller {
                                 self.list.cursor.min(self.list.rows.len().saturating_sub(1));
                         }
                         self.list.next = page.next_before_id;
-                        self.list.notice = None;
+                        self.list.notice = self.list.notice.take().filter(|n| n.tone == Tone::Good);
                     }
                     Err(e) => self.list.notice = self.failed(&e),
                 }
@@ -2148,7 +2415,11 @@ impl Controller {
                 }
                 Vec::new()
             }
-            Msg::Saved(result) => self.saved(result),
+            Msg::Saved(result) => {
+                let mut effects = self.saved(result);
+                effects.extend(self.prices_after_save());
+                effects
+            }
             Msg::BlocksSaved(result) => {
                 let failure = result.as_ref().err().cloned();
                 if let (Some(f), Ok(blocks)) = (&mut self.form, result) {
@@ -2291,8 +2562,55 @@ impl Controller {
                 }
                 Vec::new()
             }
+            Msg::Deleted(what, result) => self.deleted(what, &result),
+            Msg::Customers(reply) => self.customer_reply(*reply),
+            Msg::Pricing(reply) => self.pricing_reply(*reply),
             _ => Vec::new(),
         }
+    }
+
+    /// A delete answered: on success the list (or the taxonomy) reloads and the editor starts a
+    /// new entry; `in_use` explains to archive instead.
+    fn deleted(&mut self, what: Deletable, result: &Result<(), ClientError>) -> Vec<Effect> {
+        let outcome = match result {
+            Ok(()) => Some(notice("deleted_done", "", Tone::Good)),
+            Err(e) => self.failed(e),
+        };
+        if self.session.is_none() {
+            return Vec::new();
+        }
+        match what {
+            Deletable::Product => {
+                self.list.notice = outcome;
+                if result.is_ok() {
+                    self.list.cursor = self.list.cursor.saturating_sub(1);
+                    return self.reload_list();
+                }
+            }
+            Deletable::Category => {
+                if result.is_ok() {
+                    self.categories = CategoryEditor {
+                        cursor: self.categories.cursor.saturating_sub(1),
+                        ..CategoryEditor::default()
+                    };
+                    self.categories.notice = outcome;
+                    return self.load_taxonomy();
+                }
+                self.categories.notice = outcome;
+            }
+            Deletable::Brand => {
+                if result.is_ok() {
+                    self.brands = BrandEditor {
+                        cursor: self.brands.cursor.saturating_sub(1),
+                        ..BrandEditor::default()
+                    };
+                    self.brands.notice = outcome;
+                    return self.load_taxonomy();
+                }
+                self.brands.notice = outcome;
+            }
+        }
+        Vec::new()
     }
 
     /// The product `PUT` answered: on success the branch blocks and the image follow.

@@ -211,8 +211,29 @@ audit log viewer · light/dark theme · i18n ID/EN.
   connection, set up again, version; F9 on the lock / back-office login screen goes back). A
   single app opens to its terminals from Settings too ("Allow terminals to connect": restarts its
   server on the shop network and shows the address to type in the terminal's wizard).
+- **2026-11-11 C3b decisions:** keep `GET /registers/me` (spec 2.1 §8) · a device token may open
+  `/events` and gets only `Audience::Everyone` events, so the lock screen sees `catalog.changed`
+  (spec 2.2 §17 item 3) · `catalog.manage` / `catalog.view_archived` count from **any** role
+  assignment, not only an all-branches one (spec 2.2 §11, §17 item 4).
+- **2026-11-11 2.3 Pricing** (spec: `docs/spec/2.3-pricing.md`): tax-inclusive by default, one
+  company setting · tax rates with a valid-from history and a "not tax-registered" switch · entries
+  are fixed or a ± % / ± Rp rule relative to the next applicable price · no rounding step (Rp 1
+  half up) · quantity tiers price the whole line and count the variant across the cart · lists
+  without a match fall through · unit without a price = base price × factor · `no_price` unless
+  overridden · validity dates per entry · price-embedded scale labels are final · `price.override`
+  gets a MaxPct limit · cash rounding a company setting, off by default · spec 2.5 is built first.
+- **2026-11-11 2.5 Customers & membership** (spec: `docs/spec/2.5-customers.md`): P1 part only
+  (points, store credit and deposit are a P2 spec; receivables go with 2.9) · random 8-character
+  customer code, phone optional but unique · sign-up at the till also offline, profile edits at the
+  till only while HQ is reachable, group/tier/merge/erase at HQ · at most one group and one tier,
+  tier assigned by hand with an optional end date (auto tiers after sync) · company + NPWP and notes
+  fields · archive, plus an erase that blanks personal data (old audit entries are not scrubbed) ·
+  lookup by phone/code, name search with a permission · customers are company-wide · duplicates
+  merged at HQ · receipt shows name + masked phone · **customer balance for saved change**
+  ("simpan kembalian"): grows from saved change, pays as a tender, limits Rp 5 000 per sale and
+  Rp 100 000 per customer (settings), spendable offline, no expiry, erase needs balance 0.
 
-## Status (updated 2026-11-10)
+## Status (updated 2026-11-11)
 
 Where we are, so any session can pick up from here. Update this section at the end of every phase.
 
@@ -224,7 +245,21 @@ Where we are, so any session can pick up from here. Update this section at the e
   close, report), manager override, audit log, register lock screen and session home.
 - **2.2 Catalog** (spec `docs/spec/2.2-catalog.md` §15), all phases C1–C5:
   C1 `core::catalog` · C2 `db` · C3 `server` API (PR #2) · C4 back-office window (PR #3) ·
-  C5 register barcode lookup.
+  C5 register barcode lookup · **C3b** (2026-11-11): delete never-used products/categories/brands
+  (`409 in_use`), keyset paging for `/catalog/search`, device-token `/events` (Everyone events
+  only), `catalog.manage` / `catalog.view_archived` from any role assignment.
+- **2.5 Customers & membership** (spec `docs/spec/2.5-customers.md` §16), all phases M1–M5
+  (2026-11-11): M1 `core::customer` · M2 `db` (customers, groups, tiers, balance ledger,
+  `customer.*` permissions) · M3 `server` API + client (payout lowers the session's expected cash)
+  · M4 back office (F6 Customers: list, form, groups, tiers, duplicates + merge, negative balances,
+  erase, balance settings) · M5 register (F3 Customer: lookup by phone/code, name search, sign-up,
+  attach, balance payout).
+- **2.3 Pricing** (spec `docs/spec/2.3-pricing.md` §13), all phases R1–R5 (2026-11-11): R1
+  `core::pricing` + `core::tax` · R2 `db` (price lists, entries, tiers, tax rates, settings,
+  `price.manage`, `price.override` MaxPct) · R3 `server` (lists, `POST /pricing/quote`, price in
+  `/catalog/lookup`, `price.changed`) · R4 back office (F7 Pricing: price lists, tax rates,
+  settings; Prices tab on the product form with schedule) · R5 register (price on the scanned item,
+  the attached customer's price through the quote).
 - **UI only, except HQ** (§3, 2026-11-09):
   - Start screen on single-app and terminal machines: F1 Kasir, F2 Back office, F3 Settings.
   - Settings: language (F6), set up again (F8), and on a single app "Allow terminals to connect"
@@ -233,22 +268,28 @@ Where we are, so any session can pick up from here. Update this section at the e
     new `GET /registers/me` (device token) refreshes it for older pairings.
 
 **Open decisions (the user's call)**
-1. Keep the new `GET /registers/me` endpoint (and its row in spec 2.1 §8)? Proposed: keep.
-2. Spec 2.2 §17 item 3: let a device token (no PIN session) open `/events` for
-   `Audience::Everyone` events, so the lock screen gets `catalog.changed`.
-3. Spec 2.2 §17 item 4: let `catalog.manage` count from any role assignment, not only an
-   all-branches one (so a branch Manager / Stock clerk can edit the catalog).
+- Customer permissions are checked at the session's branch (spec 2.5 §18 item 16), while
+  `catalog.manage` / `price.manage` count from any role assignment. Proposed: make customers match.
 
 **Small to-dos**
-- Settings on a single app: "Server address" shows `127.0.0.1:8080` even when terminals may connect;
-  make clear it is this computer's own address (the terminal address is shown in the card beside it).
-- Settings at 1024 px: the long status text ("Aplikasi tunggal: server berjalan di ko…") is cut off.
+- Settings bottom bar at 1024 px: the one-line status summary is still cut off (the full text now
+  wraps in the Connection card; the address row on a single app reads "This computer's address").
+- Back office: the bundle-component picker shows only the first search page (no "load more").
+- `sultan-ui` test `start_event_loop` is flaky under coverage instrumentation.
+- Customer, group, tier and price-list ids are plain `Uuid` in db/core; move them to typed ids in
+  `core::ids`.
+- Back office: the Prices tab is not part of the product form's unsaved-changes check; archived
+  price lists are not listed (no unarchive on screen).
+- Register: no payout slip is printed; the attached customer does not refresh on
+  `customer.changed`; purchase history is empty until 2.6.
+- Each sub-agent worktree builds its own `target/` (20–40 GB with coverage); clear finished ones.
 
-**Next (pick one)**
-- **C3b**: the four open items in spec 2.2 §17 (delete never-used products/categories/brands,
-  paging for search, plus decisions 2 and 3 above).
-- **2.3 Pricing**: discuss the spec first (price lists, quantity tiers, membership, tax, rounding),
-  then implement in phases like 2.2.
+**Next**
+- **2.6 Sales (register)**: discuss the spec first (cart, split tenders incl. QRIS, hold/resume,
+  returns, voids, receipts), then build. It brings saving change and paying with the customer
+  balance, the manual price override flow, cash rounding, and purchase history.
+- Other P1 specs still to discuss: 2.4 is P2; 2.7 cash in/out + X/Z, 2.8 inventory, 2.9 money,
+  2.10 reports, 2.11 hardware (ESC/POS + drawer), old-Sultan importer.
 
 **Way of working**
 - Each phase is discussed, written as a spec in `docs/spec/`, then built in phases; the user usually

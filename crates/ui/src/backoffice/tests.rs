@@ -72,6 +72,7 @@ fn me(everywhere: &[&str], here: &[&str]) -> Me {
         register_id: None,
         permissions: here.iter().map(|s| (*s).to_owned()).collect(),
         permissions_everywhere: everywhere.iter().map(|s| (*s).to_owned()).collect(),
+        permissions_anywhere: Vec::new(),
     }
 }
 
@@ -289,13 +290,25 @@ fn login_needs_both_fields_and_shows_failures() {
 
 #[test]
 fn read_only_users_can_browse_but_not_write() {
-    let mut c = logged_in(&[], &[CATALOG_MANAGE]);
+    // Since C3b a grant at one branch is enough (spec 2.2 §11).
+    let branch_manager = logged_in(&[], &[CATALOG_MANAGE, CATALOG_VIEW_ARCHIVED]);
+    assert!(branch_manager.can_manage() && branch_manager.can_view_archived());
+    let mut anywhere = me(&[], &[]);
+    anywhere.permissions_anywhere = vec![CATALOG_MANAGE.into()];
+    let session = Session {
+        token: "t".into(),
+        me: anywhere,
+        display_name: "X".into(),
+    };
+    assert!(session.can_manage() && session.read_only_reason().is_none());
+
+    let mut c = logged_in(&[], &[]);
     let session = c.session.clone().unwrap();
-    assert_eq!(session.read_only_reason(), Some("read_only_branch"));
+    assert_eq!(session.read_only_reason(), Some("read_only"));
     assert!(!c.can_manage() && !c.can_view_archived());
     c.update(ctrl("n"));
     assert_eq!(c.screen(), Screen::Products);
-    assert_eq!(c.list.notice.as_ref().unwrap().code, "read_only_branch");
+    assert_eq!(c.list.notice.as_ref().unwrap().code, "read_only");
     // Archived products cannot be listed without the permission.
     c.update(toggle("list", 0, "archived", true));
     assert!(!c.list.archived);
@@ -305,7 +318,7 @@ fn read_only_users_can_browse_but_not_write() {
     c.update(edit("form", 0, 0, "name", "X"));
     assert_eq!(c.form.as_ref().unwrap().form.data.name, "Teh");
     assert!(c.update(ctrl("s")).effects.is_empty());
-    assert_eq!(notice_code(&c), "read_only_branch");
+    assert_eq!(notice_code(&c), "read_only");
     c.update(press("A", true, true));
     assert_eq!(c.confirm, None, "no archive without the permission");
     // Category and brand writes are refused too.
@@ -319,8 +332,149 @@ fn read_only_users_can_browse_but_not_write() {
     c.update(press(&f(4), false, false));
     c.update(edit("brand", 0, 0, "name", "Aqua"));
     assert!(c.update(ctrl("s")).effects.is_empty());
-    let plain = logged_in(&[], &[]);
-    assert_eq!(plain.session.unwrap().read_only_reason(), Some("read_only"));
+    // Delete is refused before asking.
+    c.update(action("nav-products"));
+    c.update(press("D", true, true));
+    assert_eq!(c.confirm, None);
+    assert_eq!(
+        c.list.notice.as_ref().unwrap().code,
+        "permission_denied_catalog"
+    );
+}
+
+#[test]
+fn delete_a_product_after_confirming() {
+    let mut c = owner();
+    c.list.cursor = 1;
+    // Ctrl+Shift+D asks, naming the highlighted product; Esc keeps it.
+    assert!(c.update(press("D", true, true)).effects.is_empty());
+    assert_eq!(c.confirm, Some(Confirm::Delete(Deletable::Product)));
+    assert_eq!(c.deleting, Some((pid(1), "Produk 1".into())));
+    c.update(press(ESC, false, false));
+    assert_eq!((c.confirm, c.deleting.clone()), (None, None));
+    // "No" keeps it too; Enter deletes.
+    c.update(action("delete-product"));
+    c.update(action("confirm-no"));
+    assert_eq!(c.deleting, None);
+    c.update(action("delete-product"));
+    let effects = c.update(press(ENTER, false, false)).effects;
+    assert_eq!(
+        effects,
+        [Effect::Delete {
+            token: "t".into(),
+            what: Deletable::Product,
+            id: pid(1),
+        }]
+    );
+    assert_eq!(c.confirm, None);
+    // Done: a notice and the list reloads.
+    let effects = c.update(Msg::Deleted(Deletable::Product, Ok(()))).effects;
+    assert!(matches!(
+        &effects[..],
+        [Effect::LoadProducts { append: false, .. }]
+    ));
+    assert_eq!(c.list.notice.as_ref().unwrap().code, "deleted_done");
+    assert_eq!(c.list.cursor, 0);
+    // A used product: `in_use` with the reason, nothing reloads.
+    let used = ClientError::Api(Problem::new(409, "in_use", "x").with("reason", "used"));
+    assert!(
+        c.update(Msg::Deleted(Deletable::Product, Err(used)))
+            .effects
+            .is_empty()
+    );
+    let n = c.list.notice.clone().unwrap();
+    assert_eq!((n.code, n.arg.as_str()), ("in_use", "used"));
+    // Without rows there is nothing to delete.
+    c.update(Msg::Products(false, Ok(ProductPage::default())));
+    c.update(action("delete-product"));
+    assert_eq!(c.confirm, None);
+    // A login that ended while deleting goes back to login.
+    c.update(Msg::Deleted(
+        Deletable::Product,
+        Err(api(401, "invalid_session")),
+    ));
+    assert_eq!(c.screen(), Screen::Login);
+    assert!(
+        c.update(Msg::Deleted(Deletable::Brand, Ok(())))
+            .effects
+            .is_empty()
+    );
+}
+
+#[test]
+fn delete_categories_and_brands() {
+    let mut c = owner();
+    let leaf = |id: &str, name: &str| CategoryNode {
+        id: id.into(),
+        parent_id: None,
+        name: name.into(),
+        code: String::new(),
+        archived: false,
+        children: Vec::new(),
+    };
+    c.update(Msg::Categories(Ok(vec![
+        leaf("food", "Food"),
+        leaf("typo", "Fod"),
+    ])));
+    c.update(press(&f(3), false, false));
+    c.update(pick("category", 1, 0));
+    c.update(press("D", true, true));
+    assert_eq!(c.confirm, Some(Confirm::Delete(Deletable::Category)));
+    assert_eq!(c.deleting, Some(("typo".into(), "Fod".into())));
+    let effects = c.update(action("confirm-yes")).effects;
+    assert_eq!(
+        effects,
+        [Effect::Delete {
+            token: "t".into(),
+            what: Deletable::Category,
+            id: "typo".into(),
+        }]
+    );
+    let effects = c.update(Msg::Deleted(Deletable::Category, Ok(()))).effects;
+    assert_eq!(effects.len(), 2, "the taxonomy reloads");
+    assert!(c.categories.editing.is_none());
+    assert_eq!(c.categories.cursor, 0);
+    assert_eq!(c.categories.notice.as_ref().unwrap().code, "deleted_done");
+    let children =
+        ClientError::Api(Problem::new(409, "in_use", "x").with("reason", "has_children"));
+    c.update(Msg::Deleted(Deletable::Category, Err(children)));
+    let n = c.categories.notice.clone().unwrap();
+    assert_eq!((n.code, n.arg.as_str()), ("in_use", "has_children"));
+    // A new (unsaved) category has nothing to delete.
+    c.update(action("cat-add-root"));
+    c.update(action("cat-delete"));
+    assert_eq!(c.confirm, None);
+
+    c.update(Msg::Brands(Ok(vec![Brand {
+        id: "a".into(),
+        name: "Aqua".into(),
+        archived: false,
+    }])));
+    c.update(press(&f(4), false, false));
+    c.update(press("D", true, true));
+    assert_eq!(c.deleting, Some(("a".into(), "Aqua".into())));
+    let effects = c.update(press("y", false, false)).effects;
+    assert!(matches!(
+        &effects[..],
+        [Effect::Delete { what: Deletable::Brand, id, .. }] if id == "a"
+    ));
+    let used = ClientError::Api(Problem::new(409, "in_use", "x").with("reason", "has_products"));
+    assert!(
+        c.update(Msg::Deleted(Deletable::Brand, Err(used)))
+            .effects
+            .is_empty()
+    );
+    assert_eq!(c.brands.notice.as_ref().unwrap().code, "in_use");
+    assert_eq!(c.brands.editing.as_deref(), Some("a"), "kept");
+    assert_eq!(
+        c.update(Msg::Deleted(Deletable::Brand, Ok(())))
+            .effects
+            .len(),
+        2
+    );
+    assert!(c.brands.editing.is_none());
+    assert_eq!(c.brands.notice.as_ref().unwrap().code, "deleted_done");
+    assert_eq!(notice_for(&api(409, "in_use")).code, "in_use");
 }
 
 #[test]

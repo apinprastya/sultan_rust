@@ -6,17 +6,28 @@
 //!   a product code, SKU, barcode or PLU used by another product is `409 duplicate_*` with
 //!   `product_id`, `variant_id`, `value` and `field`. Empty codes are generated (`P000001`),
 //!   empty SKUs become `<code>-<value codes>`, a replay of the same body changes nothing.
-//! - Writes need `catalog.manage` for all branches (`403 permission_denied`); archived products
-//!   need `catalog.view_archived`. Every write that changed something emits `catalog.changed`.
+//! - Writes need `catalog.manage` through any assignment (`403 permission_denied`; spec 2.2 §11,
+//!   C3b); archived products need `catalog.view_archived`. Every write that changed something
+//!   emits `catalog.changed`.
+//! - `DELETE` of a product, category or brand (C3b, spec 2.2 §9): a used product (sold, see
+//!   [`FakeService::mark_used`], or a component of another bundle), a category with products or
+//!   children, a brand with products is `409 in_use` with `reason`, like the server.
 //! - Categories (core tree rules), brands, tax classes, settings (scale layouts seeded like the
 //!   server: 21 weight, 22 price), generators (with idempotency keys), branch blocks, images
-//!   (PNG/JPEG/WebP magic bytes only, stored as sent) and search.
+//!   (PNG/JPEG/WebP magic bytes only, stored as sent) and search (paged by
+//!   `after_variant_id`).
 //! - The register's lookup ([`crate::Service::lookup`], phase C5) in `lookup`.
+//! - Pricing (phase R3): price lists, entries, tax rates, settings, the quote and the lookup
+//!   price in `pricing`.
 //!
-//! Users: `owner` / `owner-pass-1` (all-branches Owner) and `budi` / `budi-pass-1` (Manager at
-//! one branch: `catalog.manage` there only, so the catalog is read-only for him).
+//! Users: `owner` / `owner-pass-1` (all-branches Owner), `budi` / `budi-pass-1` (Manager at one
+//! branch: `catalog.manage` and `catalog.view_archived` there only, which is enough since C3b)
+//! and `kasir` / `kasir-pass-1` (Cashier: no catalog permission, so the catalog is read-only).
 
 mod lookup;
+mod pricing;
+
+pub use pricing::{PriceCustomer, PricingDemo};
 
 use std::collections::{BTreeMap, HashMap};
 
@@ -33,7 +44,7 @@ use super::{BRANCH_ID, FakeService, State, api, ready};
 use crate::catalog::{
     Brand, BrandBody, CATALOG_MANAGE, CATALOG_VIEW_ARCHIVED, CatalogSettings, Category,
     CategoryBody, CategoryNode, Generate, ImageInfo, Me, Product, ProductPage, ProductQuery,
-    ProductSummary, SearchHit, TaxClass, unit_kind,
+    ProductSummary, SearchHit, SearchPage, TaxClass, unit_kind,
 };
 use crate::{BackOffice, Branch, ClientError, Login, Problem, ServerEvent};
 
@@ -58,9 +69,10 @@ pub struct BackOfficeUser {
     pub name: String,
     /// `catalog.manage` for all branches.
     pub manage: bool,
-    /// `catalog.manage` at the session branch only (not enough for the catalog).
+    /// `catalog.manage` at the session branch only (enough for the catalog since C3b).
     pub manage_here: bool,
-    /// `catalog.view_archived` for all branches.
+    /// `catalog.view_archived` (for all branches when `manage` is set, else at the session
+    /// branch only; either is enough).
     pub view_archived: bool,
 }
 
@@ -108,6 +120,7 @@ pub(super) struct Catalog {
     blocks: HashMap<String, Vec<String>>,
     images: HashMap<String, Vec<u8>>,
     events: Vec<ServerEvent>,
+    pricing: pricing::Pricing,
 }
 
 impl Default for Catalog {
@@ -117,8 +130,10 @@ impl Default for Catalog {
                 BackOfficeUser::new("u-owner", "owner", "owner-pass-1", "Owner").catalog_admin(),
                 BackOfficeUser {
                     manage_here: true,
+                    view_archived: true,
                     ..BackOfficeUser::new("u-budi", "budi", "budi-pass-1", "Budi")
                 },
+                BackOfficeUser::new("u-kasir", "kasir", "kasir-pass-1", "Kasir"),
             ],
             tokens: HashMap::new(),
             products: BTreeMap::new(),
@@ -151,6 +166,7 @@ impl Default for Catalog {
             blocks: HashMap::new(),
             images: HashMap::new(),
             events: Vec::new(),
+            pricing: pricing::Pricing::default(),
         }
     }
 }
@@ -173,6 +189,13 @@ fn denied(permission: &str) -> ClientError {
 
 fn not_found(what: &str) -> ClientError {
     Problem::new(404, "not_found", &format!("{what} not found")).into()
+}
+
+/// `409 in_use`, shaped like the server's (spec 2.2 §9).
+fn in_use(reason: &str) -> ClientError {
+    Problem::new(409, "in_use", "in use: archive it instead")
+        .with("reason", reason)
+        .into()
 }
 
 /// `422` for catalog rule failures, shaped like `ApiError::catalog_rules`.
@@ -288,7 +311,7 @@ fn magic_ok(bytes: &[u8]) -> bool {
 }
 
 impl State {
-    fn bo_user(&self, token: &str) -> Result<BackOfficeUser, ClientError> {
+    pub(super) fn bo_user(&self, token: &str) -> Result<BackOfficeUser, ClientError> {
         self.catalog
             .tokens
             .get(token)
@@ -299,7 +322,7 @@ impl State {
 
     fn manager(&self, token: &str) -> Result<BackOfficeUser, ClientError> {
         let user = self.bo_user(token)?;
-        if user.manage {
+        if user.manage || user.manage_here {
             Ok(user)
         } else {
             Err(denied(CATALOG_MANAGE))
@@ -744,11 +767,17 @@ impl State {
         })
     }
 
-    fn search(&self, token: &str, q: &str, limit: u32) -> Result<Vec<SearchHit>, ClientError> {
+    fn search(
+        &self,
+        token: &str,
+        q: &str,
+        limit: u32,
+        after: Option<&str>,
+    ) -> Result<SearchPage, ClientError> {
         self.bo_user(token)?;
         let q = q.trim().to_lowercase();
         if q.is_empty() {
-            return Ok(Vec::new());
+            return Ok(SearchPage::default());
         }
         let mut hits = Vec::new();
         for s in self.catalog.products.values() {
@@ -770,8 +799,98 @@ impl State {
                 }
             }
         }
+        if let Some(after) = after {
+            // An unknown cursor ends the search, like the server.
+            let start = hits
+                .iter()
+                .position(|h| h.variant_id == after)
+                .map_or(hits.len(), |i| i + 1);
+            hits.drain(..start);
+        }
         hits.truncate(limit as usize);
-        Ok(hits)
+        let next_after_variant_id = hits
+            .last()
+            .filter(|_| hits.len() == limit as usize)
+            .map(|h| h.variant_id.clone());
+        Ok(SearchPage {
+            items: hits,
+            next_after_variant_id,
+        })
+    }
+
+    fn delete_product(&mut self, token: &str, id: &str) -> Result<(), ClientError> {
+        self.manager(token)?;
+        let stored = self
+            .catalog
+            .products
+            .get(id)
+            .ok_or_else(|| not_found("product"))?;
+        if stored.used {
+            return Err(in_use("used"));
+        }
+        let component = self.catalog.products.values().any(|other| {
+            other.product.id != id
+                && other
+                    .product
+                    .components
+                    .iter()
+                    .any(|c| stored.product.variants.iter().any(|v| v.id == c.variant_id))
+        });
+        if component {
+            return Err(in_use("bundle_component"));
+        }
+        self.catalog.products.remove(id);
+        self.catalog.images.remove(id);
+        self.catalog.blocks.remove(id);
+        self.catalog
+            .events
+            .push(changed("product", "product_id", id));
+        Ok(())
+    }
+
+    fn delete_category(&mut self, token: &str, id: &str) -> Result<(), ClientError> {
+        self.manager(token)?;
+        if !self.catalog.categories.iter().any(|c| c.id == id) {
+            return Err(not_found("category"));
+        }
+        let products = self.catalog.products.values();
+        if products
+            .into_iter()
+            .any(|s| s.product.category_id.as_deref() == Some(id))
+        {
+            return Err(in_use("has_products"));
+        }
+        if self
+            .catalog
+            .categories
+            .iter()
+            .any(|c| c.parent_id.as_deref() == Some(id))
+        {
+            return Err(in_use("has_children"));
+        }
+        self.catalog.categories.retain(|c| c.id != id);
+        self.catalog
+            .events
+            .push(changed("category", "category_id", id));
+        Ok(())
+    }
+
+    fn delete_brand(&mut self, token: &str, id: &str) -> Result<(), ClientError> {
+        self.manager(token)?;
+        if !self.catalog.brands.iter().any(|b| b.id == id) {
+            return Err(not_found("brand"));
+        }
+        if self
+            .catalog
+            .products
+            .values()
+            .any(|s| s.product.brand_id.as_deref() == Some(id))
+        {
+            return Err(in_use("has_products"));
+        }
+        self.catalog.brands.retain(|b| b.id != id);
+        self.catalog.events.push(changed("brand", "brand_id", id));
+        Ok(())
     }
 }
 
@@ -904,6 +1023,100 @@ macro_rules! call {
 }
 
 impl BackOffice for FakeService {
+    fn price_lists(
+        &self,
+        token: &str,
+        include_archived: bool,
+    ) -> crate::BoxFuture<Vec<crate::PriceList>> {
+        call!(self, "price_lists", include_archived.to_string(), |s| s
+            .price_lists(token, include_archived))
+    }
+
+    fn put_price_list(
+        &self,
+        token: &str,
+        id: &str,
+        body: &crate::PriceListBody,
+    ) -> crate::BoxFuture<crate::PriceList> {
+        call!(self, "put_price_list", id.to_owned(), |s| s
+            .put_price_list(token, id, body))
+    }
+
+    fn archive_price_list(
+        &self,
+        token: &str,
+        id: &str,
+        key: &str,
+    ) -> crate::BoxFuture<crate::PriceList> {
+        call!(self, "archive_price_list", format!("{id} key={key}"), |s| s
+            .archive_price_list(token, id))
+    }
+
+    fn price_entries(
+        &self,
+        token: &str,
+        list_id: &str,
+        variant_id: Option<&str>,
+        after: Option<&str>,
+    ) -> crate::BoxFuture<crate::EntryPage> {
+        call!(self, "price_entries", list_id.to_owned(), |s| s
+            .price_entries(token, list_id, variant_id, after))
+    }
+
+    fn put_price_entry(
+        &self,
+        token: &str,
+        list_id: &str,
+        id: &str,
+        body: &crate::PriceEntryBody,
+    ) -> crate::BoxFuture<crate::PriceEntry> {
+        call!(self, "put_price_entry", format!("{list_id}/{id}"), |s| s
+            .put_price_entry(token, list_id, id, body))
+    }
+
+    fn delete_price_entry(&self, token: &str, list_id: &str, id: &str) -> crate::BoxFuture<()> {
+        call!(self, "delete_price_entry", format!("{list_id}/{id}"), |s| s
+            .delete_price_entry(token, list_id, id))
+    }
+
+    fn product_prices(
+        &self,
+        token: &str,
+        product_id: &str,
+    ) -> crate::BoxFuture<crate::ProductPrices> {
+        call!(self, "product_prices", product_id.to_owned(), |s| s
+            .product_prices(token, product_id))
+    }
+
+    fn tax_rates(&self, token: &str, tax_class_id: &str) -> crate::BoxFuture<Vec<crate::TaxRate>> {
+        call!(self, "tax_rates", tax_class_id.to_owned(), |s| s
+            .tax_rates(token, tax_class_id))
+    }
+
+    fn put_tax_rate(
+        &self,
+        token: &str,
+        tax_class_id: &str,
+        rate: &crate::TaxRate,
+    ) -> crate::BoxFuture<Vec<crate::TaxRate>> {
+        call!(self, "put_tax_rate", tax_class_id.to_owned(), |s| s
+            .put_tax_rate(token, tax_class_id, rate))
+    }
+
+    fn pricing_settings(&self, token: &str) -> crate::BoxFuture<crate::PricingSettings> {
+        call!(self, "pricing_settings", String::new(), |s| s
+            .pricing_settings(token))
+    }
+
+    fn put_pricing_settings(
+        &self,
+        token: &str,
+        body: &crate::PricingSettings,
+    ) -> crate::BoxFuture<crate::PricingSettings> {
+        call!(self, "put_pricing_settings", String::new(), |s| s
+            .put_pricing_settings(token, body))
+    }
+
     fn password_login(&self, username: &str, password: &str) -> crate::BoxFuture<Login> {
         call!(self, "password_login", username.to_owned(), |s| {
             let user = s
@@ -937,12 +1150,35 @@ impl BackOffice for FakeService {
             if u.manage {
                 everywhere.push(CATALOG_MANAGE.to_owned());
             }
-            if u.view_archived {
+            if u.view_archived && u.manage {
                 everywhere.push(CATALOG_VIEW_ARCHIVED.to_owned());
             }
             if u.manage || u.manage_here {
                 here.push(CATALOG_MANAGE.to_owned());
             }
+            if u.view_archived {
+                here.push(CATALOG_VIEW_ARCHIVED.to_owned());
+            }
+            // Customer permissions follow the seeded roles (see `customers`).
+            let role = if u.manage {
+                super::customers::Role::Owner
+            } else if u.manage_here {
+                super::customers::Role::Manager
+            } else {
+                super::customers::Role::Cashier
+            };
+            here.extend(role.keys());
+            if u.manage {
+                everywhere.extend(role.keys());
+            }
+            // `price.manage` goes with `catalog.manage` in the fake (pricing module docs).
+            if u.manage {
+                everywhere.push(crate::pricing::PRICE_MANAGE.to_owned());
+            }
+            if u.manage || u.manage_here {
+                here.push(crate::pricing::PRICE_MANAGE.to_owned());
+            }
+            let anywhere = here.clone();
             Me {
                 user_id: u.id,
                 username: u.username,
@@ -951,6 +1187,7 @@ impl BackOffice for FakeService {
                 register_id: None,
                 permissions: here,
                 permissions_everywhere: everywhere,
+                permissions_anywhere: anywhere,
             }
         }))
     }
@@ -1205,7 +1442,125 @@ impl BackOffice for FakeService {
         })
     }
 
-    fn search(&self, token: &str, q: &str, limit: u32) -> crate::BoxFuture<Vec<SearchHit>> {
-        call!(self, "search", q.to_owned(), |s| s.search(token, q, limit))
+    fn search(
+        &self,
+        token: &str,
+        q: &str,
+        limit: u32,
+        after: Option<&str>,
+    ) -> crate::BoxFuture<SearchPage> {
+        call!(self, "search", q.to_owned(), |s| s
+            .search(token, q, limit, after))
+    }
+
+    fn delete_product(&self, token: &str, id: &str) -> crate::BoxFuture<()> {
+        call!(self, "delete_product", id.to_owned(), |s| s
+            .delete_product(token, id))
+    }
+
+    fn delete_category(&self, token: &str, id: &str) -> crate::BoxFuture<()> {
+        call!(self, "delete_category", id.to_owned(), |s| s
+            .delete_category(token, id))
+    }
+
+    fn delete_brand(&self, token: &str, id: &str) -> crate::BoxFuture<()> {
+        call!(self, "delete_brand", id.to_owned(), |s| s
+            .delete_brand(token, id))
+    }
+
+    fn customer(&self, token: &str, id: &str) -> crate::BoxFuture<crate::Customer> {
+        self.bo_customer(token, id)
+    }
+
+    fn put_customer(
+        &self,
+        token: &str,
+        id: &str,
+        body: &crate::CustomerBody,
+    ) -> crate::BoxFuture<crate::Customer> {
+        self.put_customer_call("put_customer", token, id, body)
+    }
+
+    fn set_customer_archived(
+        &self,
+        token: &str,
+        id: &str,
+        archived: bool,
+        key: &str,
+    ) -> crate::BoxFuture<crate::Customer> {
+        self.bo_set_customer_archived(token, id, archived, key)
+    }
+
+    fn merge_customer(
+        &self,
+        token: &str,
+        into: &str,
+        from: &str,
+        key: &str,
+    ) -> crate::BoxFuture<crate::Customer> {
+        self.bo_merge_customer(token, into, from, key)
+    }
+
+    fn erase_customer(
+        &self,
+        token: &str,
+        id: &str,
+        key: &str,
+    ) -> crate::BoxFuture<crate::Customer> {
+        self.bo_erase_customer(token, id, key)
+    }
+
+    fn customer_duplicates(&self, token: &str, page: u32) -> crate::BoxFuture<crate::CustomerPage> {
+        self.bo_review(token, page, false)
+    }
+
+    fn negative_balances(&self, token: &str, page: u32) -> crate::BoxFuture<crate::CustomerPage> {
+        self.bo_review(token, page, true)
+    }
+
+    fn customer_groups(
+        &self,
+        token: &str,
+        include_archived: bool,
+    ) -> crate::BoxFuture<Vec<crate::CustomerGroup>> {
+        self.bo_customer_groups(token, include_archived)
+    }
+
+    fn put_customer_group(
+        &self,
+        token: &str,
+        id: &str,
+        body: &crate::GroupBody,
+    ) -> crate::BoxFuture<crate::CustomerGroup> {
+        self.bo_put_customer_group(token, id, body)
+    }
+
+    fn membership_tiers(
+        &self,
+        token: &str,
+        include_archived: bool,
+    ) -> crate::BoxFuture<Vec<crate::MembershipTier>> {
+        self.bo_membership_tiers(token, include_archived)
+    }
+
+    fn put_membership_tier(
+        &self,
+        token: &str,
+        id: &str,
+        body: &crate::TierBody,
+    ) -> crate::BoxFuture<crate::MembershipTier> {
+        self.bo_put_membership_tier(token, id, body)
+    }
+
+    fn customer_balance_settings(&self, token: &str) -> crate::BoxFuture<crate::BalanceSettings> {
+        self.bo_balance_settings(token)
+    }
+
+    fn put_customer_balance_settings(
+        &self,
+        token: &str,
+        body: &crate::BalanceSettings,
+    ) -> crate::BoxFuture<crate::BalanceSettings> {
+        self.bo_put_balance_settings(token, body)
     }
 }

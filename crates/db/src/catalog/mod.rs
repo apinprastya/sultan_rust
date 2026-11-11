@@ -38,19 +38,20 @@ pub use assortment::{
 };
 pub use lookup::{
     DbCatalogIndex, LookupItem, MAX_SEARCH_LIMIT, SearchHit, VariantLabel, load_index, lookup,
-    search, variant_labels,
+    search, search_page, variant_labels,
 };
 pub use product::{
     MAX_LIST_LIMIT, ProductDoc, ProductFilter, ProductRecord, ProductSummary, archive_product,
-    get_product, list_products, mark_used, put_product, unarchive_product,
+    delete_product, get_product, list_products, mark_used, put_product, unarchive_product,
 };
 pub use settings::{
     CatalogSettings, generate_internal_barcode, generate_product_code, get_catalog_settings,
     put_catalog_settings,
 };
 pub use taxonomy::{
-    CategoryNode, EXEMPT_TAX_CLASS, STANDARD_TAX_CLASS, TaxClass, get_brand, get_category,
-    list_brands, list_categories, list_tax_classes, put_brand, put_category,
+    CategoryNode, EXEMPT_TAX_CLASS, STANDARD_TAX_CLASS, TaxClass, delete_brand, delete_category,
+    get_brand, get_category, list_brands, list_categories, list_tax_classes, put_brand,
+    put_category,
 };
 
 /// Who makes a catalog change, for the audit row (spec 2.1 §7).
@@ -124,6 +125,11 @@ pub enum CatalogDbError {
     /// The entity the operation needs does not exist.
     #[error("not found: {0}")]
     NotFound(&'static str),
+    /// A hard delete of a row that is referenced (spec 2.2 §9: archive it instead). The reason
+    /// is `used` (a variant was sold, moved or priced), `bundle_component` (a variant is in
+    /// another bundle), `has_products` or `has_children`.
+    #[error("in use: {0}")]
+    InUse(&'static str),
     /// A database error. A lost race is [`DbError::Conflict`]: see
     /// [`CatalogDbError::is_retryable`].
     #[error(transparent)]
@@ -154,6 +160,7 @@ impl CatalogDbError {
             Self::Rule(errors) => errors.first().map(CatalogError::code),
             Self::Duplicate(d) => Some(d.error.code()),
             Self::NotFound(_) => Some("not_found"),
+            Self::InUse(_) => Some("in_use"),
             Self::Db(_) => None,
         }
     }
@@ -229,7 +236,8 @@ mod tests {
             code.to_string(),
             "product code `P1` is already used (product 00000000-0000-0000-0000-000000000001)"
         );
-        let cases: [(CatalogDbError, Option<&str>, bool); 5] = [
+        let cases: [(CatalogDbError, Option<&str>, bool); 6] = [
+            (CatalogDbError::InUse("used"), Some("in_use"), false),
             (
                 CatalogDbError::Rule(vec![CatalogError::NotFound, CatalogError::Archived]),
                 Some("not_found"),
@@ -263,6 +271,10 @@ mod tests {
         assert_eq!(
             CatalogDbError::NotFound("brand").to_string(),
             "not found: brand"
+        );
+        assert_eq!(
+            CatalogDbError::InUse("has_products").to_string(),
+            "in use: has_products"
         );
         let user = UserId::from_uuid(Uuid::from_u128(3));
         assert_eq!(Actor::user(user).user, Some(user));

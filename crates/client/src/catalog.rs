@@ -49,6 +49,9 @@ pub struct Me {
     /// Permission keys held through a role for all branches.
     #[serde(default)]
     pub permissions_everywhere: Vec<String>,
+    /// Permission keys held through any role assignment (what the catalog needs, spec 2.2 §11).
+    #[serde(default)]
+    pub permissions_anywhere: Vec<String>,
 }
 
 /// `catalog.manage`.
@@ -57,17 +60,26 @@ pub const CATALOG_MANAGE: &str = "catalog.manage";
 pub const CATALOG_VIEW_ARCHIVED: &str = "catalog.view_archived";
 
 impl Me {
-    /// Whether `key` is held for all branches (what the catalog needs, spec 2.2 §12).
+    /// Whether `key` is held for all branches.
     #[must_use]
     pub fn holds_everywhere(&self, key: &str) -> bool {
         self.permissions_everywhere.iter().any(|p| p == key)
     }
 
-    /// Whether `key` is held at the session's branch (it may still be too little for the
-    /// company-wide catalog).
+    /// Whether `key` is held at the session's branch.
     #[must_use]
     pub fn holds_here(&self, key: &str) -> bool {
         self.permissions.iter().any(|p| p == key)
+    }
+
+    /// Whether `key` is held through any role assignment: what `catalog.manage` and
+    /// `catalog.view_archived` need (spec 2.2 §11, decided 2026-11-11). A key held here or
+    /// everywhere is held anywhere too (so an answer without `permissions_anywhere` still works).
+    #[must_use]
+    pub fn holds_anywhere(&self, key: &str) -> bool {
+        self.permissions_anywhere.iter().any(|p| p == key)
+            || self.holds_everywhere(key)
+            || self.holds_here(key)
     }
 }
 
@@ -684,6 +696,16 @@ pub struct SearchHit {
     pub product_type: String,
 }
 
+/// One page of `GET /catalog/search` (spec 2.2 §6, C3b).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SearchPage {
+    /// Hits: prefix matches first, then by name.
+    pub items: Vec<SearchHit>,
+    /// Pass as `after_variant_id` for the next page; `None` on the last page.
+    #[serde(default)]
+    pub next_after_variant_id: Option<String>,
+}
+
 /// `GET /catalog/lookup?code=`: what a scanned or typed code resolved to (spec 2.2 §6
 /// "Result"). The display fields after `name` arrived with phase C5; an older server leaves them
 /// empty.
@@ -725,7 +747,8 @@ pub struct Lookup {
     /// The code that matched, as stored.
     #[serde(default)]
     pub matched_code: String,
-    /// Quantity in thousandths; `None` for a price-embedded scale code.
+    /// Quantity in thousandths; for a price-embedded scale code the amount ÷ `unit_price`
+    /// (`None` without a store price).
     #[serde(default)]
     pub qty_thousandths: Option<i64>,
     /// Line amount of a price-embedded scale code (minor units).
@@ -734,6 +757,10 @@ pub struct Lookup {
     /// The branch whose assortment applied (`None`: none).
     #[serde(default)]
     pub branch_id: Option<String>,
+    /// The store price (branch → default list, no customer) of one unit, minor units; `None`
+    /// when no list prices it (spec 2.3 §10).
+    #[serde(default)]
+    pub unit_price: Option<i64>,
 }
 
 #[cfg(test)]

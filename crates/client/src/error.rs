@@ -117,6 +117,38 @@ impl Problem {
     pub fn field(&self) -> Option<&str> {
         self.text("field")
     }
+
+    /// `in_use` (spec 2.2 §9): why the row cannot be deleted (`used`, `bundle_component`,
+    /// `has_products`, `has_children`).
+    #[must_use]
+    pub fn reason(&self) -> Option<&str> {
+        self.text("reason")
+    }
+
+    /// `phone_taken` (spec 2.5 §7): the code of the customer holding the phone, e.g.
+    /// `K7QH-29XM`, so the cashier can pick that customer instead.
+    #[must_use]
+    pub fn customer_code(&self) -> Option<&str> {
+        self.text("customer_code")
+    }
+
+    /// `phone_taken`: that customer's masked phone, e.g. `0812****789`.
+    #[must_use]
+    pub fn masked_phone(&self) -> Option<&str> {
+        self.text("masked_phone")
+    }
+
+    /// `insufficient_balance` / `balance_not_zero` (spec 2.5 §11): the customer balance.
+    #[must_use]
+    pub fn balance(&self) -> Option<i64> {
+        self.int("balance")
+    }
+
+    /// `balance_limit` (spec 2.5 §11): the most that can still be saved.
+    #[must_use]
+    pub fn max(&self) -> Option<i64> {
+        self.int("max")
+    }
 }
 
 /// One entry of a catalog rule failure's `errors` (spec 2.2 §12).

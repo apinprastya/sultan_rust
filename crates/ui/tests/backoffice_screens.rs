@@ -438,11 +438,11 @@ fn a_user_without_catalog_manage_reads_only() {
     let fake = FakeService::default();
     fake.seed_product(&id(), &kaos("KAOS01", "KB-1"));
     let o = office_with(fake, "id");
-    o.login("budi", "budi-pass-1");
+    o.login("kasir", "kasir-pass-1");
     assert_eq!(o.screen(), "products");
     let banner = o.text(o.app.ui.get_read_only());
     assert!(
-        banner.starts_with("Hanya baca: Anda punya catalog.manage di cabang ini saja"),
+        banner.starts_with("Hanya baca: mengubah katalog butuh izin catalog.manage"),
         "{banner}"
     );
     assert!(!o.app.ui.get_list().can_edit);
@@ -456,6 +456,81 @@ fn a_user_without_catalog_manage_reads_only() {
     assert!(o.fake.calls_of("put_product").is_empty());
     o.press(&["Esc"]);
     assert_eq!(o.screen(), "products");
+}
+
+/// C3b (spec 2.2 §11): `catalog.manage` at one branch is enough, so Budi (Manager at one
+/// branch) edits the catalog.
+#[test]
+fn a_branch_manager_may_edit() {
+    let o = office_with(FakeService::default(), "en");
+    o.login("budi", "budi-pass-1");
+    assert_eq!(o.screen(), "products");
+    assert_eq!(o.app.ui.get_read_only().code, "");
+    assert!(o.app.ui.get_list().can_edit && o.app.ui.get_list().show_archived);
+}
+
+/// C3b (spec 2.2 §9): Delete on the product list and in the category and brand editors asks
+/// first; a used entry is refused with a translated `in_use` message.
+#[test]
+fn delete_never_used_entries() {
+    let fake = FakeService::default();
+    let food = id();
+    fake.seed_category(
+        &food,
+        &CategoryBody {
+            name: "Makanan".into(),
+            ..CategoryBody::default()
+        },
+    );
+    fake.seed_brand(&id(), "Indomie");
+    let sold = fake.seed_product(&id(), &kaos("KAOS01", "KB-1"));
+    fake.mark_used(&sold.id);
+    let mut typo = kaos("KAOS02", "KB-2");
+    typo.category_id = Some(food.clone());
+    let typo = fake.seed_product(&id(), &typo);
+    let o = office_with(fake, "id");
+    o.owner();
+    // The newest row (the typo) is highlighted: the button asks, naming it; "Tidak" keeps it.
+    o.click("Hapus produk");
+    assert_eq!(o.app.ui.get_confirm(), "delete-product");
+    assert_eq!(o.app.ui.get_confirm_name(), "Kaos Polos");
+    o.press(&["Esc"]);
+    assert_eq!(o.app.ui.get_confirm(), "");
+    // The category is in use while the typo has it.
+    o.press(&["F3"]);
+    o.press(&["Control", "Shift", "D"]);
+    assert_eq!(o.app.ui.get_confirm(), "delete-category");
+    o.press(&["Enter"]);
+    assert_eq!(
+        o.text(o.app.ui.get_category_editor().notice),
+        "Tidak bisa dihapus: masih dipakai produk (termasuk yang diarsipkan). Arsipkan saja."
+    );
+    // Delete the typo (Ctrl+Shift+D, Enter), then the sold product is refused.
+    o.press(&["F2"]);
+    o.press(&["Control", "Shift", "D"]);
+    o.press(&["Enter"]);
+    assert!(o.fake.stored_product(&typo.id).is_none());
+    assert_eq!(o.text(o.app.ui.get_list().notice), "Dihapus.");
+    assert_eq!(o.rows().len(), 1);
+    o.click("Hapus produk");
+    o.click("Hapus");
+    assert!(o.fake.stored_product(&sold.id).is_some());
+    assert_eq!(
+        o.text(o.app.ui.get_list().notice),
+        "Tidak bisa dihapus: produk sudah pernah dijual, distok, atau diberi harga. Arsipkan saja."
+    );
+    // Now the category and the brand go.
+    o.press(&["F3"]);
+    o.click("Hapus kategori");
+    o.press(&["Enter"]);
+    assert!(o.fake.stored_categories().is_empty());
+    assert_eq!(o.app.ui.get_category_rows().row_count(), 0);
+    o.press(&["F4"]);
+    o.click("Hapus merek");
+    assert_eq!(o.app.ui.get_confirm(), "delete-brand");
+    o.click("Hapus");
+    assert!(o.fake.stored_brands().is_empty());
+    assert_eq!(o.text(o.app.ui.get_brand_editor().notice), "Dihapus.");
 }
 
 #[test]

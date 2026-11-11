@@ -1158,9 +1158,6 @@ msgstr "Nominal di label"
 msgid "Price"
 msgstr "Harga"
 
-msgid "Prices and the cart arrive in a later version."
-msgstr "Harga dan keranjang belanja hadir di versi berikutnya."
-
 # Start screen (ui/start.slint) and the way back to it (F9).
 msgid "Sultan POS · Start"
 msgstr "Sultan POS · Mulai"
@@ -1274,6 +1271,9 @@ msgstr "Terminal di toko ini"
 msgid "Other cash registers (terminals) on the shop network can use this computer's server."
 msgstr "Kasir lain (terminal) di jaringan toko dapat memakai server komputer ini."
 
+msgid "This computer's address"
+msgstr "Alamat komputer ini"
+
 msgid "Allow terminals to connect"
 msgstr "Izinkan terminal terhubung"
 
@@ -1300,3 +1300,952 @@ msgstr "Terminal tetap memerlukan login manajer atau kode pairing untuk terhubun
 
 msgid "If a terminal cannot connect, allow incoming TCP port {} in this computer's firewall."
 msgstr "Jika terminal tidak bisa terhubung, izinkan koneksi masuk ke port TCP {} di firewall komputer ini."
+
+msgid "Delete the product {}?"
+msgstr "Hapus produk {}?"
+
+msgid "Delete the category {}?"
+msgstr "Hapus kategori {}?"
+
+msgid "Delete the brand {}?"
+msgstr "Hapus merek {}?"
+
+msgid "Only an entry that was never used can be deleted, e.g. a typo. Deleting cannot be undone; anything in use must be archived instead."
+msgstr "Hanya data yang belum pernah dipakai yang bisa dihapus, misalnya salah ketik. Penghapusan tidak bisa dibatalkan; yang sudah dipakai harus diarsipkan."
+
+msgid "Delete"
+msgstr "Hapus"
+
+msgid "Delete product"
+msgstr "Hapus produk"
+
+msgid "Delete category"
+msgstr "Hapus kategori"
+
+msgid "Delete brand"
+msgstr "Hapus merek"
+
+msgid "Read-only: changing the catalog needs the permission catalog.manage. Ask the owner."
+msgstr "Hanya baca: mengubah katalog butuh izin catalog.manage. Tanyakan pemilik."
+
+msgid "Not allowed: this needs the permission {}."
+msgstr "Tidak diizinkan: ini butuh izin {}."
+
+msgid "Deleted."
+msgstr "Dihapus."
+
+msgid "Cannot delete: the product has been sold, stocked or priced. Archive it instead."
+msgstr "Tidak bisa dihapus: produk sudah pernah dijual, distok, atau diberi harga. Arsipkan saja."
+
+msgid "Cannot delete: the product is part of a bundle. Archive it instead."
+msgstr "Tidak bisa dihapus: produk menjadi bagian dari paket. Arsipkan saja."
+
+msgid "Cannot delete: products use it (archived ones too). Archive it instead."
+msgstr "Tidak bisa dihapus: masih dipakai produk (termasuk yang diarsipkan). Arsipkan saja."
+
+msgid "Cannot delete: the category has subcategories. Delete or move them first, or archive it."
+msgstr "Tidak bisa dihapus: kategori ini punya subkategori. Hapus atau pindahkan dulu, atau arsipkan."
+
+msgid "Cannot delete: it is in use. Archive it instead."
+msgstr "Tidak bisa dihapus: masih dipakai. Arsipkan saja."
+
+# Register customer step (spec 2.5, phase M5): ui/app.slint (CustomerStrip, CustomerDialog) and
+# ui/theme.slint (messages, chips).
+msgid "CUSTOMER"
+msgstr "PELANGGAN"
+
+msgid "Attached customer"
+msgstr "Pelanggan terpasang"
+
+msgid "No customer attached"
+msgstr "Belum ada pelanggan"
+
+msgid "None. F3 finds a customer or signs one up."
+msgstr "Belum ada. F3 mencari atau mendaftarkan pelanggan."
+
+msgid "Balance {}"
+msgstr "Saldo {}"
+
+msgid "Find a customer"
+msgstr "Cari pelanggan"
+
+msgid "Type part of the name or the company name, then press Enter."
+msgstr "Ketik sebagian nama atau nama perusahaan, lalu tekan Enter."
+
+msgid "Type the phone number or the member code, or scan the member card, then press Enter."
+msgstr "Ketik nomor HP atau kode member, atau pindai kartu member, lalu tekan Enter."
+
+msgid "Phone or member code"
+msgstr "Nomor HP atau kode member"
+
+msgid "e.g. Budi"
+msgstr "mis. Budi"
+
+msgid "e.g. 0812 3456 789 or K7QH-29XM"
+msgstr "mis. 0812 3456 789 atau K7QH-29XM"
+
+msgid "Attached"
+msgstr "Terpasang"
+
+msgid "Member code"
+msgstr "Kode member"
+
+msgid "Phone"
+msgstr "Nomor HP"
+
+# Back office: customers (spec 2.5, phase M4)
+
+msgid "Customers"
+msgstr "Pelanggan"
+
+msgid "Archive the customer {}?"
+msgstr "Arsipkan pelanggan {}?"
+
+msgid "Unarchive the customer {}?"
+msgstr "Aktifkan lagi pelanggan {}?"
+
+msgid "Merge {} into {}?"
+msgstr "Gabungkan {} ke {}?"
+
+msgid "The customer has unsaved changes. They are lost if you leave now."
+msgstr "Data pelanggan ini belum disimpan. Perubahannya hilang jika Anda keluar sekarang."
+
+msgid "The till no longer finds an archived customer. Sales and the balance stay; unarchive brings the customer back."
+msgstr "Kasir tidak bisa lagi menemukan pelanggan yang diarsipkan. Penjualan dan saldo tetap ada; aktifkan lagi untuk mengembalikannya."
+
+msgid "The till finds the customer again."
+msgstr "Kasir bisa menemukan pelanggan ini lagi."
+
+msgid "{1} keeps its own details; only its empty fields are filled from {0} (the phone too when {1} has none), and its group and tier when it has none. The balance of {0} moves to {1}. {0} is archived; its code and phone still find {1} at the till. This cannot be undone."
+msgstr "{1} tetap memakai datanya sendiri; hanya kolom yang kosong diisi dari {0} (termasuk telepon jika {1} belum punya), begitu juga grup dan tingkat jika belum ada. Saldo {0} pindah ke {1}. {0} diarsipkan; kode dan teleponnya tetap menemukan {1} di kasir. Ini tidak bisa dibatalkan."
+
+msgid "Merge"
+msgstr "Gabungkan"
+
+msgid "Customer list"
+msgstr "Daftar pelanggan"
+
+msgid "Groups"
+msgstr "Grup"
+
+msgid "Tiers"
+msgstr "Tingkat"
+
+msgid "Possible duplicates"
+msgstr "Kemungkinan duplikat"
+
+msgid "Negative balances"
+msgstr "Saldo minus"
+
+msgid "Balance settings"
+msgstr "Pengaturan saldo"
+
+msgid "No customers found."
+msgstr "Tidak ada pelanggan."
+
+msgid "Group"
+msgstr "Grup"
+
+msgid "Tier"
+msgstr "Tingkat"
+
+msgid "{} (expired {})"
+msgstr "{} (berakhir {})"
+
+msgid "{} · until {}"
+msgstr "{} · sampai {}"
+
+msgid "Balance"
+msgstr "Saldo"
+
+msgid "On the receipt"
+msgstr "Di struk"
+
+msgid "RECENT RECEIPTS"
+msgstr "STRUK TERAKHIR"
+
+msgid "No receipts yet. The 5 most recent receipts show here once selling arrives."
+msgstr "Belum ada struk. 5 struk terakhir tampil di sini setelah fitur penjualan tersedia."
+
+msgid "Search name or company  ( / )"
+msgstr "Cari nama atau perusahaan  ( / )"
+
+msgid "New customer"
+msgstr "Pelanggan baru"
+
+msgid "Type the name and, if the customer wants, the phone number. The member code is given automatically. Tab moves to the next field."
+msgstr "Ketik nama dan, bila pelanggan mau, nomor HP. Kode member dibuat otomatis. Tab pindah ke kolom berikutnya."
+
+msgid "Full name"
+msgstr "Nama lengkap"
+
+msgid "Phone (optional)"
+msgstr "Nomor HP (opsional)"
+
+msgid "e.g. 0812 3456 789"
+msgstr "mis. 0812 3456 789"
+
+msgid "Pay out the balance"
+msgstr "Cairkan saldo"
+
+msgid "{} has a balance of {}. The amount is paid in cash from your drawer."
+msgstr "{} punya saldo {}. Jumlahnya dibayar tunai dari laci Anda."
+
+msgid "Amount to pay out"
+msgstr "Jumlah yang dicairkan"
+
+msgid "Pay out {} in cash to {}?"
+msgstr "Cairkan {} secara tunai kepada {}?"
+
+msgid "Enter pays out. Esc changes the amount."
+msgstr "Enter mencairkan. Esc mengubah jumlah."
+
+msgid "Customer attached: {}"
+msgstr "Pelanggan terpasang: {}"
+
+msgid "Customer detached."
+msgstr "Pelanggan dilepas."
+
+msgid "No customer has the phone or member code {}."
+msgstr "Tidak ada pelanggan dengan nomor HP atau kode member {}."
+
+msgid "That is not a valid phone number."
+msgstr "Nomor HP tidak valid."
+
+msgid "{} is not a valid member code."
+msgstr "{} bukan kode member yang valid."
+
+msgid "This phone already belongs to customer {}. F8 shows that customer."
+msgstr "Nomor HP ini sudah dipakai pelanggan {}. F8 menampilkan pelanggan itu."
+
+msgid "The balance is only {}."
+msgstr "Saldonya hanya {}."
+
+msgid "The name is too long or not valid."
+msgstr "Nama terlalu panjang atau tidak valid."
+
+msgid "A field is not valid ({})."
+msgstr "Ada kolom yang tidak valid ({})."
+
+msgid "Type a phone number or a member code first."
+msgstr "Ketik nomor HP atau kode member dulu."
+
+msgid "Type part of a name first."
+msgstr "Ketik sebagian nama dulu."
+
+msgid "No customer is named “{}”."
+msgstr "Tidak ada pelanggan bernama “{}”."
+
+msgid "The name is required."
+msgstr "Nama wajib diisi."
+
+msgid "Signed up. Member code {}. Enter attaches the customer."
+msgstr "Terdaftar. Kode member {}. Enter memasang pelanggan ini."
+
+msgid "Paid out {} in cash."
+msgstr "{} dicairkan secara tunai."
+
+msgid "Customer"
+msgstr "Pelanggan"
+
+msgid "Detach customer"
+msgstr "Lepas pelanggan"
+
+msgid "Find"
+msgstr "Cari"
+
+msgid "Search by name"
+msgstr "Cari nama"
+
+msgid "Phone or code"
+msgstr "HP atau kode"
+
+msgid "Close"
+msgstr "Tutup"
+
+msgid "Attach"
+msgstr "Pasang"
+
+msgid "Pay out"
+msgstr "Cairkan"
+
+msgid "Yes, pay out"
+msgstr "Ya, cairkan"
+
+msgid "Change amount"
+msgstr "Ubah jumlah"
+
+msgid "Sign up"
+msgstr "Daftarkan"
+
+msgid "Next field"
+msgstr "Kolom berikutnya"
+
+msgid "Show that customer"
+msgstr "Tampilkan pelanggan itu"
+
+msgid "Email"
+msgstr "Email"
+
+msgid "Birthday: day"
+msgstr "Ulang tahun: tanggal"
+
+msgid "Month"
+msgstr "Bulan"
+
+msgid "Year (optional)"
+msgstr "Tahun (opsional)"
+
+msgid "Address"
+msgstr "Alamat"
+
+msgid "Tax ID (NPWP or NIK)"
+msgstr "NPWP atau NIK"
+
+msgid "Tax address"
+msgstr "Alamat pajak"
+
+msgid "Notes for staff (not printed)"
+msgstr "Catatan untuk staf (tidak dicetak)"
+
+msgid "The member code is drawn when you save."
+msgstr "Kode member dibuat saat disimpan."
+
+msgid "Personal data erased"
+msgstr "Data pribadi dihapus"
+
+msgid "Erase personal data"
+msgstr "Hapus data pribadi"
+
+msgid "Profile"
+msgstr "Profil"
+
+msgid "Membership"
+msgstr "Keanggotaan"
+
+msgid "Tier valid until (optional, YYYY-MM-DD)"
+msgstr "Tingkat berlaku sampai (opsional, TTTT-BB-HH)"
+
+msgid "The tier has expired: set a new date to renew it."
+msgstr "Masa tingkat sudah habis: isi tanggal baru untuk memperpanjang."
+
+msgid "Manual tier (never automatic)"
+msgstr "Tingkat manual (tidak otomatis)"
+
+msgid "Changing the group or tier needs the permission customer.manage."
+msgstr "Mengubah grup atau tingkat butuh izin customer.manage."
+
+msgid "Balance (saved change)"
+msgstr "Saldo (simpan kembalian)"
+
+msgid "Read-only. Change is saved and spent at the till."
+msgstr "Hanya baca. Kembalian disimpan dan dipakai di kasir."
+
+msgid "No balance entries yet."
+msgstr "Belum ada mutasi saldo."
+
+msgid "Rank (higher = better)"
+msgstr "Peringkat (lebih tinggi = lebih baik)"
+
+msgid "Membership tiers"
+msgstr "Tingkat keanggotaan"
+
+msgid "Customer groups"
+msgstr "Grup pelanggan"
+
+msgid "rank {}"
+msgstr "peringkat {}"
+
+msgid "No tiers yet. Add one, e.g. Silver, Gold, Platinum."
+msgstr "Belum ada tingkat. Tambahkan, mis. Silver, Gold, Platinum."
+
+msgid "No groups yet. Add one, e.g. Wholesale."
+msgstr "Belum ada grup. Tambahkan, mis. Grosir."
+
+msgid "New tier"
+msgstr "Tingkat baru"
+
+msgid "Edit tier"
+msgstr "Ubah tingkat"
+
+msgid "New group"
+msgstr "Grup baru"
+
+msgid "Edit group"
+msgstr "Ubah grup"
+
+msgid "Add tier"
+msgstr "Tambah tingkat"
+
+msgid "Add group"
+msgstr "Tambah grup"
+
+msgid "Price lists can be linked to a tier. An archived tier stops applying; customers keep it until you change it."
+msgstr "Daftar harga bisa dikaitkan ke tingkat. Tingkat yang diarsipkan tidak berlaku lagi; pelanggan tetap memilikinya sampai Anda mengubahnya."
+
+msgid "Price lists can be linked to a group. An archived group stops applying; customers keep it until you move them."
+msgstr "Daftar harga bisa dikaitkan ke grup. Grup yang diarsipkan tidak berlaku lagi; pelanggan tetap di grup itu sampai Anda memindahkannya."
+
+msgid "Customers whose phone was already used by another customer when a branch synced. Merge each into the customer to keep."
+msgstr "Pelanggan yang teleponnya sudah dipakai pelanggan lain saat cabang disinkronkan. Gabungkan masing-masing ke pelanggan yang dipertahankan."
+
+msgid "Clashing phone"
+msgstr "Telepon bentrok"
+
+msgid "No possible duplicates."
+msgstr "Tidak ada kemungkinan duplikat."
+
+msgid "Merge from (archived afterwards)"
+msgstr "Digabungkan dari (lalu diarsipkan)"
+
+msgid "Pick a row in the list."
+msgstr "Pilih baris di daftar."
+
+msgid "Keep: member code"
+msgstr "Pertahankan: kode member"
+
+msgid "Keep"
+msgstr "Dipertahankan"
+
+msgid "The customer with the same phone, or type a code."
+msgstr "Pelanggan dengan telepon yang sama, atau ketik kodenya."
+
+msgid "Merge customers"
+msgstr "Gabungkan pelanggan"
+
+msgid "Swap"
+msgstr "Tukar"
+
+msgid "A balance can go below zero when two branches spend it while offline. The next saved change fills it."
+msgstr "Saldo bisa minus jika dua cabang memakainya saat offline. Kembalian berikutnya yang disimpan akan menutupnya."
+
+msgid "No customer has a negative balance."
+msgstr "Tidak ada pelanggan dengan saldo minus."
+
+msgid "Most change saved per sale (Rp)"
+msgstr "Kembalian maksimal yang disimpan per penjualan (Rp)"
+
+msgid "Most balance per customer (Rp)"
+msgstr "Saldo maksimal per pelanggan (Rp)"
+
+msgid "Customer balance (saved change)"
+msgstr "Saldo pelanggan (simpan kembalian)"
+
+msgid "When coins for change are short, the cashier can save the change to the customer's balance; it pays a later sale. These limits apply to every branch."
+msgstr "Jika uang receh untuk kembalian kurang, kasir bisa menyimpan kembalian ke saldo pelanggan; saldo itu membayar penjualan berikutnya. Batas ini berlaku di semua cabang."
+
+msgid "0 per sale turns saving change off. A merge may go over the most balance."
+msgstr "0 per penjualan mematikan simpan kembalian. Penggabungan boleh melebihi saldo maksimal."
+
+msgid "Erase the personal data of {}?"
+msgstr "Hapus data pribadi {}?"
+
+msgid "The name becomes “Erased customer”; phone, email, birthday, address, company, tax data and notes are blanked and the customer is archived. Sales and receipts stay. This cannot be undone."
+msgstr "Nama menjadi “Erased customer”; telepon, email, ulang tahun, alamat, perusahaan, data pajak, dan catatan dikosongkan, lalu pelanggan diarsipkan. Penjualan dan struk tetap ada. Ini tidak bisa dibatalkan."
+
+msgid "The balance is {}: the erase is refused until it is spent or paid out at the till."
+msgstr "Saldonya {}: penghapusan ditolak sampai saldo dipakai atau dicairkan di kasir."
+
+msgid "Type the member code {} to confirm"
+msgstr "Ketik kode member {} untuk konfirmasi"
+
+msgid "Erase"
+msgstr "Hapus data"
+
+msgid "Listing and searching customers needs the permission {}. You can still add a customer (Ctrl+N)."
+msgstr "Melihat dan mencari pelanggan butuh izin {}. Anda tetap bisa menambah pelanggan (Ctrl+N)."
+
+msgid "Type a name (1 to 100 characters)."
+msgstr "Ketik nama (1 sampai 100 karakter)."
+
+msgid "Not a phone number: use 8 to 15 digits, e.g. 0812-3456-789."
+msgstr "Bukan nomor telepon: pakai 8 sampai 15 angka, mis. 0812-3456-789."
+
+msgid "Not an email address."
+msgstr "Bukan alamat email."
+
+msgid "A tax ID (NPWP or NIK) has 15 or 16 digits."
+msgstr "NPWP atau NIK terdiri dari 15 atau 16 angka."
+
+msgid "Not a date: type the day and the month (the year is optional)."
+msgstr "Bukan tanggal: ketik tanggal dan bulan (tahun opsional)."
+
+msgid "Type the date as YYYY-MM-DD, e.g. 2027-12-31."
+msgstr "Ketik tanggal sebagai TTTT-BB-HH, mis. 2027-12-31."
+
+msgid "Pick a tier first."
+msgstr "Pilih tingkat dulu."
+
+msgid "This phone is already used by the customer {}."
+msgstr "Telepon ini sudah dipakai pelanggan {}."
+
+msgid "The customer is archived. Unarchive the customer first."
+msgstr "Pelanggan ini diarsipkan. Aktifkan lagi dulu."
+
+msgid "This customer was merged into another customer."
+msgstr "Pelanggan ini sudah digabungkan ke pelanggan lain."
+
+msgid "Cannot erase: the balance is {}. It must be spent or paid out at the till first."
+msgstr "Tidak bisa dihapus: saldonya {}. Saldo harus dipakai atau dicairkan di kasir dulu."
+
+msgid "The group or tier no longer exists. Refresh and pick again."
+msgstr "Grup atau tingkat itu sudah tidak ada. Muat ulang dan pilih lagi."
+
+msgid "The customer is archived. The till no longer finds the customer."
+msgstr "Pelanggan diarsipkan. Kasir tidak bisa menemukannya lagi."
+
+msgid "The customer is active again."
+msgstr "Pelanggan aktif lagi."
+
+msgid "The personal data is erased."
+msgstr "Data pribadi sudah dihapus."
+
+msgid "Merged. The customer {} was kept."
+msgstr "Digabungkan. Pelanggan {} dipertahankan."
+
+msgid "Pick the duplicate in the list and the customer to keep."
+msgstr "Pilih duplikat di daftar dan pelanggan yang dipertahankan."
+
+msgid "That is the same customer. Type the code of the customer to keep."
+msgstr "Itu pelanggan yang sama. Ketik kode pelanggan yang dipertahankan."
+
+msgid "No active customer has this code or phone."
+msgstr "Tidak ada pelanggan aktif dengan kode atau telepon ini."
+
+msgid "The rank is a whole number."
+msgstr "Peringkat harus bilangan bulat."
+
+msgid "Another tier has this rank."
+msgstr "Tingkat lain sudah memakai peringkat ini."
+
+msgid "Type an amount in Rupiah, 0 or more."
+msgstr "Isi jumlah dalam Rupiah, 0 atau lebih."
+
+msgid "(No group)"
+msgstr "(Tanpa grup)"
+
+msgid "(No tier)"
+msgstr "(Tanpa tingkat)"
+
+msgid "Change saved"
+msgstr "Kembalian disimpan"
+
+msgid "Paid with the balance"
+msgstr "Dibayar dengan saldo"
+
+msgid "Saved change reversed"
+msgstr "Simpan kembalian dibatalkan"
+
+msgid "Payment reversed"
+msgstr "Pembayaran dibatalkan"
+
+msgid "Paid out in cash"
+msgstr "Dicairkan tunai"
+
+msgid "Moved by a merge"
+msgstr "Dipindah karena penggabungan"
+
+msgid "Received by a merge"
+msgstr "Diterima dari penggabungan"
+
+# Register prices on the barcode lookup (spec 2.3, phase R5): ui/app.slint (PriceBox) and
+# ui/theme.slint (messages, price sources).
+msgid "Amount for this weight"
+msgstr "Nominal untuk berat ini"
+
+msgid "Price per {}"
+msgstr "Harga per {}"
+
+msgid "Typed at sale"
+msgstr "Diketik saat menjual"
+
+msgid "Not priced yet"
+msgstr "Belum ada harga"
+
+msgid "Final amount: {} at {} per {}"
+msgstr "Nominal final: {} dengan harga {} per {}"
+
+msgid "Final amount. No store price, so the quantity stays empty."
+msgstr "Nominal final. Tidak ada harga toko, jadi jumlahnya dikosongkan."
+
+msgid "{} × {} per {}"
+msgstr "{} × {} per {}"
+
+msgid "Open price. Suggested: {}"
+msgstr "Harga bebas. Saran: {}"
+
+msgid "Open price: the cashier types it at sale."
+msgstr "Harga bebas: kasir mengetiknya saat menjual."
+
+msgid "Set a price in the back office before selling."
+msgstr "Atur harganya di back office sebelum menjual."
+
+msgid "Customer price"
+msgstr "Harga pelanggan"
+
+msgid "Checking the customer’s price…"
+msgstr "Memeriksa harga pelanggan…"
+
+msgid "Same as the store price"
+msgstr "Sama dengan harga toko"
+
+msgid "at {} per {}"
+msgstr "dengan harga {} per {}"
+
+msgid "No price is set for this item."
+msgstr "Barang ini belum punya harga."
+
+msgid "This customer or item cannot be priced any more. Detach the customer and find them again."
+msgstr "Pelanggan atau barang ini tidak bisa diberi harga lagi. Lepas pelanggan lalu cari lagi."
+
+msgid "Contract price for this customer"
+msgstr "Harga kontrak pelanggan ini"
+
+msgid "{} member price"
+msgstr "Harga member {}"
+
+msgid "Member tier price"
+msgstr "Harga tingkat member"
+
+msgid "{} group price"
+msgstr "Harga grup {}"
+
+msgid "Customer group price"
+msgstr "Harga grup pelanggan"
+
+msgid "This branch’s price"
+msgstr "Harga cabang ini"
+
+msgid "Default store price"
+msgstr "Harga toko standar"
+
+# Pricing (spec 2.3, phase R4): price lists, tax rates, pricing settings, the Prices tab.
+msgid "Prices"
+msgstr "Harga"
+
+msgid "Archive the price list {}?"
+msgstr "Arsipkan daftar harga {}?"
+
+msgid "Delete this price?"
+msgstr "Hapus harga ini?"
+
+msgid "Switch to prices with tax included?"
+msgstr "Beralih ke harga termasuk pajak?"
+
+msgid "Switch to prices without tax?"
+msgstr "Beralih ke harga belum termasuk pajak?"
+
+msgid "The list stops applying at once; sales already made keep their prices."
+msgstr "Daftar langsung tidak berlaku; penjualan yang sudah terjadi tetap dengan harganya."
+
+msgid "Only a price never used by a sale can be deleted. Otherwise give it a last day instead."
+msgstr "Hanya harga yang belum pernah dipakai penjualan yang bisa dihapus. Selain itu, beri hari terakhir."
+
+msgid "Stored prices are not converted: a price of Rp 11.100 stays Rp 11.100 and is read the new way. Check your prices after the switch."
+msgstr "Harga yang tersimpan tidak dikonversi: harga Rp 11.100 tetap Rp 11.100 dan dibaca dengan cara baru. Periksa harga Anda setelah beralih."
+
+msgid "First day (empty = always)"
+msgstr "Hari pertama (kosong = selalu)"
+
+msgid "Last day (empty = open)"
+msgstr "Hari terakhir (kosong = terbuka)"
+
+msgid "From quantity ({})"
+msgstr "Mulai jumlah ({})"
+
+msgid "Amount (Rp), or the rule in % or Rp"
+msgstr "Jumlah (Rp), atau aturan dalam % atau Rp"
+
+msgid "From quantity"
+msgstr "Mulai jumlah"
+
+msgid "Fixed price"
+msgstr "Harga tetap"
+
+msgid "± %"
+msgstr "± %"
+
+msgid "± Rp"
+msgstr "± Rp"
+
+msgid "Remove tier"
+msgstr "Hapus tingkat"
+
+msgid "Save the product first; then its prices can be set here."
+msgstr "Simpan produk dulu; setelah itu harganya bisa diatur di sini."
+
+msgid "Price list"
+msgstr "Daftar harga"
+
+msgid "Next list"
+msgstr "Daftar berikutnya"
+
+msgid "{}; list rule {} for items without a price here."
+msgstr "{}; aturan daftar {} untuk barang tanpa harga di sini."
+
+msgid "New price"
+msgstr "Harga baru"
+
+msgid "Schedule new price"
+msgstr "Jadwalkan harga baru"
+
+msgid "Valid"
+msgstr "Berlaku"
+
+msgid "Quantity → price"
+msgstr "Jumlah → harga"
+
+msgid "Always"
+msgstr "Selalu"
+
+msgid "No price in the default list yet: the item has no price at the till."
+msgstr "Belum ada harga di daftar utama: barang ini tidak punya harga di kasir."
+
+msgid "No price in this list: the item gets the price of the next list (with the list rule, if any)."
+msgstr "Tidak ada harga di daftar ini: barang memakai harga daftar berikutnya (dengan aturan daftar, bila ada)."
+
+msgid "Edit price"
+msgstr "Ubah harga"
+
+msgid "A tier prices the whole line from its quantity on (the same variant across the cart counts). A rule is relative to the price the item would have without this list."
+msgstr "Satu tingkat menghargai seluruh baris mulai jumlahnya (varian yang sama di seluruh keranjang dihitung). Aturan dihitung dari harga barang tanpa daftar ini."
+
+msgid "Save price"
+msgstr "Simpan harga"
+
+msgid "Delete price"
+msgstr "Hapus harga"
+
+msgid "Price lists"
+msgstr "Daftar harga"
+
+msgid "Tax rates"
+msgstr "Tarif pajak"
+
+msgid "Pricing settings"
+msgstr "Pengaturan harga"
+
+msgid "The default list prices every item at every branch. It cannot be switched off, archived or given a rule."
+msgstr "Daftar utama menghargai semua barang di semua cabang. Daftar ini tidak bisa dimatikan, diarsipkan, atau diberi aturan."
+
+msgid "Applies to"
+msgstr "Berlaku untuk"
+
+msgid "A branch"
+msgstr "Satu cabang"
+
+msgid "A customer group"
+msgstr "Satu grup pelanggan"
+
+msgid "A membership tier"
+msgstr "Satu tingkat keanggotaan"
+
+msgid "One customer (contract prices)"
+msgstr "Satu pelanggan (harga kontrak)"
+
+msgid "Customer: member code or phone"
+msgstr "Pelanggan: kode member atau telepon"
+
+msgid "Find customer"
+msgstr "Cari pelanggan"
+
+msgid "{}: {}"
+msgstr "{}: {}"
+
+msgid "Active (switched off: the list does not apply)"
+msgstr "Aktif (dimatikan: daftar tidak berlaku)"
+
+msgid "List rule"
+msgstr "Aturan daftar"
+
+msgid "No rule"
+msgstr "Tanpa aturan"
+
+msgid "Percent, e.g. -5"
+msgstr "Persen, mis. -5"
+
+msgid "Rupiah, e.g. -500"
+msgstr "Rupiah, mis. -500"
+
+msgid "The rule prices every item without its own price in this list, from the price of the next list (e.g. Gold −5%)."
+msgstr "Aturan menghargai setiap barang yang tidak punya harga sendiri di daftar ini, dari harga daftar berikutnya (mis. Gold −5%)."
+
+msgid "Kind"
+msgstr "Jenis"
+
+msgid "Every branch"
+msgstr "Semua cabang"
+
+msgid "off"
+msgstr "mati"
+
+msgid "A sale takes the first list that prices the item: the customer's contract, the tier, the group, the branch, then the default list."
+msgstr "Penjualan memakai daftar pertama yang menghargai barang: kontrak pelanggan, tingkat, grup, cabang, lalu daftar utama."
+
+msgid "New price list"
+msgstr "Daftar harga baru"
+
+msgid "Edit price list"
+msgstr "Ubah daftar harga"
+
+msgid "New list"
+msgstr "Daftar baru"
+
+msgid "New rate (%)"
+msgstr "Tarif baru (%)"
+
+msgid "From (YYYY-MM-DD)"
+msgstr "Mulai (TTTT-BB-HH)"
+
+msgid "Tax classes"
+msgstr "Kelas pajak"
+
+msgid "Tax classes are set on each product (General tab)."
+msgstr "Kelas pajak diatur di setiap produk (tab Umum)."
+
+msgid "Rates of {}"
+msgstr "Tarif {}"
+
+msgid "From"
+msgstr "Mulai"
+
+msgid "Rate"
+msgstr "Tarif"
+
+msgid "No rate: the class counts as 0%."
+msgstr "Tidak ada tarif: kelas ini dihitung 0%."
+
+msgid "Add a rate"
+msgstr "Tambah tarif"
+
+msgid "A sale uses the rate with the latest first day on or before the sale date, so a rate change can be entered ahead of time. A rate for a day that already has one replaces it."
+msgstr "Penjualan memakai tarif dengan hari pertama terakhir pada atau sebelum tanggal penjualan, jadi perubahan tarif bisa dimasukkan lebih awal. Tarif untuk hari yang sudah punya tarif akan menggantikannya."
+
+msgid "Add rate"
+msgstr "Tambah tarif"
+
+msgid "Prices include tax (PPN)"
+msgstr "Harga termasuk pajak (PPN)"
+
+msgid "On: a price of Rp 11.100 includes Rp 1.100 PPN. Off: the PPN is added on top. Every price follows this setting."
+msgstr "Aktif: harga Rp 11.100 sudah termasuk PPN Rp 1.100. Mati: PPN ditambahkan di atas harga. Semua harga mengikuti pengaturan ini."
+
+msgid "Stored prices are not converted: every price keeps its amount and is read the new way. Check your prices after saving."
+msgstr "Harga yang tersimpan tidak dikonversi: setiap harga tetap jumlahnya dan dibaca dengan cara baru. Periksa harga Anda setelah menyimpan."
+
+msgid "Tax-registered (PKP)"
+msgstr "Terdaftar pajak (PKP)"
+
+msgid "Off: no tax is computed or printed, and prices are charged as entered."
+msgstr "Mati: pajak tidak dihitung atau dicetak, dan harga ditagih sesuai yang dimasukkan."
+
+msgid "Cash rounding"
+msgstr "Pembulatan tunai"
+
+msgid "None"
+msgstr "Tidak ada"
+
+msgid "To the nearest Rp 100"
+msgstr "Ke Rp 100 terdekat"
+
+msgid "Down to Rp 100"
+msgstr "Ke bawah ke Rp 100"
+
+msgid "To the nearest Rp 500"
+msgstr "Ke Rp 500 terdekat"
+
+msgid "Down to Rp 500"
+msgstr "Ke bawah ke Rp 500"
+
+msgid "Applies only when cash pays the rest of a sale; card and QRIS pay the exact amount."
+msgstr "Hanya berlaku bila tunai membayar sisa penjualan; kartu dan QRIS membayar jumlah pas."
+
+msgid "Read-only: changing prices needs the permission price.manage. Ask the owner."
+msgstr "Hanya baca: mengubah harga memerlukan izin price.manage. Tanyakan pemilik."
+
+msgid "The default list cannot be archived, switched off or given a rule."
+msgstr "Daftar utama tidak bisa diarsipkan, dimatikan, atau diberi aturan."
+
+msgid "Another active price list already applies to this target ({}). Switch it off or archive it first."
+msgstr "Daftar harga aktif lain sudah berlaku untuk sasaran ini ({}). Matikan atau arsipkan dulu."
+
+msgid "The branch, group, tier or customer no longer exists. Pick again."
+msgstr "Cabang, grup, tingkat, atau pelanggan sudah tidak ada. Pilih lagi."
+
+msgid "Pick what the list applies to."
+msgstr "Pilih untuk apa daftar ini berlaku."
+
+msgid "Type a number, e.g. -5 for 5% off or -500 for Rp 500 off."
+msgstr "Isi angka, mis. -5 untuk potongan 5% atau -500 untuk potongan Rp 500."
+
+msgid "This rule is not allowed: the default list takes fixed prices only, and a discount must be less than 100%."
+msgstr "Aturan ini tidak diperbolehkan: daftar utama hanya berisi harga tetap, dan potongan harus kurang dari 100%."
+
+msgid "The price list {} is archived. It no longer applies."
+msgstr "Daftar harga {} sudah diarsipkan. Daftar ini tidak berlaku lagi."
+
+msgid "Pick a variant."
+msgstr "Pilih varian."
+
+msgid "Pick a unit."
+msgstr "Pilih satuan."
+
+msgid "The last day is before the first day."
+msgstr "Hari terakhir sebelum hari pertama."
+
+msgid "A price has 1 to 10 tiers."
+msgstr "Satu harga punya 1 sampai 10 tingkat."
+
+msgid "Another tier starts at this quantity."
+msgstr "Tingkat lain sudah mulai di jumlah ini."
+
+msgid "Pick a price in the list first."
+msgstr "Pilih harga di daftar dulu."
+
+msgid "The new price starts on its first day; saving it ends the current price the day before."
+msgstr "Harga baru mulai pada hari pertamanya; menyimpannya mengakhiri harga sekarang sehari sebelumnya."
+
+msgid "The new price must start after the current one starts."
+msgstr "Harga baru harus mulai setelah harga sekarang mulai."
+
+msgid "The dates overlap another price of the same variant and unit ({}). Give that one a last day first, or use “Schedule new price”."
+msgstr "Tanggalnya bertumpang tindih dengan harga lain untuk varian dan satuan yang sama ({}). Beri harga itu hari terakhir dulu, atau pakai “Jadwalkan harga baru”."
+
+msgid "Overlaps another price."
+msgstr "Bertumpang tindih dengan harga lain."
+
+msgid "The variant or unit no longer exists. Reload the product."
+msgstr "Varian atau satuan sudah tidak ada. Muat ulang produk."
+
+msgid "Each tier needs a quantity above zero (at most 3 decimals), used once."
+msgstr "Setiap tingkat perlu jumlah di atas nol (paling banyak 3 desimal), dipakai sekali."
+
+msgid "A fixed price is 0 or more."
+msgstr "Harga tetap 0 atau lebih."
+
+msgid "Type a rate between 0 and 100, e.g. 11 or 11.5."
+msgstr "Isi tarif antara 0 dan 100, mis. 11 atau 11.5."
+
+msgid "Default"
+msgstr "Utama"
+
+msgid "Customer group"
+msgstr "Grup pelanggan"
+
+msgid "Membership tier"
+msgstr "Tingkat keanggotaan"
+
+msgid "(Pick…)"
+msgstr "(Pilih…)"
+
+msgid "Current"
+msgstr "Berlaku"
+
+msgid "Scheduled"
+msgstr "Terjadwal"
+
+msgid "Ended"
+msgstr "Berakhir"
+
+msgid "Pricing"
+msgstr "Harga"

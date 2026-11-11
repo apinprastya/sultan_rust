@@ -45,7 +45,7 @@ fn tabs_of_fields() {
     for (field, tab) in cases {
         assert_eq!(Tab::of_field(field), tab, "{field}");
     }
-    assert_eq!(Tab::ALL.map(Tab::index), [0, 1, 2]);
+    assert_eq!(Tab::ALL.map(Tab::index), [0, 1, 2, 3]);
 }
 
 #[test]

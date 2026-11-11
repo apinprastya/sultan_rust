@@ -79,6 +79,30 @@ pub struct Problem {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schema(value_type = Option<Object>)]
     pub value: Option<serde_json::Value>,
+    /// `phone_taken`: the customer that holds the phone.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub customer_id: Option<String>,
+    /// `phone_taken`: that customer's code as shown, e.g. `K7QH-29XM`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub customer_code: Option<String>,
+    /// `phone_taken`: that customer's masked phone, e.g. `0812****789`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub masked_phone: Option<String>,
+    /// `balance_limit`: the most that can still be saved, minor units.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max: Option<i64>,
+    /// `insufficient_balance`, `balance_not_zero`: the customer balance, minor units.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub balance: Option<i64>,
+    /// `price_list_conflict`: the live price list that already has the target.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub price_list_id: Option<String>,
+    /// `price_overlap`: the entry whose dates overlap.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub entry_id: Option<String>,
+    /// `no_price`: the resolved price of an open-price line, as a suggestion (or `null`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub suggestion: Option<i64>,
 }
 
 struct SecuritySchemes;
@@ -101,7 +125,8 @@ impl Modify for SecuritySchemes {
 #[derive(OpenApi)]
 #[openapi(
     info(title = "Sultan POS API", description = "REST/JSON API of a Sultan POS node \
-        (docs/plan.md §1, docs/spec/2.1-organization-access.md, docs/spec/2.2-catalog.md). \
+        (docs/plan.md §1, docs/spec/2.1-organization-access.md, docs/spec/2.2-catalog.md, \
+        docs/spec/2.3-pricing.md, docs/spec/2.5-customers.md). \
         Quantities and unit factors are integer thousandths (`*_thousandths`), money is integer \
         minor units, times are unix milliseconds."),
     paths(
@@ -148,6 +173,7 @@ impl Modify for SecuritySchemes {
         routes::products::list,
         routes::products::get,
         routes::products::put,
+        routes::products::delete,
         routes::products::archive,
         routes::products::unarchive,
         routes::products::get_branch_blocks,
@@ -158,9 +184,11 @@ impl Modify for SecuritySchemes {
         routes::taxonomy::list_categories,
         routes::taxonomy::get_category,
         routes::taxonomy::put_category,
+        routes::taxonomy::delete_category,
         routes::taxonomy::list_brands,
         routes::taxonomy::get_brand,
         routes::taxonomy::put_brand,
+        routes::taxonomy::delete_brand,
         routes::catalog::tax_classes,
         routes::catalog::lookup,
         routes::catalog::search,
@@ -168,6 +196,41 @@ impl Modify for SecuritySchemes {
         routes::catalog::put_settings,
         routes::catalog::generate_product_code,
         routes::catalog::generate_barcode,
+        routes::customers::list,
+        routes::customers::lookup,
+        routes::customers::duplicates,
+        routes::customers::negative_balances,
+        routes::customers::get,
+        routes::customers::put,
+        routes::customers::archive,
+        routes::customers::unarchive,
+        routes::customers::merge,
+        routes::customers::erase,
+        routes::customers::history,
+        routes::customer_balance::get,
+        routes::customer_balance::payout,
+        routes::customer_balance::get_settings,
+        routes::customer_balance::put_settings,
+        routes::customer_groups::list_groups,
+        routes::customer_groups::get_group,
+        routes::customer_groups::put_group,
+        routes::customer_groups::list_tiers,
+        routes::customer_groups::get_tier,
+        routes::customer_groups::put_tier,
+        routes::pricing::list_lists,
+        routes::pricing::get_list,
+        routes::pricing::put_list,
+        routes::pricing::archive_list,
+        routes::pricing::list_entries,
+        routes::pricing::get_entry,
+        routes::pricing::put_entry,
+        routes::pricing::delete_entry,
+        routes::pricing::product_prices,
+        routes::pricing::list_rates,
+        routes::pricing::put_rate,
+        routes::pricing::get_settings,
+        routes::pricing::put_settings,
+        routes::pricing_quote::quote,
         events::events,
         openapi_json,
     ),
@@ -183,6 +246,8 @@ impl Modify for SecuritySchemes {
         (name = "cashier", description = "Cashier sessions, numbers, blind close, force close, past close reports (spec 2.1 §5)"),
         (name = "overrides", description = "Manager override tokens and the X-Override guard (spec 2.1 §6)"),
         (name = "catalog", description = "Products, variants, units, barcodes, images, categories, brands, assortment, lookup and search (spec 2.2)"),
+        (name = "customers", description = "Customers, groups, membership tiers, lookup, merge, erase and the customer balance (spec 2.5)"),
+        (name = "pricing", description = "Price lists, entries and tiers, tax rates, pricing settings and the quote (spec 2.3)"),
         (name = "events", description = "WebSocket event notifications (docs/plan.md §1)"),
         (name = "meta", description = "API description"),
     )

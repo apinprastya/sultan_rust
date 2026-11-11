@@ -251,7 +251,7 @@ async fn password_login(h: &Harness) {
     assert_eq!(r.body["branch_id"], h.jkt.id.to_string());
 
     // `GET /auth/me`: the Owner holds the catalog permissions everywhere; budi (Manager at JKT01)
-    // holds `catalog.manage` at the branch only.
+    // holds `catalog.manage` at the branch only, which counts as anywhere (spec 2.2 §11).
     let owner = h.owner_token().await;
     let me = h.call(&owner, Method::GET, "/api/v1/auth/me", None).await;
     assert_eq!(me.status, StatusCode::OK, "{}", me.body);
@@ -267,6 +267,13 @@ async fn password_login(h: &Harness) {
     assert_eq!(me.body["display_name"], "BUDI");
     assert!(has(&me.body, "permissions", "catalog.manage"));
     assert!(!has(&me.body, "permissions_everywhere", "catalog.manage"));
+    assert!(has(&me.body, "permissions_anywhere", "catalog.manage"));
+    assert!(has(
+        &me.body,
+        "permissions_anywhere",
+        "catalog.view_archived"
+    ));
+    assert!(!has(&me.body, "permissions_anywhere", "org.manage"));
     h.send(Method::GET, "/api/v1/auth/me", &[], None)
         .await
         .assert_problem(401, "invalid_session");

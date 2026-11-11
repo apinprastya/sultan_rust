@@ -1,0 +1,1361 @@
+// The back office's customer screens (spec 2.5, phase M4): the customer list, the customer form,
+// the group and tier editors, possible duplicates with merge, negative balances and the balance
+// settings. Rust (`crates/ui/src/backoffice/customers.rs`) decides everything; these
+// components show it and report keys, edits and clicks like the catalog screens
+// (`action`, `edit`, `toggle`, `choose`, `pick`).
+//
+// Text fields show what Rust last sent; when Rust changes texts under the user (a customer is
+// opened or saved, a group is picked) it bumps `serial` and the fields are rebuilt. A rebuild
+// drops the focused field, so the window takes the focus back (`backoffice.slint`) and the new
+// fields ask for it a moment later with a one-shot `Timer` (an `init` runs before the new
+// element is in the window and cannot focus it).
+
+import { ComboBox, CheckBox, ListView, ScrollView } from "std-widgets.slint";
+import { Theme } from "theme.slint";
+import { Note, Card } from "widgets.slint";
+import { BoStrings, Field, SmallButton, KeyButton, Banner, SectionTitle } from "bo_widgets.slint";
+import { TabButton, Badge } from "bo_form.slint";
+
+export struct BoCustomerRow {
+    code: string,
+    name: string,
+    phone: string,
+    group: string,
+    tier: string,
+    until: string,
+    expired: bool,
+    balance: string,
+    negative: bool,
+    archived: bool,
+}
+
+export struct BoCustomerList {
+    search: string,
+    archived: bool,
+    show-archived: bool,
+    can-search: bool,
+    can-create: bool,
+    cursor: int,
+    has-more: bool,
+    loading: bool,
+    notice: Note,
+}
+
+export struct BoCustomerForm {
+    is-new: bool,
+    title: string,
+    code: string,
+    signed-up: string,
+    archived: bool,
+    erased: bool,
+    dirty: bool,
+    saving: bool,
+    can-edit: bool,
+    can-manage: bool,
+    can-archive: bool,
+    can-erase: bool,
+    notice: Note,
+    name: string,
+    phone: string,
+    email: string,
+    birth-day: string,
+    birth-month: string,
+    birth-year: string,
+    address: string,
+    company: string,
+    tax-id: string,
+    tax-address: string,
+    notes: string,
+    group-index: int,
+    tier-index: int,
+    valid-until: string,
+    manual-tier: bool,
+    tier-expired: bool,
+    name-error: Note,
+    phone-error: Note,
+    email-error: Note,
+    birthday-error: Note,
+    tax-id-error: Note,
+    valid-until-error: Note,
+    balance: string,
+    balance-negative: bool,
+    balance-loaded: bool,
+}
+
+export struct BoBalanceRow {
+    when: string,
+    kind: string,
+    amount: string,
+    negative: bool,
+}
+
+export struct BoNamedRow {
+    name: string,
+    rank: string,
+    archived: bool,
+}
+
+export struct BoNamedEditor {
+    is-new: bool,
+    name: string,
+    rank: string,
+    archived: bool,
+    cursor: int,
+    can-edit: bool,
+    notice: Note,
+}
+
+export struct BoReview {
+    cursor: int,
+    loading: bool,
+    can-manage: bool,
+    notice: Note,
+}
+
+export struct BoMerge {
+    from-name: string,
+    from-code: string,
+    from-phone: string,
+    into-name: string,
+    into-code: string,
+    into-phone: string,
+    code: string,
+    ready: bool,
+    notice: Note,
+}
+
+export struct BoBalanceSettings {
+    per-sale: string,
+    max-balance: string,
+    can-edit: bool,
+    notice: Note,
+    per-sale-error: Note,
+    max-error: Note,
+}
+
+// The section's tabs (Ctrl+1 … Ctrl+6).
+component CustomerTabs inherits HorizontalLayout {
+    in property <string> screen;
+    callback action(string);
+    spacing: 6px;
+    alignment: start;
+    for tab in [
+        { id: "tab-customers", keys: "Ctrl+1", label: @tr("Customer list"), on: root.screen == "customers" },
+        { id: "tab-groups", keys: "Ctrl+2", label: @tr("Groups"), on: root.screen == "customer-groups" },
+        { id: "tab-tiers", keys: "Ctrl+3", label: @tr("Tiers"), on: root.screen == "customer-tiers" },
+        { id: "tab-duplicates", keys: "Ctrl+4", label: @tr("Possible duplicates"), on: root.screen == "duplicates" },
+        { id: "tab-negative", keys: "Ctrl+5", label: @tr("Negative balances"), on: root.screen == "negative-balances" },
+        { id: "tab-balance-settings", keys: "Ctrl+6", label: @tr("Balance settings"), on: root.screen == "balance-settings" },
+    ]: TabButton {
+        text: tab.label;
+        keys: tab.keys;
+        selected: tab.on;
+        clicked => {
+            root.action(tab.id);
+        }
+    }
+}
+
+component HeadText inherits Text {
+    color: Theme.muted;
+    font-size: 12px;
+    vertical-alignment: center;
+    overflow: elide;
+}
+
+// A table of customers: code, name, phone, group, tier (with its expiry), balance.
+component CustomerTable inherits Card {
+    in property <[BoCustomerRow]> rows;
+    in property <int> cursor;
+    in property <bool> loading;
+    in property <bool> has-more;
+    in property <string> phone-title: @tr("Phone");
+    in property <string> empty: @tr("No customers found.");
+    // `pick(select, row)` on a click, `pick(open, row)` on a double click.
+    in property <string> select;
+    in property <string> open;
+    callback pick(string, int, int);
+    callback action(string);
+    property <length> row-height: 40px;
+
+    changed cursor => {
+        // Keep the highlighted row in view.
+        if (root.cursor * root.row-height + table.content-y < 0) {
+            table.content-y = -root.cursor * root.row-height;
+        }
+        if ((root.cursor + 1) * root.row-height + table.content-y > table.visible-height) {
+            table.content-y = table.visible-height - (root.cursor + 1) * root.row-height;
+        }
+    }
+
+    VerticalLayout {
+        padding: 1px;
+        Rectangle {
+            height: 34px;
+            HorizontalLayout {
+                padding-left: 14px;
+                padding-right: 14px;
+                spacing: 10px;
+                HeadText { width: 100px; text: @tr("Code"); }
+                HeadText { horizontal-stretch: 3; preferred-width: 0px; text: @tr("Name"); }
+                HeadText { width: 120px; text: root.phone-title; }
+                HeadText { horizontal-stretch: 1; preferred-width: 0px; text: @tr("Group"); }
+                HeadText { horizontal-stretch: 2; preferred-width: 0px; text: @tr("Tier"); }
+                HeadText { width: 100px; text: @tr("Balance"); horizontal-alignment: right; }
+                Text { width: 64px; text: ""; }
+            }
+        }
+        Rectangle {
+            height: 1px;
+            background: Theme.border;
+        }
+        table := ListView {
+            vertical-stretch: 1;
+            for row[i] in root.rows: Rectangle {
+                height: root.row-height;
+                background: i == root.cursor ? Theme.accent-soft : touch.has-hover ? Theme.raised : transparent;
+                accessible-role: list-item;
+                accessible-label: row.name;
+                accessible-action-default => {
+                    root.pick(root.open, i, 0);
+                }
+                touch := TouchArea {
+                    clicked => {
+                        root.pick(root.select, i, 0);
+                    }
+                    double-clicked => {
+                        root.pick(root.open, i, 0);
+                    }
+                }
+                HorizontalLayout {
+                    padding-left: 14px;
+                    padding-right: 14px;
+                    spacing: 10px;
+                    Text { width: 100px; text: row.code; color: Theme.text; vertical-alignment: center; font-weight: 600; overflow: elide; }
+                    Text { horizontal-stretch: 3; preferred-width: 0px; text: row.name; color: row.archived ? Theme.muted : Theme.text; vertical-alignment: center; overflow: elide; }
+                    Text { width: 120px; text: row.phone; color: Theme.muted; vertical-alignment: center; overflow: elide; }
+                    Text { horizontal-stretch: 1; preferred-width: 0px; text: row.group; color: Theme.muted; vertical-alignment: center; overflow: elide; }
+                    Text {
+                        horizontal-stretch: 2;
+                        preferred-width: 0px;
+                        text: row.expired ? @tr("{} (expired {})", row.tier, row.until) : row.tier;
+                        color: row.expired ? Theme.warn : Theme.text;
+                        vertical-alignment: center;
+                        overflow: elide;
+                    }
+                    Text { width: 100px; text: row.balance; color: row.negative ? Theme.danger : Theme.text; vertical-alignment: center; horizontal-alignment: right; }
+                    Text { width: 64px; text: row.archived ? @tr("archived") : ""; color: Theme.warn; vertical-alignment: center; horizontal-alignment: right; font-size: 12px; }
+                }
+            }
+        }
+        if root.rows.length == 0 && !root.loading: Text {
+            height: 60px;
+            text: root.empty;
+            color: Theme.muted;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+        if root.has-more: HorizontalLayout {
+            padding: 8px;
+            alignment: center;
+            SmallButton {
+                text: root.loading ? @tr("Loading…") : @tr("Load more");
+                clicked => {
+                    root.action("load-more");
+                }
+            }
+        }
+    }
+}
+
+export component CustomersScreen inherits VerticalLayout {
+    in property <string> screen;
+    in property <BoCustomerList> list;
+    in property <[BoCustomerRow]> rows;
+    in property <string> focus-target;
+    in property <int> focus-serial;
+    callback action(string);
+    callback edit(string, int, int, string, string);
+    callback toggle(string, int, string, bool);
+    callback pick(string, int, int);
+    padding: 16px;
+    spacing: 10px;
+
+    changed focus-serial => {
+        if (root.focus-target == "customer-search") {
+            search.focus-edit();
+        }
+    }
+    init => {
+        if (root.focus-target == "customer-search") {
+            search.focus-edit();
+        }
+    }
+
+    CustomerTabs {
+        screen: root.screen;
+        action(id) => {
+            root.action(id);
+        }
+    }
+    HorizontalLayout {
+        spacing: 10px;
+        search := Field {
+            horizontal-stretch: 1;
+            min-width: 180px;
+            text: root.list.search;
+            enabled: root.list.can-search;
+            placeholder: @tr("Search name or company  ( / )");
+            edited(t) => {
+                root.edit("customer-list", 0, 0, "search", t);
+            }
+        }
+        if root.list.show-archived: CheckBox {
+            text: @tr("Archived");
+            checked: root.list.archived;
+            toggled => {
+                root.toggle("customer-list", 0, "archived", self.checked);
+            }
+        }
+        KeyButton {
+            keys: "Ctrl+N";
+            text: @tr("New customer");
+            primary: true;
+            enabled: root.list.can-create;
+            clicked => {
+                root.action("customer-new");
+            }
+        }
+        KeyButton {
+            keys: "F5";
+            text: @tr("Refresh");
+            clicked => {
+                root.action("refresh");
+            }
+        }
+    }
+    Banner {
+        note: root.list.notice;
+    }
+    CustomerTable {
+        vertical-stretch: 1;
+        rows: root.rows;
+        cursor: root.list.cursor;
+        loading: root.list.loading;
+        has-more: root.list.has-more;
+        select: "customer-row";
+        open: "customer-open";
+        pick(k, r, s) => {
+            root.pick(k, r, s);
+        }
+        action(id) => {
+            root.action(id);
+        }
+    }
+    HorizontalLayout {
+        spacing: 8px;
+        alignment: start;
+        KeyButton { keys: "↑ ↓"; text: @tr("Move"); }
+        KeyButton {
+            keys: "Enter";
+            text: @tr("Open");
+            clicked => {
+                root.action("open");
+            }
+        }
+        KeyButton { keys: "/  Ctrl+F"; text: @tr("Search"); }
+    }
+}
+
+// The text fields of the customer profile (rebuilt on `serial`).
+component ProfileFields inherits VerticalLayout {
+    in property <BoCustomerForm> form;
+    in property <string> focus-target;
+    in property <int> focus-serial;
+    callback edit(string, int, int, string, string);
+    spacing: 12px;
+
+    changed focus-serial => {
+        if (root.focus-target == "customer-name") {
+            name.focus-edit();
+        }
+    }
+    Timer {
+        interval: 1ms;
+        triggered => {
+            self.running = false;
+            if (root.focus-target == "customer-name") {
+                name.focus-edit();
+            }
+        }
+    }
+
+    HorizontalLayout {
+        spacing: 12px;
+        name := Field {
+            horizontal-stretch: 3;
+            preferred-width: 0px;
+            label: @tr("Name");
+            text: root.form.name;
+            enabled: root.form.can-edit;
+            error: root.form.name-error;
+            edited(t) => {
+                root.edit("customer", 0, 0, "name", t);
+            }
+        }
+        Field {
+            horizontal-stretch: 2;
+            preferred-width: 0px;
+            label: @tr("Phone");
+            placeholder: "0812-3456-789";
+            text: root.form.phone;
+            enabled: root.form.can-edit;
+            error: root.form.phone-error;
+            edited(t) => {
+                root.edit("customer", 0, 0, "phone", t);
+            }
+        }
+    }
+    HorizontalLayout {
+        spacing: 12px;
+        Field {
+            horizontal-stretch: 3;
+            preferred-width: 0px;
+            label: @tr("Email");
+            text: root.form.email;
+            enabled: root.form.can-edit;
+            error: root.form.email-error;
+            edited(t) => {
+                root.edit("customer", 0, 0, "email", t);
+            }
+        }
+        VerticalLayout {
+            horizontal-stretch: 2;
+            preferred-width: 0px;
+            spacing: 3px;
+            HorizontalLayout {
+                spacing: 6px;
+                Field {
+                    label: @tr("Birthday: day");
+                    text: root.form.birth-day;
+                    enabled: root.form.can-edit;
+                    edited(t) => {
+                        root.edit("customer", 0, 0, "birth_day", t);
+                    }
+                }
+                Field {
+                    label: @tr("Month");
+                    text: root.form.birth-month;
+                    enabled: root.form.can-edit;
+                    edited(t) => {
+                        root.edit("customer", 0, 0, "birth_month", t);
+                    }
+                }
+                Field {
+                    label: @tr("Year (optional)");
+                    text: root.form.birth-year;
+                    enabled: root.form.can-edit;
+                    edited(t) => {
+                        root.edit("customer", 0, 0, "birth_year", t);
+                    }
+                }
+            }
+            if root.form.birthday-error.code != "": Text {
+                text: BoStrings.message(root.form.birthday-error.code, root.form.birthday-error.arg);
+                color: Theme.danger;
+                font-size: 12px;
+                wrap: word-wrap;
+            }
+        }
+    }
+    Field {
+        label: @tr("Address");
+        text: root.form.address;
+        enabled: root.form.can-edit;
+        edited(t) => {
+            root.edit("customer", 0, 0, "address", t);
+        }
+    }
+    HorizontalLayout {
+        spacing: 12px;
+        Field {
+            horizontal-stretch: 1;
+            preferred-width: 0px;
+            label: @tr("Company name");
+            text: root.form.company;
+            enabled: root.form.can-edit;
+            edited(t) => {
+                root.edit("customer", 0, 0, "company", t);
+            }
+        }
+        Field {
+            horizontal-stretch: 1;
+            preferred-width: 0px;
+            label: @tr("Tax ID (NPWP or NIK)");
+            text: root.form.tax-id;
+            enabled: root.form.can-edit;
+            error: root.form.tax-id-error;
+            edited(t) => {
+                root.edit("customer", 0, 0, "tax_id", t);
+            }
+        }
+    }
+    Field {
+        label: @tr("Tax address");
+        text: root.form.tax-address;
+        enabled: root.form.can-edit;
+        edited(t) => {
+            root.edit("customer", 0, 0, "tax_address", t);
+        }
+    }
+    Field {
+        label: @tr("Notes for staff (not printed)");
+        text: root.form.notes;
+        enabled: root.form.can-edit;
+        edited(t) => {
+            root.edit("customer", 0, 0, "notes", t);
+        }
+    }
+}
+
+export component CustomerFormScreen inherits VerticalLayout {
+    in property <BoCustomerForm> form;
+    in property <[BoBalanceRow]> entries;
+    in property <[string]> group-choices;
+    in property <[string]> tier-choices;
+    in property <int> serial;
+    in property <string> focus-target;
+    in property <int> focus-serial;
+    callback action(string);
+    callback edit(string, int, int, string, string);
+    callback toggle(string, int, string, bool);
+    callback choose(string, int, string, int);
+    padding: 16px;
+    spacing: 10px;
+
+    HorizontalLayout {
+        spacing: 10px;
+        VerticalLayout {
+            alignment: center;
+            Text {
+                text: root.form.is-new ? @tr("New customer") : root.form.title;
+                color: Theme.text;
+                font-size: 20px;
+                font-weight: 700;
+                overflow: elide;
+            }
+            Text {
+                text: root.form.is-new ? @tr("The member code is drawn when you save.") : root.form.code + "  ·  " + root.form.signed-up;
+                color: Theme.muted;
+                font-size: 12px;
+            }
+        }
+        if root.form.erased: VerticalLayout {
+            alignment: center;
+            Badge {
+                text: @tr("Personal data erased");
+                tone: Theme.danger;
+            }
+        }
+        if root.form.archived && !root.form.erased: VerticalLayout {
+            alignment: center;
+            Badge {
+                text: @tr("Archived");
+                tone: Theme.danger;
+            }
+        }
+        if root.form.dirty: VerticalLayout {
+            alignment: center;
+            Badge {
+                text: @tr("Unsaved changes");
+                tone: Theme.accent;
+            }
+        }
+        Rectangle {
+            horizontal-stretch: 1;
+        }
+        KeyButton {
+            keys: "Esc";
+            text: @tr("Back");
+            clicked => {
+                root.action("customer-back");
+            }
+        }
+        if root.form.can-erase: KeyButton {
+            keys: "Ctrl+Shift+E";
+            text: @tr("Erase personal data");
+            clicked => {
+                root.action("customer-erase");
+            }
+        }
+        if root.form.can-archive: KeyButton {
+            keys: "Ctrl+Shift+A";
+            text: root.form.archived ? @tr("Unarchive") : @tr("Archive");
+            clicked => {
+                root.action("customer-archive");
+            }
+        }
+        KeyButton {
+            keys: "Ctrl+S";
+            text: root.form.saving ? @tr("Saving…") : @tr("Save");
+            primary: true;
+            enabled: root.form.can-edit && !root.form.saving;
+            clicked => {
+                root.action("customer-save");
+            }
+        }
+    }
+    Banner {
+        note: root.form.notice;
+    }
+    HorizontalLayout {
+        spacing: 16px;
+        vertical-stretch: 1;
+        Card {
+            horizontal-stretch: 1;
+            ScrollView {
+                x: 1px;
+                y: 1px;
+                width: parent.width - 2px;
+                height: parent.height - 2px;
+                VerticalLayout {
+                    padding: 18px;
+                    spacing: 12px;
+                    alignment: start;
+                    SectionTitle {
+                        text: @tr("Profile");
+                    }
+                    for s in [root.serial]: ProfileFields {
+                        form: root.form;
+                        focus-target: root.focus-target;
+                        focus-serial: root.focus-serial;
+                        edit(k, r, x, f, v) => {
+                            root.edit(k, r, x, f, v);
+                        }
+                    }
+                }
+            }
+        }
+        VerticalLayout {
+            width: 360px;
+            spacing: 16px;
+            Card {
+                height: membership.preferred-height;
+                membership := VerticalLayout {
+                    padding: 18px;
+                    spacing: 10px;
+                    SectionTitle {
+                        text: @tr("Membership");
+                    }
+                    VerticalLayout {
+                        spacing: 3px;
+                        Text {
+                            text: @tr("Group");
+                            color: Theme.muted;
+                            font-size: 12px;
+                        }
+                        ComboBox {
+                            model: root.group-choices;
+                            current-index: root.form.group-index;
+                            enabled: root.form.can-manage;
+                            accessible-label: @tr("Group");
+                            selected(v) => {
+                                root.choose("customer", 0, "group", self.current-index);
+                            }
+                        }
+                    }
+                    VerticalLayout {
+                        spacing: 3px;
+                        Text {
+                            text: @tr("Tier");
+                            color: Theme.muted;
+                            font-size: 12px;
+                        }
+                        ComboBox {
+                            model: root.tier-choices;
+                            current-index: root.form.tier-index;
+                            enabled: root.form.can-manage;
+                            accessible-label: @tr("Tier");
+                            selected(v) => {
+                                root.choose("customer", 0, "tier", self.current-index);
+                            }
+                        }
+                    }
+                    for s in [root.serial]: Field {
+                        label: @tr("Tier valid until (optional, YYYY-MM-DD)");
+                        text: root.form.valid-until;
+                        enabled: root.form.can-manage && root.form.tier-index > 0;
+                        error: root.form.valid-until-error;
+                        edited(t) => {
+                            root.edit("customer", 0, 0, "valid_until", t);
+                        }
+                    }
+                    if root.form.tier-expired: Text {
+                        text: @tr("The tier has expired: set a new date to renew it.");
+                        color: Theme.warn;
+                        font-size: 12px;
+                        wrap: word-wrap;
+                    }
+                    CheckBox {
+                        text: @tr("Manual tier (never automatic)");
+                        checked: root.form.manual-tier;
+                        enabled: root.form.can-manage;
+                        toggled => {
+                            root.toggle("customer", 0, "manual_tier", self.checked);
+                        }
+                    }
+                    if !root.form.can-manage: Text {
+                        text: @tr("Changing the group or tier needs the permission customer.manage.");
+                        color: Theme.muted;
+                        font-size: 12px;
+                        wrap: word-wrap;
+                    }
+                }
+            }
+            Card {
+                vertical-stretch: 1;
+                VerticalLayout {
+                    padding: 18px;
+                    spacing: 8px;
+                    HorizontalLayout {
+                        SectionTitle {
+                            text: @tr("Balance (saved change)");
+                            vertical-alignment: center;
+                        }
+                        Rectangle {
+                            horizontal-stretch: 1;
+                        }
+                        Text {
+                            text: root.form.balance;
+                            color: root.form.balance-negative ? Theme.danger : Theme.text;
+                            font-size: 20px;
+                            font-weight: 700;
+                        }
+                    }
+                    Text {
+                        text: @tr("Read-only. Change is saved and spent at the till.");
+                        color: Theme.muted;
+                        font-size: 12px;
+                        wrap: word-wrap;
+                    }
+                    ListView {
+                        vertical-stretch: 1;
+                        for e in root.entries: HorizontalLayout {
+                            height: 30px;
+                            spacing: 8px;
+                            Text { width: 112px; text: e.when; color: Theme.muted; font-size: 12px; vertical-alignment: center; }
+                            Text { horizontal-stretch: 1; text: BoStrings.label(e.kind); color: Theme.text; font-size: 13px; vertical-alignment: center; overflow: elide; }
+                            Text { text: e.amount; color: e.negative ? Theme.danger : Theme.success; font-size: 13px; vertical-alignment: center; horizontal-alignment: right; }
+                        }
+                    }
+                    if root.entries.length == 0 && root.form.balance-loaded: Text {
+                        text: @tr("No balance entries yet.");
+                        color: Theme.muted;
+                        font-size: 12px;
+                    }
+                }
+            }
+        }
+    }
+}
+
+// The name (and rank) fields of the group / tier editor (rebuilt on `serial`).
+component NamedFields inherits VerticalLayout {
+    in property <bool> tiers;
+    in property <BoNamedEditor> editor;
+    in property <string> focus-target;
+    in property <int> focus-serial;
+    callback edit(string, int, int, string, string);
+    callback action(string);
+    spacing: 12px;
+
+    changed focus-serial => {
+        if (root.focus-target == "group-name" || root.focus-target == "tier-name") {
+            name.focus-edit();
+        }
+    }
+    Timer {
+        interval: 1ms;
+        triggered => {
+            self.running = false;
+            if (root.focus-target == "group-name" || root.focus-target == "tier-name") {
+                name.focus-edit();
+            }
+        }
+    }
+
+    name := Field {
+        label: @tr("Name");
+        text: root.editor.name;
+        enabled: root.editor.can-edit;
+        edited(t) => {
+            root.edit(root.tiers ? "tier" : "group", 0, 0, "name", t);
+        }
+        accepted => {
+            root.action(root.tiers ? "tier-save" : "group-save");
+        }
+    }
+    if root.tiers: Field {
+        label: @tr("Rank (higher = better)");
+        text: root.editor.rank;
+        enabled: root.editor.can-edit;
+        edited(t) => {
+            root.edit("tier", 0, 0, "rank", t);
+        }
+    }
+}
+
+export component NamedScreen inherits VerticalLayout {
+    in property <string> screen;
+    in property <bool> tiers;
+    in property <[BoNamedRow]> rows;
+    in property <BoNamedEditor> editor;
+    in property <int> serial;
+    in property <string> focus-target;
+    in property <int> focus-serial;
+    callback action(string);
+    callback edit(string, int, int, string, string);
+    callback pick(string, int, int);
+    padding: 16px;
+    spacing: 12px;
+
+    CustomerTabs {
+        screen: root.screen;
+        action(id) => {
+            root.action(id);
+        }
+    }
+    HorizontalLayout {
+        spacing: 16px;
+        vertical-stretch: 1;
+        Card {
+            horizontal-stretch: 1;
+            VerticalLayout {
+                padding: 14px;
+                spacing: 6px;
+                SectionTitle {
+                    text: root.tiers ? @tr("Membership tiers") : @tr("Customer groups");
+                }
+                ListView {
+                    vertical-stretch: 1;
+                    for row[i] in root.rows: Rectangle {
+                        height: 34px;
+                        border-radius: 6px;
+                        background: i == root.editor.cursor && !root.editor.is-new ? Theme.accent-soft : touch.has-hover ? Theme.raised : transparent;
+                        accessible-role: list-item;
+                        accessible-label: row.name;
+                        accessible-action-default => {
+                            root.pick(root.tiers ? "tier" : "group", i, 0);
+                        }
+                        touch := TouchArea {
+                            clicked => {
+                                root.pick(root.tiers ? "tier" : "group", i, 0);
+                            }
+                        }
+                        HorizontalLayout {
+                            padding-left: 10px;
+                            padding-right: 10px;
+                            spacing: 8px;
+                            Text {
+                                horizontal-stretch: 1;
+                                text: row.name;
+                                color: row.archived ? Theme.muted : Theme.text;
+                                vertical-alignment: center;
+                            }
+                            if root.tiers: Text {
+                                text: @tr("rank {}", row.rank);
+                                color: Theme.muted;
+                                font-size: 12px;
+                                vertical-alignment: center;
+                            }
+                            if row.archived: Text {
+                                text: @tr("archived");
+                                color: Theme.warn;
+                                font-size: 12px;
+                                vertical-alignment: center;
+                            }
+                        }
+                    }
+                }
+                if root.rows.length == 0: Text {
+                    text: root.tiers ? @tr("No tiers yet. Add one, e.g. Silver, Gold, Platinum.") : @tr("No groups yet. Add one, e.g. Wholesale.");
+                    color: Theme.muted;
+                    wrap: word-wrap;
+                }
+            }
+        }
+        Card {
+            width: 420px;
+            VerticalLayout {
+                padding: 18px;
+                spacing: 12px;
+                alignment: start;
+                SectionTitle {
+                    text: root.tiers ? (root.editor.is-new ? @tr("New tier") : @tr("Edit tier")) : (root.editor.is-new ? @tr("New group") : @tr("Edit group"));
+                }
+                for s in [root.serial]: NamedFields {
+                    tiers: root.tiers;
+                    editor: root.editor;
+                    focus-target: root.focus-target;
+                    focus-serial: root.focus-serial;
+                    edit(k, r, x, f, v) => {
+                        root.edit(k, r, x, f, v);
+                    }
+                    action(id) => {
+                        root.action(id);
+                    }
+                }
+                Banner {
+                    note: root.editor.notice;
+                }
+                HorizontalLayout {
+                    spacing: 8px;
+                    alignment: start;
+                    KeyButton {
+                        keys: "Ctrl+S";
+                        text: @tr("Save");
+                        primary: true;
+                        enabled: root.editor.can-edit;
+                        clicked => {
+                            root.action(root.tiers ? "tier-save" : "group-save");
+                        }
+                    }
+                    if !root.editor.is-new: KeyButton {
+                        keys: "Ctrl+Shift+A";
+                        text: root.editor.archived ? @tr("Unarchive") : @tr("Archive");
+                        enabled: root.editor.can-edit;
+                        clicked => {
+                            root.action(root.tiers ? "tier-archive" : "group-archive");
+                        }
+                    }
+                }
+                HorizontalLayout {
+                    alignment: start;
+                    KeyButton {
+                        keys: "Ctrl+N";
+                        text: root.tiers ? @tr("Add tier") : @tr("Add group");
+                        enabled: root.editor.can-edit;
+                        clicked => {
+                            root.action(root.tiers ? "tier-add" : "group-add");
+                        }
+                    }
+                }
+                Text {
+                    text: root.tiers ? @tr("Price lists can be linked to a tier. An archived tier stops applying; customers keep it until you change it.") : @tr("Price lists can be linked to a group. An archived group stops applying; customers keep it until you move them.");
+                    color: Theme.muted;
+                    font-size: 12px;
+                    wrap: word-wrap;
+                }
+            }
+        }
+    }
+}
+
+// One side of a merge: who, or a hint while empty.
+component MergeSide inherits Rectangle {
+    in property <string> title;
+    in property <string> name;
+    in property <string> code;
+    in property <string> phone;
+    in property <string> empty;
+    height: box.preferred-height;
+    border-radius: 8px;
+    border-width: 1px;
+    border-color: Theme.border;
+    background: Theme.raised;
+    box := VerticalLayout {
+        padding: 10px;
+        spacing: 3px;
+        Text {
+            text: root.title;
+            color: Theme.muted;
+            font-size: 12px;
+        }
+        Text {
+            text: root.name != "" ? root.name : root.empty;
+            color: root.name != "" ? Theme.text : Theme.muted;
+            font-weight: root.name != "" ? 700 : 400;
+            wrap: word-wrap;
+        }
+        if root.name != "": Text {
+            text: root.phone != "" ? root.code + "  ·  " + root.phone : root.code;
+            color: Theme.muted;
+            font-size: 12px;
+        }
+    }
+}
+
+// The merge fields (rebuilt on `serial`).
+component MergeCode inherits Field {
+    in property <string> focus-target;
+    in property <int> focus-serial;
+    changed focus-serial => {
+        if (root.focus-target == "merge-code") {
+            root.focus-edit();
+        }
+    }
+}
+
+export component DuplicatesScreen inherits VerticalLayout {
+    in property <string> screen;
+    in property <[BoCustomerRow]> rows;
+    in property <BoReview> review;
+    in property <BoMerge> merge;
+    in property <int> serial;
+    in property <string> focus-target;
+    in property <int> focus-serial;
+    callback action(string);
+    callback edit(string, int, int, string, string);
+    callback pick(string, int, int);
+    padding: 16px;
+    spacing: 10px;
+
+    CustomerTabs {
+        screen: root.screen;
+        action(id) => {
+            root.action(id);
+        }
+    }
+    Text {
+        text: @tr("Customers whose phone was already used by another customer when a branch synced. Merge each into the customer to keep.");
+        color: Theme.muted;
+        wrap: word-wrap;
+    }
+    Banner {
+        note: root.review.notice;
+    }
+    HorizontalLayout {
+        spacing: 16px;
+        vertical-stretch: 1;
+        CustomerTable {
+            horizontal-stretch: 1;
+            rows: root.rows;
+            cursor: root.review.cursor;
+            loading: root.review.loading;
+            phone-title: @tr("Clashing phone");
+            empty: @tr("No possible duplicates.");
+            select: "duplicate";
+            open: "duplicate-open";
+            pick(k, r, s) => {
+                root.pick(k, r, s);
+            }
+            action(id) => {
+                root.action(id);
+            }
+        }
+        Card {
+            width: 340px;
+            VerticalLayout {
+                padding: 18px;
+                spacing: 10px;
+                alignment: start;
+                SectionTitle {
+                    text: @tr("Merge");
+                }
+                MergeSide {
+                    title: @tr("Merge from (archived afterwards)");
+                    name: root.merge.from-name;
+                    code: root.merge.from-code;
+                    phone: root.merge.from-phone;
+                    empty: @tr("Pick a row in the list.");
+                }
+                for s in [root.serial]: MergeCode {
+                    label: @tr("Keep: member code");
+                    placeholder: "K7QH-29XM";
+                    text: root.merge.code;
+                    enabled: root.review.can-manage;
+                    focus-target: root.focus-target;
+                    focus-serial: root.focus-serial;
+                    edited(t) => {
+                        root.edit("merge", 0, 0, "code", t);
+                    }
+                }
+                MergeSide {
+                    title: @tr("Keep");
+                    name: root.merge.into-name;
+                    code: root.merge.into-code;
+                    phone: root.merge.into-phone;
+                    empty: @tr("The customer with the same phone, or type a code.");
+                }
+                Banner {
+                    note: root.merge.notice;
+                }
+                HorizontalLayout {
+                    spacing: 8px;
+                    KeyButton {
+                        keys: "Ctrl+M";
+                        text: @tr("Merge customers");
+                        primary: true;
+                        enabled: root.merge.ready && root.review.can-manage;
+                        clicked => {
+                            root.action("merge");
+                        }
+                    }
+                    SmallButton {
+                        text: @tr("Swap");
+                        enabled: root.merge.ready && root.review.can-manage;
+                        clicked => {
+                            root.action("merge-swap");
+                        }
+                    }
+                }
+            }
+        }
+    }
+    HorizontalLayout {
+        spacing: 8px;
+        alignment: start;
+        KeyButton { keys: "↑ ↓"; text: @tr("Move"); }
+        KeyButton {
+            keys: "Enter";
+            text: @tr("Open");
+            clicked => {
+                root.pick("duplicate-open", root.review.cursor, 0);
+            }
+        }
+    }
+}
+
+export component NegativeScreen inherits VerticalLayout {
+    in property <string> screen;
+    in property <[BoCustomerRow]> rows;
+    in property <BoReview> review;
+    callback action(string);
+    callback pick(string, int, int);
+    padding: 16px;
+    spacing: 10px;
+
+    CustomerTabs {
+        screen: root.screen;
+        action(id) => {
+            root.action(id);
+        }
+    }
+    Text {
+        text: @tr("A balance can go below zero when two branches spend it while offline. The next saved change fills it.");
+        color: Theme.muted;
+        wrap: word-wrap;
+    }
+    Banner {
+        note: root.review.notice;
+    }
+    CustomerTable {
+        vertical-stretch: 1;
+        rows: root.rows;
+        cursor: root.review.cursor;
+        loading: root.review.loading;
+        empty: @tr("No customer has a negative balance.");
+        select: "negative";
+        open: "negative-open";
+        pick(k, r, s) => {
+            root.pick(k, r, s);
+        }
+        action(id) => {
+            root.action(id);
+        }
+    }
+    HorizontalLayout {
+        spacing: 8px;
+        alignment: start;
+        KeyButton { keys: "↑ ↓"; text: @tr("Move"); }
+        KeyButton {
+            keys: "Enter";
+            text: @tr("Open");
+            clicked => {
+                root.pick("negative-open", root.review.cursor, 0);
+            }
+        }
+    }
+}
+
+// The two limits (rebuilt on `serial`).
+component LimitFields inherits VerticalLayout {
+    in property <BoBalanceSettings> settings;
+    in property <string> focus-target;
+    in property <int> focus-serial;
+    callback edit(string, int, int, string, string);
+    callback action(string);
+    spacing: 12px;
+
+    changed focus-serial => {
+        if (root.focus-target == "settings-per-sale") {
+            per-sale.focus-edit();
+        }
+    }
+    Timer {
+        interval: 1ms;
+        triggered => {
+            self.running = false;
+            if (root.focus-target == "settings-per-sale") {
+                per-sale.focus-edit();
+            }
+        }
+    }
+
+    per-sale := Field {
+        label: @tr("Most change saved per sale (Rp)");
+        text: root.settings.per-sale;
+        enabled: root.settings.can-edit;
+        error: root.settings.per-sale-error;
+        edited(t) => {
+            root.edit("settings", 0, 0, "max_saved_per_sale", t);
+        }
+        accepted => {
+            root.action("settings-save");
+        }
+    }
+    Field {
+        label: @tr("Most balance per customer (Rp)");
+        text: root.settings.max-balance;
+        enabled: root.settings.can-edit;
+        error: root.settings.max-error;
+        edited(t) => {
+            root.edit("settings", 0, 0, "max_balance", t);
+        }
+        accepted => {
+            root.action("settings-save");
+        }
+    }
+}
+
+export component BalanceSettingsScreen inherits VerticalLayout {
+    in property <string> screen;
+    in property <BoBalanceSettings> settings;
+    in property <int> serial;
+    in property <string> focus-target;
+    in property <int> focus-serial;
+    callback action(string);
+    callback edit(string, int, int, string, string);
+    padding: 16px;
+    spacing: 12px;
+
+    CustomerTabs {
+        screen: root.screen;
+        action(id) => {
+            root.action(id);
+        }
+    }
+    HorizontalLayout {
+        alignment: start;
+        vertical-stretch: 1;
+        Card {
+            width: 520px;
+            height: box.preferred-height;
+            box := VerticalLayout {
+                padding: 18px;
+                spacing: 12px;
+                SectionTitle {
+                    text: @tr("Customer balance (saved change)");
+                }
+                Text {
+                    text: @tr("When coins for change are short, the cashier can save the change to the customer's balance; it pays a later sale. These limits apply to every branch.");
+                    color: Theme.muted;
+                    wrap: word-wrap;
+                }
+                for s in [root.serial]: LimitFields {
+                    settings: root.settings;
+                    focus-target: root.focus-target;
+                    focus-serial: root.focus-serial;
+                    edit(k, r, x, f, v) => {
+                        root.edit(k, r, x, f, v);
+                    }
+                    action(id) => {
+                        root.action(id);
+                    }
+                }
+                Text {
+                    text: @tr("0 per sale turns saving change off. A merge may go over the most balance.");
+                    color: Theme.muted;
+                    font-size: 12px;
+                    wrap: word-wrap;
+                }
+                Banner {
+                    note: root.settings.notice;
+                }
+                HorizontalLayout {
+                    alignment: start;
+                    KeyButton {
+                        keys: "Ctrl+S";
+                        text: @tr("Save");
+                        primary: true;
+                        enabled: root.settings.can-edit;
+                        clicked => {
+                            root.action("settings-save");
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// The erase dialog: the customer's code must be typed before Enter erases.
+export component EraseDialog inherits Rectangle {
+    in property <string> name;
+    in property <string> code;
+    in property <string> balance;
+    in property <bool> ready;
+    callback action(string);
+    callback edit(string, int, int, string, string);
+    background: Theme.scrim;
+    TouchArea { }
+    Card {
+        width: 520px;
+        height: dialog.preferred-height;
+        dialog := VerticalLayout {
+            padding: 24px;
+            spacing: 14px;
+            Text {
+                text: @tr("Erase the personal data of {}?", root.name);
+                color: Theme.text;
+                font-size: 18px;
+                font-weight: 700;
+                wrap: word-wrap;
+            }
+            Text {
+                text: @tr("The name becomes “Erased customer”; phone, email, birthday, address, company, tax data and notes are blanked and the customer is archived. Sales and receipts stay. This cannot be undone.");
+                color: Theme.muted;
+                wrap: word-wrap;
+            }
+            if root.balance != "": Text {
+                text: @tr("The balance is {}: the erase is refused until it is spent or paid out at the till.", root.balance);
+                color: Theme.warn;
+                wrap: word-wrap;
+            }
+            field := Field {
+                label: @tr("Type the member code {} to confirm", root.code);
+                placeholder: root.code;
+                edited(t) => {
+                    root.edit("erase", 0, 0, "code", t);
+                }
+            }
+            HorizontalLayout {
+                spacing: 10px;
+                alignment: end;
+                KeyButton {
+                    keys: "Esc";
+                    text: @tr("Cancel");
+                    clicked => {
+                        root.action("confirm-no");
+                    }
+                }
+                KeyButton {
+                    keys: "Enter";
+                    text: @tr("Erase");
+                    primary: true;
+                    enabled: root.ready;
+                    clicked => {
+                        root.action("confirm-yes");
+                    }
+                }
+            }
+        }
+    }
+    Timer {
+        interval: 1ms;
+        triggered => {
+            self.running = false;
+            field.focus-edit();
+        }
+    }
+}
