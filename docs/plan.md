@@ -275,7 +275,6 @@ Where we are, so any session can pick up from here. Update this section at the e
 - Settings bottom bar at 1024 px: the one-line status summary is still cut off (the full text now
   wraps in the Connection card; the address row on a single app reads "This computer's address").
 - Back office: the bundle-component picker shows only the first search page (no "load more").
-- `sultan-ui` test `start_event_loop` is flaky under coverage instrumentation.
 - Customer, group, tier and price-list ids are plain `Uuid` in db/core; move them to typed ids in
   `core::ids`.
 - Back office: the Prices tab is not part of the product form's unsaved-changes check; archived
