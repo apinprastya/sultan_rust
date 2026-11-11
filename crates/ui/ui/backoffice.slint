@@ -1,6 +1,7 @@
 // The back-office window (phase C4, spec 2.2): login, product list, product form
 // (`bo_form.slint`), category tree and brand list; the customer screens (spec 2.5, phase M4)
-// are in `bo_customers.slint`. Mostly declarative: Rust
+// are in `bo_customers.slint`, the pricing screens (spec 2.3, phase R4) in `bo_prices.slint` and
+// the product form's Prices tab in `bo_price_tab.slint`. Mostly declarative: Rust
 // (`crates/ui/src/backoffice_app.rs`, `crates/ui/src/backoffice/`) sets the view properties and
 // receives keys, actions, edits, toggles, choices and picks.
 //
@@ -14,11 +15,13 @@ import { LineEdit, ComboBox, CheckBox, ListView } from "std-widgets.slint";
 import { Theme } from "theme.slint";
 import { Note, Card } from "widgets.slint";
 import { BoStrings, Field, SmallButton, KeyButton, Banner, SectionTitle } from "bo_widgets.slint";
-import { FormScreen, BoForm, BoGeneral, BoOption, BoValue, BoCombo, BoUnit, BoBarcode, BoComponent, BoHit, BoBranch } from "bo_form.slint";
+import { FormScreen, BoForm, BoGeneral, BoOption, BoValue, BoCombo, BoUnit, BoBarcode, BoComponent, BoHit, BoBranch, BoPrices, BoPriceEntryRow, BoPriceTierRow } from "bo_form.slint";
+import { PriceListsScreen, TaxRatesScreen, PricingSettingsScreen, BoPriceListRow, BoPriceListEditor, BoTaxRateRow, BoTaxRates, BoPricingSettings } from "bo_prices.slint";
 import { CustomersScreen, CustomerFormScreen, NamedScreen, DuplicatesScreen, NegativeScreen, BalanceSettingsScreen, EraseDialog, BoCustomerRow, BoCustomerList, BoCustomerForm, BoBalanceRow, BoNamedRow, BoNamedEditor, BoReview, BoMerge, BoBalanceSettings } from "bo_customers.slint";
 
 export { BoStrings, BoForm, BoGeneral, BoOption, BoValue, BoCombo, BoUnit, BoBarcode, BoComponent, BoHit, BoBranch }
 export { BoCustomerRow, BoCustomerList, BoCustomerForm, BoBalanceRow, BoNamedRow, BoNamedEditor, BoReview, BoMerge, BoBalanceSettings }
+export { BoPrices, BoPriceEntryRow, BoPriceTierRow, BoPriceListRow, BoPriceListEditor, BoTaxRateRow, BoTaxRates, BoPricingSettings }
 
 export struct BoLogin {
     server: string,
@@ -119,6 +122,7 @@ component Header inherits Rectangle {
             { id: "nav-categories", keys: "F3", label: @tr("Categories"), on: root.screen == "categories" },
             { id: "nav-brands", keys: "F4", label: @tr("Brands"), on: root.screen == "brands" },
             { id: "nav-customers", keys: "F6", label: @tr("Customers"), on: root.screen == "customers" || root.screen == "customer-form" || root.screen == "customer-groups" || root.screen == "customer-tiers" || root.screen == "duplicates" || root.screen == "negative-balances" || root.screen == "balance-settings" },
+            { id: "nav-prices", keys: "F7", label: @tr("Pricing"), on: root.screen == "price-lists" || root.screen == "tax-rates" || root.screen == "pricing-settings" },
         ]: VerticalLayout {
             alignment: center;
             KeyButton {
@@ -138,6 +142,9 @@ component Header inherits Rectangle {
             color: root.busy ? Theme.warn : Theme.muted;
             font-size: 12px;
             vertical-alignment: center;
+            // On a narrow window the server gives way to the buttons.
+            min-width: 0px;
+            overflow: elide;
         }
         Text {
             text: root.user;
@@ -827,9 +834,26 @@ export component BackOfficeWindow inherits Window {
     in property <BoBalanceSettings> balance-settings;
     // Bumped when Rust changes customer texts under the user (the fields are rebuilt).
     in property <int> customer-serial;
+    // Pricing (spec 2.3, R4): the section's screens and the product form's Prices tab.
+    in property <Note> price-read-only;
+    in property <[BoPriceListRow]> price-list-rows;
+    in property <BoPriceListEditor> price-list-editor;
+    in property <[string]> target-choices;
+    in property <[string]> tax-class-rows;
+    in property <[BoTaxRateRow]> tax-rate-rows;
+    in property <BoTaxRates> tax-rates;
+    in property <BoPricingSettings> pricing-settings;
+    in property <BoPrices> prices;
+    in property <[string]> price-list-choices;
+    in property <[BoPriceEntryRow]> price-entry-rows;
+    in property <[BoPriceTierRow]> price-tier-rows;
+    in property <[string]> price-variant-choices;
+    in property <[string]> price-unit-choices;
+    // Bumped when Rust changes pricing texts under the user (the fields are rebuilt).
+    in property <int> price-serial;
     // "", "discard", "discard-customer", "archive", "unarchive", "delete-product",
     // "delete-category", "delete-brand", "archive-customer", "unarchive-customer", "merge" or
-    // "erase".
+    // "erase", "archive-price-list", "delete-price-entry" or "tax-mode".
     in property <string> confirm;
     // The name of what a delete removes; the customer merged away; the customer to erase.
     in property <string> confirm-name;
@@ -867,6 +891,9 @@ export component BackOfficeWindow inherits Window {
     }
     // The customer fields were rebuilt: the focused one is gone (see `bo_customers.slint`).
     changed customer-serial => {
+        keys.focus();
+    }
+    changed price-serial => {
         keys.focus();
     }
     // A closed dialog may have held the focus (the erase dialog's field).
@@ -957,6 +984,13 @@ export component BackOfficeWindow inherits Window {
                     thumbnail: root.thumbnail;
                     form-serial: root.form-serial;
                     focus-target: root.focus-target;
+                    prices: root.prices;
+                    price-list-choices: root.price-list-choices;
+                    price-entries: root.price-entry-rows;
+                    price-tiers: root.price-tier-rows;
+                    price-variant-choices: root.price-variant-choices;
+                    price-unit-choices: root.price-unit-choices;
+                    price-serial: root.price-serial;
                     action(id) => {
                         root.action(id);
                     }
@@ -1096,6 +1130,62 @@ export component BackOfficeWindow inherits Window {
                         root.pick(k, r, s);
                     }
                 }
+                if root.screen == "price-lists": PriceListsScreen {
+                    screen: root.screen;
+                    rows: root.price-list-rows;
+                    editor: root.price-list-editor;
+                    target-choices: root.target-choices;
+                    read-only: root.price-read-only;
+                    serial: root.price-serial;
+                    focus-target: root.focus-target;
+                    action(id) => {
+                        root.action(id);
+                    }
+                    edit(k, r, s, f, v) => {
+                        root.edit(k, r, s, f, v);
+                    }
+                    toggle(k, r, f, on) => {
+                        root.toggle(k, r, f, on);
+                    }
+                    choose(k, r, f, i) => {
+                        root.choose(k, r, f, i);
+                    }
+                    pick(k, r, s) => {
+                        root.pick(k, r, s);
+                    }
+                }
+                if root.screen == "tax-rates": TaxRatesScreen {
+                    screen: root.screen;
+                    classes: root.tax-class-rows;
+                    rates: root.tax-rate-rows;
+                    tax: root.tax-rates;
+                    read-only: root.price-read-only;
+                    serial: root.price-serial;
+                    focus-target: root.focus-target;
+                    action(id) => {
+                        root.action(id);
+                    }
+                    edit(k, r, s, f, v) => {
+                        root.edit(k, r, s, f, v);
+                    }
+                    pick(k, r, s) => {
+                        root.pick(k, r, s);
+                    }
+                }
+                if root.screen == "pricing-settings": PricingSettingsScreen {
+                    screen: root.screen;
+                    settings: root.pricing-settings;
+                    read-only: root.price-read-only;
+                    action(id) => {
+                        root.action(id);
+                    }
+                    toggle(k, r, f, on) => {
+                        root.toggle(k, r, f, on);
+                    }
+                    choose(k, r, f, i) => {
+                        root.choose(k, r, f, i);
+                    }
+                }
                 if root.screen == "balance-settings": BalanceSettingsScreen {
                     screen: root.screen;
                     settings: root.balance-settings;
@@ -1134,14 +1224,14 @@ export component BackOfficeWindow inherits Window {
                     padding: 24px;
                     spacing: 16px;
                     Text {
-                        text: root.confirm == "discard" || root.confirm == "discard-customer" ? @tr("Discard your changes?") : root.confirm == "archive" ? @tr("Archive this product?") : root.confirm == "unarchive" ? @tr("Unarchive this product?") : root.confirm == "archive-customer" ? @tr("Archive the customer {}?", root.confirm-name) : root.confirm == "unarchive-customer" ? @tr("Unarchive the customer {}?", root.confirm-name) : root.confirm == "merge" ? @tr("Merge {} into {}?", root.confirm-name, root.confirm-other) : root.confirm == "delete-product" ? @tr("Delete the product {}?", root.confirm-name) : root.confirm == "delete-category" ? @tr("Delete the category {}?", root.confirm-name) : @tr("Delete the brand {}?", root.confirm-name);
+                        text: root.confirm == "archive-price-list" ? @tr("Archive the price list {}?", root.confirm-name) : root.confirm == "delete-price-entry" ? @tr("Delete this price?") : root.confirm == "tax-mode" && root.confirm-name == "inclusive" ? @tr("Switch to prices with tax included?") : root.confirm == "tax-mode" ? @tr("Switch to prices without tax?") : root.confirm == "discard" || root.confirm == "discard-customer" ? @tr("Discard your changes?") : root.confirm == "archive" ? @tr("Archive this product?") : root.confirm == "unarchive" ? @tr("Unarchive this product?") : root.confirm == "archive-customer" ? @tr("Archive the customer {}?", root.confirm-name) : root.confirm == "unarchive-customer" ? @tr("Unarchive the customer {}?", root.confirm-name) : root.confirm == "merge" ? @tr("Merge {} into {}?", root.confirm-name, root.confirm-other) : root.confirm == "delete-product" ? @tr("Delete the product {}?", root.confirm-name) : root.confirm == "delete-category" ? @tr("Delete the category {}?", root.confirm-name) : @tr("Delete the brand {}?", root.confirm-name);
                         color: Theme.text;
                         font-size: 18px;
                         font-weight: 700;
                         wrap: word-wrap;
                     }
                     Text {
-                        text: root.confirm == "discard" ? @tr("The product has unsaved changes. They are lost if you leave now.") : root.confirm == "discard-customer" ? @tr("The customer has unsaved changes. They are lost if you leave now.") : root.confirm == "archive" ? @tr("Archived products cannot be sold or bought; they stay in history and reports.") : root.confirm == "unarchive" ? @tr("The product can be sold and bought again.") : root.confirm == "archive-customer" ? @tr("The till no longer finds an archived customer. Sales and the balance stay; unarchive brings the customer back.") : root.confirm == "unarchive-customer" ? @tr("The till finds the customer again.") : root.confirm == "merge" ? @tr("{1} keeps its own details; only its empty fields are filled from {0} (the phone too when {1} has none), and its group and tier when it has none. The balance of {0} moves to {1}. {0} is archived; its code and phone still find {1} at the till. This cannot be undone.", root.confirm-name, root.confirm-other) : @tr("Only an entry that was never used can be deleted, e.g. a typo. Deleting cannot be undone; anything in use must be archived instead.");
+                        text: root.confirm == "archive-price-list" ? @tr("The list stops applying at once; sales already made keep their prices.") : root.confirm == "delete-price-entry" ? @tr("Only a price never used by a sale can be deleted. Otherwise give it a last day instead.") : root.confirm == "tax-mode" ? @tr("Stored prices are not converted: a price of Rp 11.100 stays Rp 11.100 and is read the new way. Check your prices after the switch.") : root.confirm == "discard" ? @tr("The product has unsaved changes. They are lost if you leave now.") : root.confirm == "discard-customer" ? @tr("The customer has unsaved changes. They are lost if you leave now.") : root.confirm == "archive" ? @tr("Archived products cannot be sold or bought; they stay in history and reports.") : root.confirm == "unarchive" ? @tr("The product can be sold and bought again.") : root.confirm == "archive-customer" ? @tr("The till no longer finds an archived customer. Sales and the balance stay; unarchive brings the customer back.") : root.confirm == "unarchive-customer" ? @tr("The till finds the customer again.") : root.confirm == "merge" ? @tr("{1} keeps its own details; only its empty fields are filled from {0} (the phone too when {1} has none), and its group and tier when it has none. The balance of {0} moves to {1}. {0} is archived; its code and phone still find {1} at the till. This cannot be undone.", root.confirm-name, root.confirm-other) : @tr("Only an entry that was never used can be deleted, e.g. a typo. Deleting cannot be undone; anything in use must be archived instead.");
                         color: Theme.muted;
                         wrap: word-wrap;
                     }
@@ -1157,7 +1247,7 @@ export component BackOfficeWindow inherits Window {
                         }
                         KeyButton {
                             keys: "Enter";
-                            text: root.confirm == "discard" || root.confirm == "discard-customer" ? @tr("Discard") : root.confirm == "merge" ? @tr("Merge") : root.confirm == "delete-product" || root.confirm == "delete-category" || root.confirm == "delete-brand" ? @tr("Delete") : @tr("Yes");
+                            text: root.confirm == "archive-price-list" ? @tr("Archive") : root.confirm == "delete-price-entry" ? @tr("Delete") : root.confirm == "tax-mode" ? @tr("Save") : root.confirm == "discard" || root.confirm == "discard-customer" ? @tr("Discard") : root.confirm == "merge" ? @tr("Merge") : root.confirm == "delete-product" || root.confirm == "delete-category" || root.confirm == "delete-brand" ? @tr("Delete") : @tr("Yes");
                             primary: true;
                             clicked => {
                                 root.action("confirm-yes");

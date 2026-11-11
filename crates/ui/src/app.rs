@@ -22,7 +22,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use slint::{ComponentHandle, Model, ModelRc, SharedString, VecModel};
-use sultan_client::{CloseReport, Customer, CustomerQuery, EventSink, Service};
+use sultan_client::{CloseReport, Customer, CustomerQuery, EventSink, Lookup, Service};
 use tokio::runtime::Handle;
 
 use crate::amount::{rupiah, signed_rupiah};
@@ -30,7 +30,7 @@ use crate::controller::{Controller, Effect, Msg, Notice, Screen, TILE_COLUMNS, T
 use crate::count::{CountForm, DENOMINATIONS, is_coin};
 use crate::customer::{Call, Dialog, Perms, Reply, receipt_line};
 use crate::input::{Key, date_time, time_of_day};
-use crate::scan::{ScanField, match_kind, qty_text};
+use crate::scan::{CustomerPrice, ScanField, line_amount, match_kind, percent_off, qty_text};
 use crate::{
     Chip, CloseView, CustomerRow, CustomerView, DenomRow, HomeView, LockView, MainWindow, Note,
     OpenView, OverrideView, ReportLine, ReportView, ScanView, UserTile,
@@ -282,6 +282,15 @@ fn start(service: &dyn Service, effect: Effect) -> Option<MsgFuture> {
             let future = service.lookup(&token, &code);
             Some(Box::pin(async move { Msg::Looked(generation, seq, future.await) }) as MsgFuture)
         }
+        Effect::Quote {
+            token,
+            request,
+            seq,
+            generation,
+        } => {
+            let future = service.quote(&token, &request);
+            Some(Box::pin(async move { Msg::Quoted(generation, seq, future.await) }) as MsgFuture)
+        }
         Effect::Customer {
             token,
             call,
@@ -444,9 +453,74 @@ fn report_lines(r: &CloseReport) -> (Vec<ReportLine>, Vec<ReportLine>) {
     (lines, tenders)
 }
 
-/// The barcode field and the shown item (phase C5). No price: only the amount printed on a
-/// price scale label.
-fn scan_view(scan: &ScanField, now: i64) -> ScanView {
+/// How the shown item is priced (spec 2.3 §5): `label` (a price-embedded scale label: the printed
+/// amount is final), `open` (typed at sale), `none` (no store price), `weight` (a weight label:
+/// weight × unit price) or `unit` (the price of one unit).
+fn price_kind(item: &Lookup) -> &'static str {
+    if item.amount.is_some() {
+        "label"
+    } else if item.open_price {
+        "open"
+    } else if item.unit_price.is_none() {
+        "none"
+    } else if match_kind(item) == "scale_weight" {
+        "weight"
+    } else {
+        "unit"
+    }
+}
+
+/// The customer-price part of the item panel (spec 2.3 R5): `cust_state` 0 none, 1 waiting,
+/// 2 a price of its own, 3 the store price, 4 failed.
+fn customer_price(
+    view: &mut ScanView,
+    item: &Lookup,
+    price: &CustomerPrice,
+    customer: Option<&Customer>,
+    now: i64,
+) {
+    let line = match price {
+        CustomerPrice::None => return,
+        CustomerPrice::Waiting(_) => {
+            view.cust_state = 1;
+            return;
+        }
+        CustomerPrice::Failed(notice) => {
+            view.cust_state = 4;
+            view.cust_note = note(Some(notice), now);
+            return;
+        }
+        CustomerPrice::Priced(line) => line,
+    };
+    let Some(unit_price) = line.unit_price else {
+        view.cust_state = 4;
+        view.cust_note = note(Some(&Notice::bad("no_price")), now);
+        return;
+    };
+    view.cust_state = if Some(unit_price) == item.unit_price {
+        3
+    } else {
+        2
+    };
+    view.cust_price = rupiah(unit_price).into();
+    if view.price_kind == "weight" {
+        view.cust_total = line.amount.map(rupiah).unwrap_or_default().into();
+    }
+    view.cust_diff = percent_off(unit_price, item.unit_price).into();
+    if let Some(source) = &line.source {
+        view.cust_source = source.kind.as_str().into();
+        let name = match source.kind.as_str() {
+            "tier" => customer.and_then(|c| c.tier_name.as_deref()),
+            "group" => customer.and_then(|c| c.group_name.as_deref()),
+            _ => None,
+        };
+        view.cust_name = name.unwrap_or_default().into();
+    }
+}
+
+/// The barcode field and the shown item (phase C5) with its prices (phase R5): the store price
+/// of one unit, the amount of a scale label, and the attached customer's price.
+fn scan_view(scan: &ScanField, customer: Option<&Customer>, now: i64) -> ScanView {
     let mut view = ScanView {
         code: scan.code.as_str().into(),
         looking: scan.looking().unwrap_or_default().into(),
@@ -493,6 +567,18 @@ fn scan_view(scan: &ScanField, now: i64) -> ScanView {
             view.amount = item.amount.map(rupiah).unwrap_or_default().into();
             view.open_price = item.open_price;
             view.requires_note = item.requires_note;
+            view.price_kind = price_kind(item).into();
+            view.price = item.unit_price.map(rupiah).unwrap_or_default().into();
+            if view.price_kind == "weight" {
+                view.total = item
+                    .unit_price
+                    .zip(item.qty_thousandths)
+                    .and_then(|(p, q)| line_amount(p, q))
+                    .map(rupiah)
+                    .unwrap_or_default()
+                    .into();
+            }
+            customer_price(&mut view, item, &shown.customer, customer, now);
         }
     }
     view
@@ -679,7 +765,7 @@ fn render(ui: &MainWindow, c: &Controller, now: i64, models: &Models, options: &
                     .unwrap_or_default()
                     .into(),
             });
-            ui.set_scan(scan_view(&h.scan, now));
+            ui.set_scan(scan_view(&h.scan, c.customer.as_ref(), now));
         }
         Screen::Close(close) => {
             sync(&models.denoms, denominations(&close.form));

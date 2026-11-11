@@ -21,7 +21,7 @@ Everything on a shop computer is done in windows; only an HQ server needs the co
 
 2. The **Start screen** has three big tiles (keys or a tap):
    **F1 Cash register** (the lock screen: each cashier logs in with their PIN),
-   **F2 Back office** (catalog and customers: log in with a username and password) and
+   **F2 Back office** (catalog, customers and prices: log in with a username and password) and
    **F3 Settings**. The footer says what the computer is connected to, e.g.
    "Connected to 192.168.1.10:8080 · R2 Kasir 2 · JKT01 · Toko Jakarta"; F5 checks again.
 3. **F9** on the register's lock screen, or on the back office's login screen (after F12 log
@@ -116,10 +116,11 @@ The back-office window is keyboard-first too; shortcuts work while a text field 
 
 | Screen | Keys |
 |---|---|
-| Everywhere (after login) | F2 products · F3 categories · F4 brands · F6 customers · F12 log out |
+| Everywhere (after login) | F2 products · F3 categories · F4 brands · F6 customers · F7 pricing · F12 log out |
 | Login | Enter in the username moves to the password · Enter logs in · F9 back to the Start screen |
 | Products | `/` or Ctrl+F search (typing filters after a short pause) · ↑/↓ move (past the last row loads more) · Enter open · Ctrl+N new product · Ctrl+Shift+D delete the highlighted product (never used only; asks first) · F5 refresh · Esc back from the search to the list |
-| Product form | Ctrl+S save · Ctrl+1 / Ctrl+2 / Ctrl+3 tabs General / Variants / Units & barcodes · Esc back (asks first when there are unsaved changes) · Ctrl+Shift+A archive / unarchive (asks first) |
+| Product form | Ctrl+S save · Ctrl+1 / Ctrl+2 / Ctrl+3 / Ctrl+4 tabs General / Variants / Units & barcodes / Prices · Esc back (asks first when there are unsaved changes) · Ctrl+Shift+A archive / unarchive (asks first) |
+| Prices tab | Ctrl+L next price list (or pick it) · ↑/↓ pick a price · Ctrl+N new price · Ctrl+Shift+N schedule a new price (starts tomorrow; saving ends the picked price the day before) · Ctrl+T add a tier (1–10) · Ctrl+Enter save the price · Ctrl+Shift+D delete it (asks first; only a price never sold) · needs `price.manage` to change |
 | Categories / Brands | ↑/↓ pick · Ctrl+S save · Ctrl+N add (a child of the picked category / a brand) · Ctrl+Shift+A archive / unarchive · Ctrl+Shift+D delete (never used only; asks first) · F5 refresh · Esc back to products |
 | Customer screens | Ctrl+1 customer list · Ctrl+2 groups · Ctrl+3 tiers · Ctrl+4 possible duplicates · Ctrl+5 negative balances · Ctrl+6 balance settings · F5 refresh |
 | Customer list | `/` or Ctrl+F search name or company (needs `customer.search`) · ↑/↓ move (past the last row loads more) · Enter open · Ctrl+N new customer |
@@ -128,6 +129,10 @@ The back-office window is keyboard-first too; shortcuts work while a text field 
 | Possible duplicates | ↑/↓ pick the customer to merge away (the one holding its phone is the one to keep; type another member code to change it) · Ctrl+M merge (asks first) · Enter open · Esc back |
 | Negative balances | ↑/↓ move · Enter open · Esc back |
 | Balance settings | Ctrl+S save · Esc back |
+| Pricing screens | Ctrl+1 price lists · Ctrl+2 tax rates · Ctrl+3 pricing settings · F5 refresh · writes need `price.manage` |
+| Price lists | ↑/↓ pick · Ctrl+N new list (a branch, customer group, membership tier or one customer by member code or phone; fixed once saved) · Ctrl+S save · Ctrl+Shift+A archive (asks first; not the default list) · Esc back to products |
+| Tax rates | ↑/↓ pick the tax class · Ctrl+S add the rate from its first day (a future day is fine) · Esc back to price lists |
+| Pricing settings | Ctrl+S save (switching tax-inclusive asks first: stored prices are not converted) · Esc back to price lists |
 | Confirmation | Enter or Y yes · Esc or N no (the erase dialog: Enter and Esc only) |
 
 Screenshots of every screen: `docs/screenshots/` (regenerate with
@@ -181,9 +186,16 @@ Every setting is taken from, in order: **command-line flag > environment variabl
 - The server speaks plain HTTP (no TLS yet); keep it on the shop LAN.
 - The register window has no selling yet (spec 2.6): the session home looks up a scanned or
   typed barcode, scale label, SKU or PLU (`GET /catalog/lookup`) and shows the item, its unit,
-  quantity and how it matched, or why it cannot be sold here; there is no cart and no price on
-  screen yet. The server already prices (spec 2.3, R3: the lookup's `unit_price` and
-  `POST /pricing/quote`); the register shows it with phase R5. The override test is still there. It needs a display (Slint picks Wayland, X11 or another backend; set
+  quantity and how it matched, or why it cannot be sold here, with its price (spec 2.3, R5): the
+  store price of the scanned unit (a box without its own price is the base price × its factor),
+  "Not priced yet" when no list prices it, "Typed at sale" for an open-price item (the list
+  price as a suggestion), weight × price per kg for a weight label, and the printed amount as
+  final for a price label (its quantity derived from the store price, empty without one). With a
+  customer attached, the item is also quoted for them (`POST /pricing/quote`, qty 1 or the
+  label's weight) and the customer's price is shown with its source (e.g. "Gold member price ·
+  −5%"), or "Same as the store price"; a failed quote shows its reason and keeps the store price.
+  A `price.changed` for the shown item refreshes it. There is no cart yet. The override test is
+  still there. It needs a display (Slint picks Wayland, X11 or another backend; set
   `SLINT_BACKEND`, e.g. `winit-software`, to force one).
 - The register does not reconnect the events WebSocket after a network drop; it reconnects at
   the next login. The back office behaves the same.
@@ -198,8 +210,12 @@ Every setting is taken from, in order: **command-line flag > environment variabl
   (`GET /customers/{id}/history`) is empty until sales exist (spec 2.6), so the customer balance
   only changes by merges and cash payouts for now. On a branch node only sign-up works; a till's
   profile edit forwarded to HQ (and `503 hq_unreachable`) comes with sync.
-- Back office: the product image is picked by typing the file path (no file dialog yet); prices
-  are not edited here yet (the pricing API of spec 2.3 exists, its screens come with R4); categories, brands and products are archived, never deleted.
+- Back office: the product image is picked by typing the file path (no file dialog yet);
+  categories, brands and products are archived, never deleted. Pricing (F7, spec 2.3 R4): archived
+  price lists are not listed and cannot be unarchived from the screen; a scheduled price change
+  ends the old price with one call and creates the new one with a second (if the second is
+  refused, the old end is put back); the Prices tab is not part of the product's unsaved-changes
+  check, so an unsaved price is dropped without asking when you leave the product.
 
 ## Development
 

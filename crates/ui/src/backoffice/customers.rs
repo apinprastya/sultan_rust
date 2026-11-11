@@ -671,7 +671,7 @@ impl Controller {
             .is_some_and(|s| s.me.holds_anywhere(key))
     }
 
-    fn customer_call(&self, call: Call) -> Effect {
+    pub(super) fn customer_call(&self, call: Call) -> Effect {
         Effect::Customers {
             token: self.token(),
             call,

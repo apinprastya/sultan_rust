@@ -1,7 +1,8 @@
 //! Renders the Start screen (files `0a`–`0d`, `0d` the single app's settings with terminals
 //! allowed), every register screen (with the barcode lookup of
-//! phase C5, files `5a`–`5c`) and every back-office screen (phase C4, files `bo-*`; the
-//! customer screens of spec 2.5 M4 are `bo-10`–`bo-19`) to PNG
+//! phase C5 and its prices of spec 2.3 R5, files `5a`–`5d`) and every back-office screen (phase C4,
+//! files `bo-*`; the customer screens of spec 2.5 M4 are `bo-10`–`bo-19`, the pricing screens of
+//! spec 2.3 R4 `bo-20`–`bo-24`) to PNG
 //! with Slint's software renderer (no display needed), driven by keys against the fake service,
 //! like the headless tests.
 //!
@@ -18,9 +19,15 @@ use slint::platform::software_renderer::{
     MinimalSoftwareWindow, PremultipliedRgbaColor, RepaintBufferType,
 };
 use slint::platform::{Key, Platform, WindowAdapter, WindowEvent};
-use slint::{ComponentHandle, PhysicalSize, PlatformError, SharedString};
-use sultan_client::fake::{BRANCH_ID, FakeService, SEED_BUDI, SEED_SILVER, STANDARD_TAX_CLASS};
-use sultan_client::{BackOffice, CategoryBody, Customer, Product};
+use slint::{ComponentHandle, Model, PhysicalSize, PlatformError, SharedString};
+use sultan_client::fake::{
+    BRANCH_ID, FakeService, PriceCustomer, SEED_BUDI, SEED_GOLD, SEED_SILVER, STANDARD_TAX_CLASS,
+};
+use sultan_client::pricing::DEFAULT_PRICE_LIST;
+use sultan_client::{
+    BackOffice, CategoryBody, Customer, PriceEntryBody, PriceListBody, PriceRule, PriceTier,
+    Product, Service,
+};
 use sultan_core::catalog::gtin_check_digit;
 use sultan_ui::start::{
     AppKind, Lan, LanChanged, LanFuture, StartError, StartFuture, StartInfo, StartService,
@@ -144,6 +151,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .block_on(fake.password_login("owner", "owner-pass-1"))?
         .token;
     runtime.block_on(fake.put_branch_blocks(&owner, &aqua600, &[BRANCH_ID.to_owned()]))?;
+    demo_prices(&fake, &runtime, &owner)?;
     let mut options = Options::new("R1 · Kasir 1");
     options.language = Some(language.clone());
     options.start = true;
@@ -175,17 +183,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     shot("4-open-session")?;
     press(&app, Key::Return);
     shot("5-home")?;
-    // The barcode field (phase C5): a variant's barcode, a weight scale label, a blocked item.
-    digits(&app, &ean13("8992000100000"));
-    press(&app, Key::Return);
-    shot("5a-scan-item")?;
-    digits(&app, &ean13("210012301250"));
-    press(&app, Key::Return);
-    shot("5b-scan-weight")?;
-    digits(&app, &ean13("899100000001"));
-    press(&app, Key::Return);
-    shot("5c-scan-not-sold-here")?;
-    press(&app, Key::Escape);
+    scans(&app, &shot)?;
     press(&app, Key::F2);
     press(&app, Key::DownArrow);
     digits(&app, "5555");
@@ -223,6 +221,33 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 type Shot = Result<(), Box<dyn std::error::Error>>;
 
+/// The barcode field (phase C5) with prices (spec 2.3 R5): a variant's barcode, a weight scale
+/// label, a blocked item, and the Gold price of an attached customer (detached again after).
+fn scans(app: &App, shot: &dyn Fn(&str) -> Shot) -> Shot {
+    // The barcode field (phase C5): a variant's barcode, a weight scale label, a blocked item.
+    digits(app, &ean13("8992000100000"));
+    press(app, Key::Return);
+    shot("5a-scan-item")?;
+    digits(app, &ean13("210012301250"));
+    press(app, Key::Return);
+    shot("5b-scan-weight")?;
+    digits(app, &ean13("899100000001"));
+    press(app, Key::Return);
+    shot("5c-scan-not-sold-here")?;
+    // A customer attached (Budi, Gold): Teh Botol shows his −5% price next to the store price.
+    press(app, Key::Escape);
+    press(app, Key::F3);
+    digits(app, "0812-3456-789");
+    press(app, Key::Return);
+    press(app, Key::Return);
+    digits(app, &ean13("899100000010"));
+    press(app, Key::Return);
+    shot("5d-scan-customer-price")?;
+    press(app, Key::F4);
+    press(app, Key::Escape);
+    Ok(())
+}
+
 /// The customer step (spec 2.5, phase M5), from the "register in use" screen, as Budi (a
 /// manager: name search and payout).
 fn customers(app: &App, shot: &dyn Fn(&str) -> Shot) -> Shot {
@@ -252,6 +277,38 @@ fn customers(app: &App, shot: &dyn Fn(&str) -> Shot) -> Shot {
     digits(app, "0812-3456-789");
     press(app, Key::Return);
     shot("10d-customer-sign-up-taken")?;
+    Ok(())
+}
+
+/// Store prices for the register shots (spec 2.3 R5): the fake's pricing demo (Teh Botol 5 000,
+/// Aqua 600ml 3 500, a Gold tier list −5% that Budi holds), the shirt at 89 000 and the cheese at
+/// 129 900 per kg.
+fn demo_prices(fake: &FakeService, runtime: &tokio::runtime::Runtime, owner: &str) -> Shot {
+    let _ = fake.seed_pricing_demo();
+    for (code, price) in [
+        (ean13("8992000100000"), 89_000),
+        ("123".to_owned(), 129_900),
+    ] {
+        let item = runtime.block_on(fake.lookup(owner, &code))?;
+        fake.seed_price_entry(
+            DEFAULT_PRICE_LIST,
+            &id(),
+            &PriceEntryBody {
+                variant_id: item.variant_id,
+                unit_id: item.unit_id,
+                valid_from: None,
+                valid_to: None,
+                tiers: vec![PriceTier::fixed(1_000, price)],
+            },
+        );
+    }
+    fake.seed_price_customer(
+        SEED_BUDI,
+        PriceCustomer {
+            tier: Some(SEED_GOLD.to_owned()),
+            ..PriceCustomer::default()
+        },
+    );
     Ok(())
 }
 
@@ -480,6 +537,7 @@ fn start(
     Ok(())
 }
 
+#[allow(clippy::too_many_lines)] // one shot after another, in screen order
 fn backoffice(
     window: &Rc<MinimalSoftwareWindow>,
     dir: &Path,
@@ -585,6 +643,48 @@ fn backoffice(
     shot("bo-18-negative-balances")?;
     ctrl("6");
     shot("bo-19-balance-settings")?;
+
+    // Pricing (spec 2.3, R4): the demo prices, the Gold tier list and a branch list.
+    let demo = fake.seed_pricing_demo();
+    fake.seed_price_list(
+        "0190a000-0000-7000-8000-000000000400",
+        &PriceListBody {
+            kind: "branch".into(),
+            target_id: Some(BRANCH_ID.into()),
+            name: "Harga Jakarta".into(),
+            active: true,
+            rule: Some(PriceRule::amount(500)),
+            archived: false,
+        },
+    );
+    key(w, &[Key::F7.into()]);
+    key(w, &[Key::DownArrow.into()]);
+    key(w, &[Key::DownArrow.into()]);
+    shot("bo-20-price-lists")?;
+    ctrl("2");
+    // Standard is the second tax class; a future rate.
+    key(w, &[Key::DownArrow.into()]);
+    edit("tax-rate", 0, "rate", "12");
+    edit("tax-rate", 0, "valid_from", "2027-01-01");
+    ctrl("s");
+    shot("bo-21-tax-rates")?;
+    ctrl("3");
+    ui.invoke_toggle("pricing-settings".into(), 0, "tax_inclusive".into(), false);
+    shot("bo-22-pricing-settings")?;
+    key(w, &[Key::F2.into()]);
+    key(w, &[Key::F5.into()]);
+    let row = ui
+        .get_rows()
+        .iter()
+        .position(|r| r.name == demo.teh.name)
+        .unwrap_or_default();
+    ui.invoke_pick("open".into(), i32::try_from(row)?, 0);
+    ctrl("4");
+    shot("bo-23-form-prices")?;
+    ctrl_shift("n");
+    edit("price-tier", 0, "value", "5.500");
+    edit("price-tier", 1, "value", "5.000");
+    shot("bo-24-form-prices-schedule")?;
     Ok(())
 }
 

@@ -7,8 +7,8 @@
 //! - [`app`]: the glue to the Slint window; depends on [`sultan_client::Service`] only.
 //! - [`amount`], [`count`], [`input`]: Rupiah formatting, the denomination count, keys, PIN and
 //!   time texts.
-//! - [`scan`]: the session home's barcode field (phase C5): typed code, waiting lookup, shown
-//!   item.
+//! - [`scan`]: the session home's barcode field (phase C5) and its prices (spec 2.3, R5): typed
+//!   code, waiting lookup, shown item and the attached customer's quote.
 //! - [`customer`]: the session home's customer step (spec 2.5, phase M5): find, sign up,
 //!   attach, balance payout.
 //! - [`setup`] and [`setup_app`]: the first-run setup wizard (single app, HQ server, branch

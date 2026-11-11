@@ -20,7 +20,9 @@
 //!    `GET /catalog/lookup` and shows the item (or why there is none: not found, not sold at this
 //!    branch, archived, not for sale, a scale label of 0); Esc clears the field and the item. The
 //!    lookup does not block input, so the next scan can follow at once; only the newest answer is
-//!    shown. No cart and no prices yet (spec 2.3, 2.6).
+//!    shown. The item shows its store price (spec 2.3 R5); with a customer attached, the
+//!    customer's price is quoted too (`POST /pricing/quote`, [`Effect::Quote`]). No cart yet
+//!    (spec 2.6).
 //! 4. **Close** — blind close (spec 2.1 §5): a counted total or per-denomination counts; expected
 //!    cash is never shown before the close. Enter asks for confirmation, Enter again closes.
 //! 5. **Report** — expected, counted, over/short and tender totals; Enter logs out to Lock.
@@ -41,16 +43,18 @@
 //! **Events** (spec 2.1 §4): after login the glue watches `GET /events`; `session.revoked` for
 //! this login session returns to Lock. Events carry the login generation they were watched for,
 //! so a late event of an earlier login is ignored. `catalog.changed` for the shown item's
-//! product (or for the catalog settings) and `events.lagged` look the shown code up again, so the
-//! panel follows the back office (spec 2.2 §11); the socket needs the PIN session, which the home
-//! screen always has.
+//! product (or for the catalog settings), `price.changed` for its variant (or for any price:
+//! `variant_ids` null) and `events.lagged` look the shown code up again, so the panel follows
+//! the back office (spec 2.2 §11, 2.3 §9); a customer price is then quoted again. The socket
+//! needs the PIN session, which the home screen always has.
 //!
 //! While a call is running (`busy`), input is swallowed, so a double Enter cannot log in or open
 //! twice.
 
 use sultan_client::{
     Branch, CashierSession, ClientError, CloseReport, CloseRequest, Customer, LockUser, Login,
-    Lookup, OverrideGrant, OverrideRequest, ProtectedAction, ProtectedResult, ServerEvent,
+    Lookup, OverrideGrant, OverrideRequest, ProtectedAction, ProtectedResult, Quote, QuoteRequest,
+    ServerEvent,
 };
 
 use crate::amount::{Digits, percent, rupiah};
@@ -214,6 +218,28 @@ pub fn lookup_notice(error: &ClientError, code: &str) -> Notice {
         _ => return notice_for(error),
     };
     Notice::new(item, code, Tone::Bad)
+}
+
+/// The message for a failed customer price: the error code of a quoted line (`no_price`,
+/// `invalid_reference`, …), translated like the API's.
+#[must_use]
+pub fn price_notice(code: &str) -> Notice {
+    match code {
+        "no_price" => Notice::bad("no_price"),
+        "invalid_reference" => Notice::bad("price_reference"),
+        "invalid_field" | "amount_overflow" => Notice::bad("invalid_amount"),
+        other => Notice::new("error", other.to_owned(), Tone::Bad),
+    }
+}
+
+/// The message for a quote that failed as a whole (spec 2.3 §15.12: an unknown, archived,
+/// merged or erased customer is `422 invalid_reference`).
+#[must_use]
+pub fn quote_notice(error: &ClientError) -> Notice {
+    match error.code() {
+        Some(code @ ("no_price" | "invalid_reference")) => price_notice(code),
+        _ => notice_for(error),
+    }
 }
 
 /// Whether the error means the login (or the device) is no longer valid.
@@ -505,6 +531,18 @@ pub enum Effect {
         /// The login generation the lookup was started for.
         generation: u64,
     },
+    /// [`sultan_client::Service::quote`] of the shown item for the attached customer; the answer
+    /// comes back as [`Msg::Quoted`] with `seq`.
+    Quote {
+        /// Session token.
+        token: String,
+        /// One line, with the customer.
+        request: QuoteRequest,
+        /// The quote's sequence number.
+        seq: u64,
+        /// The login generation the quote was asked for.
+        generation: u64,
+    },
     /// A customer call ([`Call`]); the answer comes back as [`Msg::Customer`] with
     /// `generation`.
     Customer {
@@ -563,6 +601,9 @@ pub enum Msg {
     /// Result of [`Effect::Lookup`] number `seq` (second field) of the login `generation`
     /// (first field).
     Looked(u64, u64, Result<Lookup, ClientError>),
+    /// Result of [`Effect::Quote`] number `seq` (second field) of the login `generation` (first
+    /// field).
+    Quoted(u64, u64, Result<Quote, ClientError>),
     /// Result of [`Effect::Customer`] of the login `generation`.
     Customer(u64, Box<Reply>),
     /// A click on a name-search result in the customer dialog.
@@ -613,6 +654,8 @@ pub struct Controller {
     generation: u64,
     /// Sequence number of the last lookup.
     lookups: u64,
+    /// Sequence number of the last quote.
+    quotes: u64,
     /// The window was opened from the Start screen: the lock screen offers F9 to go back.
     pub start: bool,
     /// The customer attached to the session home (spec 2.5 M5).
@@ -639,6 +682,7 @@ impl Controller {
             users_failed: false,
             generation: 0,
             lookups: 0,
+            quotes: 0,
             start: false,
             customer: None,
             dialog: None,
@@ -940,6 +984,9 @@ impl Controller {
             }
             Action::Detach => {
                 self.customer = None;
+                if let Screen::Home(h) = &mut self.screen {
+                    h.scan.forget_quote();
+                }
                 self.set_notice(Notice::new("customer_detached", "", Tone::Neutral));
                 Vec::new()
             }
@@ -973,7 +1020,7 @@ impl Controller {
                 self.customer = Some(*customer);
                 self.dialog = None;
                 self.set_notice(Notice::new("customer_attached", line, Tone::Good));
-                Vec::new()
+                self.quote_shown()
             }
         }
     }
@@ -1220,6 +1267,7 @@ impl Controller {
                 self.catalog_event(&event)
             }
             Msg::Looked(generation, seq, result) => self.looked(generation, seq, result),
+            Msg::Quoted(generation, seq, result) => self.quoted(generation, seq, result),
             Msg::Customer(generation, reply) => self.customer_reply(generation, *reply),
             // Logout and branch failures change nothing on screen.
             _ => Vec::new(),
@@ -1227,7 +1275,8 @@ impl Controller {
     }
 
     /// `catalog.changed` touching the shown item (its product, or the settings with the scale
-    /// layouts) or `events.lagged`: look the shown code up again.
+    /// layouts), `price.changed` touching its variant (or every price) or `events.lagged`: look
+    /// the shown code up again.
     fn catalog_event(&mut self, event: &ServerEvent) -> Vec<Effect> {
         let token = self.token();
         let Screen::Home(h) = &mut self.screen else {
@@ -1245,6 +1294,11 @@ impl Controller {
                         data["product_id"].as_str() == Some(item.product_id.as_str())
                     })
             }
+            "price.changed" => shown.item().is_some_and(|item| {
+                event.data["variant_ids"]
+                    .as_array()
+                    .is_none_or(|ids| ids.iter().any(|id| id == item.variant_id.as_str()))
+            }),
             _ => false,
         };
         if !touches {
@@ -1280,8 +1334,69 @@ impl Controller {
         }
         if let Screen::Home(h) = &mut self.screen {
             let code = h.scan.looking().unwrap_or_default().to_owned();
-            h.scan
-                .answer(seq, result.map_err(|e| lookup_notice(&e, &code)));
+            if h.scan
+                .answer(seq, result.map_err(|e| lookup_notice(&e, &code)))
+            {
+                return self.quote_shown();
+            }
+        }
+        Vec::new()
+    }
+
+    /// Quotes the shown item for the attached customer, if both are there and the item is
+    /// quoted ([`crate::scan::quote_line`]).
+    fn quote_shown(&mut self) -> Vec<Effect> {
+        let token = self.token();
+        let Some(customer) = &self.customer else {
+            return Vec::new();
+        };
+        let Screen::Home(h) = &mut self.screen else {
+            return Vec::new();
+        };
+        let seq = self.quotes + 1;
+        let Some(line) = h.scan.start_quote(seq) else {
+            return Vec::new();
+        };
+        self.quotes = seq;
+        vec![Effect::Quote {
+            token,
+            request: QuoteRequest {
+                customer_id: Some(customer.id.clone()),
+                lines: vec![line],
+            },
+            seq,
+            generation: self.generation,
+        }]
+    }
+
+    fn quoted(
+        &mut self,
+        generation: u64,
+        seq: u64,
+        result: Result<Quote, ClientError>,
+    ) -> Vec<Effect> {
+        if generation != self.generation || self.login.is_none() {
+            return Vec::new();
+        }
+        if let Err(e) = &result
+            && ends_login(e)
+        {
+            return self.fail(e);
+        }
+        let line = match result {
+            Ok(quote) => quote
+                .lines
+                .into_iter()
+                .next()
+                .ok_or_else(|| Notice::new("error", "unexpected", Tone::Bad))
+                .and_then(|line| match &line.error {
+                    Some(error) => Err(price_notice(&error.code)),
+                    None => Ok(line),
+                }),
+            Err(e) => Err(quote_notice(&e)),
+        };
+        if let Screen::Home(h) = &mut self.screen {
+            h.scan.quoted(seq, line);
         }
         Vec::new()
     }
@@ -1731,6 +1846,66 @@ mod tests {
         c.screen = Screen::Home(HomeScreen::default());
         assert!(
             c.update(event("events.lagged", serde_json::Value::Null))
+                .effects
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn customer_prices_are_quoted_for_the_shown_item() {
+        let mut c = at_home();
+        c.customer = Some(Customer {
+            id: "cu".into(),
+            ..Customer::default()
+        });
+        c.update(Msg::Key(Key::Char('x')));
+        c.update(Msg::Key(Key::Enter));
+        let step = c.update(Msg::Looked(0, 1, Ok(found("p1"))));
+        let [Effect::Quote { request, seq, .. }] = step.effects.as_slice() else {
+            panic!("{:?}", step.effects)
+        };
+        assert_eq!((request.customer_id.as_deref(), *seq), (Some("cu"), 1));
+        // A quote of another login is ignored; an empty answer is an unexpected error.
+        let quote = |lines: Vec<sultan_client::QuotedLine>| Quote {
+            branch_id: "b".into(),
+            date: "2027-01-15".into(),
+            customer_id: Some("cu".into()),
+            tax_inclusive: true,
+            tax_registered: true,
+            cash_rounding: "none".into(),
+            lines,
+            totals: sultan_client::QuoteTotals::default(),
+        };
+        assert!(
+            c.update(Msg::Quoted(5, 1, Ok(quote(Vec::new()))))
+                .effects
+                .is_empty()
+        );
+        c.update(Msg::Quoted(0, 1, Ok(quote(Vec::new()))));
+        let Screen::Home(h) = &c.screen else {
+            panic!("home")
+        };
+        assert_eq!(
+            h.scan.shown.as_ref().unwrap().customer,
+            crate::scan::CustomerPrice::Failed(Notice::new("error", "unexpected", Tone::Bad))
+        );
+        // `price.changed` for the shown variant (or every price) looks it up again; another
+        // variant's does not.
+        let other = event(
+            "price.changed",
+            serde_json::json!({"scope": "entry", "variant_ids": ["w"]}),
+        );
+        assert!(c.update(other).effects.is_empty());
+        let mine = event(
+            "price.changed",
+            serde_json::json!({"scope": "entry", "variant_ids": ["v"]}),
+        );
+        assert_eq!(c.update(mine).effects.len(), 1);
+        // Not at home: nothing to quote.
+        c.screen = Screen::Lock(LockScreen::default());
+        assert!(c.quote_shown().is_empty());
+        assert!(
+            c.update(Msg::Quoted(0, 1, Ok(quote(Vec::new()))))
                 .effects
                 .is_empty()
         );

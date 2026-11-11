@@ -26,7 +26,11 @@
 //!    possible duplicates with merge, negative balances and the balance settings; see
 //!    [`customers`].
 //!
-//! F2 / F3 / F4 / F6 switch between products, categories, brands and customers; F12 logs out.
+//! 7. **Prices** (F7, spec 2.3 phase R4) — price lists, tax rates and the pricing settings, and
+//!    the product form's Prices tab (Ctrl+4); see [`pricing`].
+//!
+//! F2 / F3 / F4 / F6 / F7 switch between products, categories, brands, customers and prices; F12
+//! logs out.
 //!
 //! **Live refresh**: after login the glue watches `GET /events`; `catalog.changed` reloads the
 //! product list (or the taxonomy) and, for the product open in the form, fetches it: when it
@@ -34,6 +38,7 @@
 
 pub mod customers;
 pub mod form;
+pub mod pricing;
 
 use std::collections::BTreeSet;
 
@@ -165,6 +170,12 @@ pub enum Screen {
     NegativeBalances,
     /// Customer balance settings.
     BalanceSettings,
+    /// Price lists.
+    PriceLists,
+    /// Tax rates.
+    TaxRates,
+    /// Pricing settings.
+    PricingSettings,
 }
 
 impl Screen {
@@ -184,6 +195,9 @@ impl Screen {
             Self::Duplicates => "duplicates",
             Self::NegativeBalances => "negative-balances",
             Self::BalanceSettings => "balance-settings",
+            Self::PriceLists => "price-lists",
+            Self::TaxRates => "tax-rates",
+            Self::PricingSettings => "pricing-settings",
         }
     }
 }
@@ -203,6 +217,12 @@ pub enum Confirm {
     Merge,
     /// Erase the open customer's personal data (spec 2.5 §7); needs its code typed.
     Erase,
+    /// Archive the price list in the editor (spec 2.3 §2).
+    PriceListArchive,
+    /// Delete the price entry in the Prices tab's editor.
+    PriceEntryDelete,
+    /// Save the pricing settings with a changed tax mode (stored prices are not converted).
+    TaxMode,
 }
 
 /// What [`Confirm::Delete`] deletes.
@@ -642,6 +662,13 @@ pub enum Effect {
         /// The call.
         call: customers::Call,
     },
+    /// A pricing call (spec 2.3, [`pricing`]).
+    Pricing {
+        /// Token.
+        token: String,
+        /// The call.
+        call: pricing::Call,
+    },
     /// `logout`.
     Logout(String),
     /// `watch_events`; events come back as [`Msg::Event`] with `generation`.
@@ -770,6 +797,8 @@ pub enum Msg {
     LoggedOut(Result<(), ClientError>),
     /// Result of [`Effect::Customers`].
     Customers(Box<customers::Reply>),
+    /// Result of [`Effect::Pricing`].
+    Pricing(Box<pricing::Reply>),
 }
 
 /// What [`Controller::update`] did.
@@ -898,6 +927,8 @@ pub struct Controller {
     pub brands: BrandEditor,
     /// The customer section.
     pub customers: customers::CustomerState,
+    /// The pricing section and the product form's Prices tab.
+    pub pricing: pricing::PricingState,
     /// A login is running.
     pub busy: bool,
     /// A field the view should focus (`search`, `name`, `category-name`, `brand-name`, or
@@ -1046,6 +1077,7 @@ impl Controller {
             (3, Screen::Categories),
             (4, Screen::Brands),
             (6, Screen::Customers),
+            (7, Screen::PriceLists),
         ] {
             if p.f(n) {
                 return Step::handled(self.go(target));
@@ -1059,6 +1091,7 @@ impl Controller {
             Screen::Form => self.form_capture(p),
             Screen::Categories | Screen::Brands => self.taxonomy_capture(p, screen),
             Screen::Login => Step::default(),
+            s if pricing::in_section(s) => self.pricing_capture(p, s),
             _ => self.customers_capture(p, screen),
         }
     }
@@ -1100,13 +1133,16 @@ impl Controller {
     }
 
     fn form_capture(&mut self, p: Press) -> Step {
+        if let Some(step) = self.prices_tab_capture(p) {
+            return step;
+        }
         if p.ctrl_char('s') {
             return Step::handled(self.on_action("save"));
         }
         if p.ctrl_shift_char('a') {
             return Step::handled(self.on_action("archive"));
         }
-        for (c, tab) in [('1', 0), ('2', 1), ('3', 2)] {
+        for (c, tab) in [('1', 0), ('2', 1), ('3', 2), ('4', 3)] {
             if p.ctrl_char(c) {
                 return Step::handled(self.on_action(&format!("tab-{tab}")));
             }
@@ -1215,6 +1251,9 @@ impl Controller {
         if from == Screen::CustomerForm && target != Screen::CustomerForm {
             self.customers.form = None;
         }
+        if target != Screen::Form {
+            self.pricing.product = None;
+        }
         match target {
             Screen::Products => {
                 self.focus("list");
@@ -1235,6 +1274,7 @@ impl Controller {
                 Vec::new()
             }
             Screen::Login | Screen::Form | Screen::CustomerForm => Vec::new(),
+            s if pricing::in_section(s) => self.enter_pricing(s),
             _ => self.enter_customers(target, from),
         }
     }
@@ -1267,6 +1307,9 @@ impl Controller {
                 .unwrap_or_default(),
             Confirm::CustomerArchive | Confirm::Merge | Confirm::Erase => {
                 self.customer_confirmed(confirm)
+            }
+            Confirm::PriceListArchive | Confirm::PriceEntryDelete | Confirm::TaxMode => {
+                self.pricing_confirmed(confirm)
             }
         }
     }
@@ -1376,6 +1419,9 @@ impl Controller {
                 }
                 _ => Vec::new(),
             };
+        }
+        if let Some(effects) = self.pricing_action(id) {
+            return effects;
         }
         if let Some(effects) = self.customer_action(id) {
             return effects;
@@ -1792,6 +1838,9 @@ impl Controller {
                 return Vec::new();
             }
             k if customers::EDIT_KINDS.contains(&k) => return self.customer_edit(k, field, value),
+            k if pricing::EDIT_KINDS.contains(&k) => {
+                return self.pricing_edit(k, row, field, value);
+            }
             _ => {}
         }
         let can = self.can_manage();
@@ -1893,6 +1942,9 @@ impl Controller {
         if let Some(effects) = self.customer_toggle(kind, field, on) {
             return effects;
         }
+        if self.pricing_toggle(kind, field, on).is_some() {
+            return Vec::new();
+        }
         let can = self.can_manage();
         let branches: Vec<String> = self
             .reference
@@ -1937,6 +1989,9 @@ impl Controller {
     #[allow(clippy::too_many_lines)] // one arm per picker
     fn on_choose(&mut self, kind: &str, row: usize, field: &str, index: usize) -> Vec<Effect> {
         if let Some(effects) = self.customer_choose(kind, field, index) {
+            return effects;
+        }
+        if let Some(effects) = self.pricing_choose(kind, row, field, index) {
             return effects;
         }
         match (kind, field) {
@@ -2054,6 +2109,9 @@ impl Controller {
         if let Some(effects) = self.customer_pick(kind, row) {
             return effects;
         }
+        if let Some(effects) = self.pricing_pick(kind, row) {
+            return effects;
+        }
         match kind {
             "products" => {
                 if row < self.list.rows.len() {
@@ -2124,6 +2182,9 @@ impl Controller {
         }
         if event.kind == "customer.changed" {
             return self.customer_event();
+        }
+        if event.kind == "price.changed" {
+            return self.pricing_event();
         }
         if event.kind != "catalog.changed" {
             return Vec::new();
@@ -2354,7 +2415,11 @@ impl Controller {
                 }
                 Vec::new()
             }
-            Msg::Saved(result) => self.saved(result),
+            Msg::Saved(result) => {
+                let mut effects = self.saved(result);
+                effects.extend(self.prices_after_save());
+                effects
+            }
             Msg::BlocksSaved(result) => {
                 let failure = result.as_ref().err().cloned();
                 if let (Some(f), Ok(blocks)) = (&mut self.form, result) {
@@ -2499,6 +2564,7 @@ impl Controller {
             }
             Msg::Deleted(what, result) => self.deleted(what, &result),
             Msg::Customers(reply) => self.customer_reply(*reply),
+            Msg::Pricing(reply) => self.pricing_reply(*reply),
             _ => Vec::new(),
         }
     }

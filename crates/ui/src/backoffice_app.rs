@@ -30,13 +30,16 @@ use tokio::runtime::Handle;
 use crate::app::{Runner, Watchers};
 use crate::backoffice::customers::{self, Call, CustomerForm, Reply};
 use crate::backoffice::form::{FormError, ProductForm, Tab};
+use crate::backoffice::pricing::{self, Call as PriceCall, Reply as PriceReply};
 use crate::backoffice::{Confirm, Controller, Deletable, Effect, Msg, Press, Screen, TYPES};
 use crate::controller::Notice;
 use crate::{
     BackOfficeWindow, BoBalanceRow, BoBalanceSettings, BoBarcode, BoBranch, BoBrandEditor,
     BoCategoryEditor, BoCombo, BoComponent, BoCustomerForm, BoCustomerList, BoCustomerRow, BoForm,
-    BoGeneral, BoHit, BoList, BoLogin, BoMerge, BoNamedEditor, BoNamedRow, BoOption, BoProductRow,
-    BoReview, BoTreeRow, BoUnit, BoValue, Note,
+    BoGeneral, BoHit, BoList, BoLogin, BoMerge, BoNamedEditor, BoNamedRow, BoOption,
+    BoPriceEntryRow, BoPriceListEditor, BoPriceListRow, BoPriceTierRow, BoPrices,
+    BoPricingSettings, BoProductRow, BoReview, BoTaxRateRow, BoTaxRates, BoTreeRow, BoUnit,
+    BoValue, Note,
 };
 use crate::{amount, input};
 
@@ -136,6 +139,15 @@ struct Models {
     tier_rows: Rc<VecModel<BoNamedRow>>,
     duplicate_rows: Rc<VecModel<BoCustomerRow>>,
     negative_rows: Rc<VecModel<BoCustomerRow>>,
+    price_list_rows: Rc<VecModel<BoPriceListRow>>,
+    target_choices: Rc<VecModel<SharedString>>,
+    tax_class_rows: Rc<VecModel<SharedString>>,
+    tax_rate_rows: Rc<VecModel<BoTaxRateRow>>,
+    price_list_choices: Rc<VecModel<SharedString>>,
+    price_entry_rows: Rc<VecModel<BoPriceEntryRow>>,
+    price_tier_rows: Rc<VecModel<BoPriceTierRow>>,
+    price_variant_choices: Rc<VecModel<SharedString>>,
+    price_unit_choices: Rc<VecModel<SharedString>>,
 }
 
 struct State {
@@ -315,6 +327,7 @@ fn start(service: &dyn BackOffice, effect: &Effect) -> Option<MsgFuture> {
         }
         Effect::Logout(token) => call!(service.logout(token), Msg::LoggedOut),
         Effect::Customers { token, call } => Some(start_customer(service, token, call)),
+        Effect::Pricing { token, call } => Some(start_pricing(service, token, call)),
         Effect::WatchEvents { .. } | Effect::Debounce(_) | Effect::ReadFile(_) | Effect::Exit => {
             None
         }
@@ -384,6 +397,75 @@ fn start_customer(service: &dyn BackOffice, token: &str, call: &Call) -> MsgFutu
         Call::FindByCode(code) => call!(service.customer_by_code(token, code), Reply::Partner),
         Call::FindByPhone(phone) => {
             call!(service.customer_by_phone(token, phone), Reply::Partner)
+        }
+    }
+}
+
+/// Starts a pricing call (spec 2.3, R4); the answer comes back as [`Msg::Pricing`].
+fn start_pricing(service: &dyn BackOffice, token: &str, call: &PriceCall) -> MsgFuture {
+    macro_rules! call {
+        ($future:expr, $reply:expr) => {{
+            let future = $future;
+            let wrap = $reply;
+            Box::pin(async move { Msg::Pricing(Box::new(wrap(future.await))) }) as MsgFuture
+        }};
+    }
+    match call {
+        PriceCall::Lists => call!(service.price_lists(token, false), PriceReply::Lists),
+        PriceCall::PutList { id, body } => call!(service.put_price_list(token, id, body), |r| {
+            PriceReply::ListSaved(false, r)
+        }),
+        PriceCall::ArchiveList { id, key } => {
+            call!(service.archive_price_list(token, id, key), |r| {
+                PriceReply::ListSaved(true, r)
+            })
+        }
+        PriceCall::ProductPrices(id) => {
+            let product = id.clone();
+            call!(service.product_prices(token, id), move |r| {
+                PriceReply::ProductPrices(product, r)
+            })
+        }
+        PriceCall::PutEntry { list, id, body } => call!(
+            service.put_price_entry(token, list, id, body),
+            PriceReply::EntrySaved
+        ),
+        PriceCall::DeleteEntry { list, id } => call!(
+            service.delete_price_entry(token, list, id),
+            PriceReply::EntryDeleted
+        ),
+        PriceCall::TaxRates(class) => {
+            let c = class.clone();
+            call!(service.tax_rates(token, class), move |r| {
+                PriceReply::TaxRates(c, r)
+            })
+        }
+        PriceCall::PutTaxRate { class, rate } => {
+            let c = class.clone();
+            call!(service.put_tax_rate(token, class, rate), move |r| {
+                PriceReply::TaxRateSaved(c, r)
+            })
+        }
+        PriceCall::Settings => call!(service.pricing_settings(token), |r| {
+            PriceReply::Settings(false, r)
+        }),
+        PriceCall::PutSettings(body) => call!(service.put_pricing_settings(token, body), |r| {
+            PriceReply::Settings(true, r)
+        }),
+        PriceCall::Customer(id) => {
+            let c = id.clone();
+            call!(service.customer(token, id), move |r| {
+                PriceReply::Customer(c, r)
+            })
+        }
+        PriceCall::FindCustomer(text) => {
+            let typed = text.clone();
+            let wrap = move |r| PriceReply::Found(typed, r);
+            if let Ok(code) = sultan_core::customer::CustomerCode::parse(text) {
+                call!(service.customer_by_code(token, code.as_str()), wrap)
+            } else {
+                call!(service.customer_by_phone(token, text), wrap)
+            }
         }
     }
 }
@@ -585,7 +667,13 @@ fn render(ui: &BackOfficeWindow, c: &Controller, state: &State) {
             || c.list.loading
             || c.form.as_ref().is_some_and(|f| f.saving)
             || cs.list.loading
-            || cs.form.as_ref().is_some_and(|f| f.saving),
+            || cs.form.as_ref().is_some_and(|f| f.saving)
+            || c.pricing.loading
+            || c.pricing.editor.saving
+            || c.pricing
+                .product
+                .as_ref()
+                .is_some_and(|p| p.saving || p.loading),
     );
     ui.set_server(state.options.server.as_str().into());
     ui.set_user_name(
@@ -637,6 +725,9 @@ fn render(ui: &BackOfficeWindow, c: &Controller, state: &State) {
             Some(Confirm::CustomerArchive) => "archive-customer",
             Some(Confirm::Merge) => "merge",
             Some(Confirm::Erase) => "erase",
+            Some(Confirm::PriceListArchive) => "archive-price-list",
+            Some(Confirm::PriceEntryDelete) => "delete-price-entry",
+            Some(Confirm::TaxMode) => "tax-mode",
         }
         .into(),
     );
@@ -756,6 +847,7 @@ fn render(ui: &BackOfficeWindow, c: &Controller, state: &State) {
     if customers::in_section(screen) {
         render_customers(ui, c, state);
     }
+    render_pricing(ui, c, state);
 }
 
 /// `Budi Santoso (K7QH-29XM)`.
@@ -772,6 +864,16 @@ fn confirm_names(c: &Controller) -> (String, String) {
         Some(Confirm::Erase) => form.map_or_else(Default::default, |f| {
             (f.name.clone(), f.display_code.clone())
         }),
+        Some(Confirm::PriceListArchive) => (c.pricing.editor.name.clone(), String::new()),
+        Some(Confirm::TaxMode) => (
+            if c.pricing.settings.edit.tax_inclusive {
+                "inclusive"
+            } else {
+                "exclusive"
+            }
+            .to_owned(),
+            String::new(),
+        ),
         Some(Confirm::Merge) => {
             let m = &c.customers.merge;
             (
@@ -1067,6 +1169,290 @@ fn render_customer_form(ui: &BackOfficeWindow, c: &Controller, f: &CustomerForm,
             })
             .unwrap_or_default(),
     );
+}
+
+fn price_issue(issue: Option<&pricing::Issue>) -> Note {
+    issue.map_or_else(Note::default, |i| Note {
+        code: i.code.into(),
+        arg: i.arg.as_str().into(),
+        tone: -1,
+    })
+}
+
+/// The pricing screens and the Prices tab (spec 2.3, R4).
+#[allow(clippy::too_many_lines)] // one assignment per window property
+fn render_pricing(ui: &BackOfficeWindow, c: &Controller, state: &State) {
+    let models = &state.models;
+    let pr = &c.pricing;
+    let can = c.can_price();
+    ui.set_price_serial(i32::try_from(pr.serial % 1_000_000).unwrap_or(0));
+    let logged_in = c.session.as_ref().is_some_and(|s| !s.me.user_id.is_empty());
+    ui.set_price_read_only(if can || !logged_in {
+        Note::default()
+    } else {
+        Note {
+            code: "price_read_only".into(),
+            arg: SharedString::new(),
+            tone: 0,
+        }
+    });
+
+    // Price lists.
+    sync(
+        &models.price_list_rows,
+        pr.lists
+            .iter()
+            .map(|l| BoPriceListRow {
+                name: l.name.as_str().into(),
+                kind: l.kind.as_str().into(),
+                target: c.target_name(&l.kind, l.target_id.as_deref()).into(),
+                rule: l
+                    .rule
+                    .as_ref()
+                    .map(pricing::rule_text)
+                    .unwrap_or_default()
+                    .into(),
+                active: l.active,
+            })
+            .collect(),
+    );
+    let editor = &pr.editor;
+    let targets = c.target_choices();
+    sync(
+        &models.target_choices,
+        choice_labels(ui, &targets, "pick_target_choice"),
+    );
+    ui.set_price_list_editor(BoPriceListEditor {
+        is_new: editor.editing.is_none(),
+        is_default: editor.is_default(),
+        kind: editor.kind.as_str().into(),
+        kind_index: pricing::KINDS
+            .iter()
+            .position(|k| *k == editor.kind)
+            .map_or(0, index),
+        target_index: position(targets.iter().map(|x| &x.0), &&editor.target),
+        target_name: if editor.target.is_some() {
+            c.target_name(&editor.kind, editor.target.as_deref()).into()
+        } else {
+            SharedString::new()
+        },
+        customer: editor.customer.as_str().into(),
+        name: editor.name.as_str().into(),
+        active: editor.active,
+        rule_index: index(editor.rule_mode),
+        rule_value: editor.rule_value.as_str().into(),
+        cursor: index(editor.cursor),
+        can_edit: can && !editor.saving,
+        notice: note(editor.notice.as_ref()),
+        name_error: price_issue(editor.issue("name")),
+        target_error: price_issue(editor.issue("target")),
+        rule_error: price_issue(editor.issue("rule")),
+    });
+
+    // Tax rates.
+    let reference = &c.reference;
+    sync(
+        &models.tax_class_rows,
+        reference
+            .tax_classes
+            .iter()
+            .map(|t| SharedString::from(t.name.as_str()))
+            .collect(),
+    );
+    let tax = &pr.tax;
+    let class = reference.tax_classes.get(tax.cursor);
+    let today = c.today();
+    let rates: &[sultan_client::TaxRate] = tax
+        .rates
+        .as_ref()
+        .filter(|(id, _)| class.is_some_and(|x| x.id == *id))
+        .map_or(&[], |(_, rates)| rates.as_slice());
+    // The rate in force: the latest first day on or before today.
+    let current = rates
+        .iter()
+        .rposition(|x| pricing::status(Some(&x.valid_from), None, today) == "current");
+    sync(
+        &models.tax_rate_rows,
+        rates
+            .iter()
+            .enumerate()
+            .rev()
+            .map(|(i, x)| BoTaxRateRow {
+                valid_from: x.valid_from.as_str().into(),
+                rate: amount::percent(i64::from(x.rate_bp)).into(),
+                status: if Some(i) == current {
+                    "current"
+                } else if pricing::status(Some(&x.valid_from), None, today) == "scheduled" {
+                    "scheduled"
+                } else {
+                    "ended"
+                }
+                .into(),
+            })
+            .collect(),
+    );
+    ui.set_tax_rates(BoTaxRates {
+        cursor: index(tax.cursor),
+        class_name: class.map(|x| x.name.as_str()).unwrap_or_default().into(),
+        rate: tax.rate.as_str().into(),
+        valid_from: tax.valid_from.as_str().into(),
+        can_edit: can && class.is_some(),
+        notice: note(tax.notice.as_ref()),
+        rate_error: price_issue(tax.issues.iter().find(|i| i.field == "rate")),
+        from_error: price_issue(tax.issues.iter().find(|i| i.field == "valid_from")),
+    });
+
+    // Settings.
+    let settings = &pr.settings;
+    ui.set_pricing_settings(BoPricingSettings {
+        tax_inclusive: settings.edit.tax_inclusive,
+        tax_registered: settings.edit.tax_registered,
+        rounding_index: pricing::ROUNDINGS
+            .iter()
+            .position(|x| *x == settings.edit.cash_rounding)
+            .map_or(0, index),
+        can_edit: can && settings.stored.is_some(),
+        mode_changed: settings
+            .stored
+            .as_ref()
+            .is_some_and(|x| x.tax_inclusive != settings.edit.tax_inclusive),
+        notice: note(settings.notice.as_ref()),
+    });
+
+    if let Some(f) = &c.form {
+        render_prices_tab(ui, c, f, models);
+    }
+}
+
+/// The product form's Prices tab.
+#[allow(clippy::too_many_lines)] // one assignment per tab property
+fn render_prices_tab(
+    ui: &BackOfficeWindow,
+    c: &Controller,
+    f: &crate::backoffice::FormState,
+    models: &Models,
+) {
+    let today = c.today();
+    let pp = c.pricing.product.as_ref();
+    let lists = pp.map(pricing::ProductPricing::lists).unwrap_or_default();
+    sync(
+        &models.price_list_choices,
+        lists
+            .iter()
+            .map(|l| {
+                let count = pp.map_or(0, |p| p.entries_of(&l.id).len());
+                SharedString::from(format!("{} · {count}", l.name))
+            })
+            .collect(),
+    );
+    let list = pp.and_then(|p| lists.iter().find(|l| l.id == p.list_id));
+    let rows = pp.map(pricing::ProductPricing::rows).unwrap_or_default();
+    let unit_name = |id: &str| {
+        f.form
+            .data
+            .units
+            .iter()
+            .find(|u| u.id == id)
+            .map_or_else(|| id.to_owned(), |u| u.name.clone())
+    };
+    sync(
+        &models.price_entry_rows,
+        rows.iter()
+            .map(|x| BoPriceEntryRow {
+                variant: f.form.variant_label(&x.variant_id).into(),
+                unit: unit_name(&x.unit_id).into(),
+                valid_from: x.valid_from.clone().unwrap_or_default().into(),
+                valid_to: x.valid_to.clone().unwrap_or_default().into(),
+                tiers: x
+                    .tiers
+                    .iter()
+                    .map(pricing::tier_text)
+                    .collect::<Vec<_>>()
+                    .join("  ·  ")
+                    .into(),
+                status: pricing::status(x.valid_from.as_deref(), x.valid_to.as_deref(), today)
+                    .into(),
+            })
+            .collect(),
+    );
+    let editor = pp.and_then(|p| p.editor.as_ref());
+    let variants = c.price_variants(editor.and_then(|e| e.variant.as_deref()));
+    let units = c.price_units(editor.and_then(|e| e.unit.as_deref()));
+    sync(
+        &models.price_variant_choices,
+        strings(variants.iter().map(|v| v.1.clone())),
+    );
+    sync(
+        &models.price_unit_choices,
+        strings(units.iter().map(|u| u.1.clone())),
+    );
+    sync_rows(
+        &models.price_tier_rows,
+        &editor
+            .map(|e| {
+                e.tiers
+                    .iter()
+                    .enumerate()
+                    .map(|(i, t)| BoPriceTierRow {
+                        min_qty: t.min_qty.as_str().into(),
+                        mode: index(t.mode),
+                        value: t.value.as_str().into(),
+                        qty_error: price_issue(e.issue("min_qty", Some(i))),
+                        value_error: price_issue(e.issue("value", Some(i))),
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default(),
+    );
+    let issue = |field: &str| price_issue(editor.and_then(|e| e.issue(field, None)));
+    ui.set_prices(BoPrices {
+        new_product: f.form.is_new,
+        loading: pp.is_none_or(|p| p.prices.is_none()),
+        can_edit: c.can_price() && pp.is_some_and(|p| !p.saving),
+        list_index: pp
+            .and_then(|p| lists.iter().position(|l| l.id == p.list_id))
+            .map_or(0, index),
+        list_kind: list.map(|l| l.kind.as_str()).unwrap_or_default().into(),
+        list_rule: list
+            .and_then(|l| l.rule.as_ref())
+            .map(pricing::rule_text)
+            .unwrap_or_default()
+            .into(),
+        cursor: pp
+            .filter(|p| p.editor.as_ref().is_some_and(|e| !e.is_new))
+            .map_or(-1, |p| index(p.cursor)),
+        has_editor: editor.is_some(),
+        editor_new: editor.is_some_and(|e| e.is_new),
+        scheduling: editor.is_some_and(|e| e.ends.is_some()),
+        variant_index: editor
+            .and_then(|e| e.variant.as_ref())
+            .and_then(|v| variants.iter().position(|x| x.0 == *v))
+            .map_or(-1, index),
+        unit_index: editor
+            .and_then(|e| e.unit.as_ref())
+            .and_then(|u| units.iter().position(|x| x.0 == *u))
+            .map_or(-1, index),
+        unit_name: editor
+            .and_then(|e| e.unit.as_deref())
+            .map(unit_name)
+            .unwrap_or_default()
+            .into(),
+        valid_from: editor
+            .map(|e| e.valid_from.as_str())
+            .unwrap_or_default()
+            .into(),
+        valid_to: editor
+            .map(|e| e.valid_to.as_str())
+            .unwrap_or_default()
+            .into(),
+        can_add_tier: editor.is_some_and(|e| e.tiers.len() < pricing::MAX_TIERS),
+        notice: note(pp.and_then(|p| p.notice.as_ref())),
+        variant_error: issue("variant"),
+        unit_error: issue("unit"),
+        from_error: issue("valid_from"),
+        to_error: issue("valid_to"),
+        tiers_error: issue("tiers"),
+    });
 }
 
 #[allow(clippy::too_many_lines)] // one assignment per form property
@@ -1503,6 +1889,15 @@ pub fn build_backoffice(
     ui.set_tier_rows(ModelRc::from(models.tier_rows.clone()));
     ui.set_duplicate_rows(ModelRc::from(models.duplicate_rows.clone()));
     ui.set_negative_rows(ModelRc::from(models.negative_rows.clone()));
+    ui.set_price_list_rows(ModelRc::from(models.price_list_rows.clone()));
+    ui.set_target_choices(ModelRc::from(models.target_choices.clone()));
+    ui.set_tax_class_rows(ModelRc::from(models.tax_class_rows.clone()));
+    ui.set_tax_rate_rows(ModelRc::from(models.tax_rate_rows.clone()));
+    ui.set_price_list_choices(ModelRc::from(models.price_list_choices.clone()));
+    ui.set_price_entry_rows(ModelRc::from(models.price_entry_rows.clone()));
+    ui.set_price_tier_rows(ModelRc::from(models.price_tier_rows.clone()));
+    ui.set_price_variant_choices(ModelRc::from(models.price_variant_choices.clone()));
+    ui.set_price_unit_choices(ModelRc::from(models.price_unit_choices.clone()));
 
     let wake: Wake = match &runner {
         Runner::Spawn(_) => {

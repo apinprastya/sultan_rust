@@ -10,6 +10,9 @@ import { LineEdit, ComboBox, CheckBox, ScrollView } from "std-widgets.slint";
 import { Theme } from "theme.slint";
 import { Note, Card } from "widgets.slint";
 import { BoStrings, Field, SmallButton, KeyButton, Banner, SectionTitle } from "bo_widgets.slint";
+import { PricesTab, BoPrices, BoPriceEntryRow, BoPriceTierRow } from "bo_price_tab.slint";
+
+export { BoPrices, BoPriceEntryRow, BoPriceTierRow }
 
 export struct BoGeneral {
     code: string,
@@ -1046,6 +1049,14 @@ export component FormScreen inherits VerticalLayout {
     in property <image> thumbnail;
     in property <int> form-serial;
     in property <string> focus-target;
+    // The Prices tab (spec 2.3, R4).
+    in property <BoPrices> prices;
+    in property <[string]> price-list-choices;
+    in property <[BoPriceEntryRow]> price-entries;
+    in property <[BoPriceTierRow]> price-tiers;
+    in property <[string]> price-variant-choices;
+    in property <[string]> price-unit-choices;
+    in property <int> price-serial;
     callback action(string);
     callback edit(string, int, int, string, string);
     callback toggle(string, int, string, bool);
@@ -1178,6 +1189,14 @@ export component FormScreen inherits VerticalLayout {
                 root.action("tab-2");
             }
         }
+        TabButton {
+            text: @tr("Prices");
+            keys: "Ctrl+4";
+            selected: root.form.tab == 3;
+            clicked => {
+                root.action("tab-3");
+            }
+        }
     }
 
     Card {
@@ -1246,6 +1265,28 @@ export component FormScreen inherits VerticalLayout {
                         }
                         toggle(k, r, f, on) => {
                             root.toggle(k, r, f, on);
+                        }
+                        choose(k, r, f, i) => {
+                            root.choose(k, r, f, i);
+                        }
+                        pick(k, r, s) => {
+                            root.pick(k, r, s);
+                        }
+                    }
+                    if root.form.tab == 3: PricesTab {
+                        prices: root.prices;
+                        list-choices: root.price-list-choices;
+                        entries: root.price-entries;
+                        tiers: root.price-tiers;
+                        variant-choices: root.price-variant-choices;
+                        unit-choices: root.price-unit-choices;
+                        serial: root.price-serial;
+                        focus-target: root.focus-target;
+                        action(id) => {
+                            root.action(id);
+                        }
+                        edit(k, r, s, f, v) => {
+                            root.edit(k, r, s, f, v);
                         }
                         choose(k, r, f, i) => {
                             root.choose(k, r, f, i);

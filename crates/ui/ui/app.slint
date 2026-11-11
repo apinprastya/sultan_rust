@@ -106,6 +106,20 @@ export struct ScanView {
     amount: string,
     open-price: bool,
     requires-note: bool,
+    // Prices (spec 2.3 R5; `crates/ui/src/app.rs` `scan_view`): `label`, `open`, `none`,
+    // `weight` or `unit`; the store price of one unit; a weight label's amount.
+    price-kind: string,
+    price: string,
+    total: string,
+    // The attached customer's price: 0 none, 1 waiting, 2 its own price, 3 the store price,
+    // 4 failed (`cust-note`).
+    cust-state: int,
+    cust-price: string,
+    cust-total: string,
+    cust-source: string,
+    cust-name: string,
+    cust-diff: string,
+    cust-note: Note,
 }
 
 export struct DenomRow {
@@ -572,8 +586,77 @@ component Badge inherits Rectangle {
     }
 }
 
-// What the last scan found. Prices are not in the catalog (spec 2.3): the price row is a
-// placeholder, except the amount printed on a price scale label.
+// The shown item's prices (spec 2.3 R5): the store price (or the amount of a scale label, or why
+// there is none) and, with a customer attached, the customer's price and where it comes from.
+component PriceBox inherits Rectangle {
+    in property <ScanView> view;
+    property <bool> label: root.view.price-kind == "label";
+    property <bool> weight: root.view.price-kind == "weight";
+    border-radius: 10px;
+    background: Theme.raised;
+    accessible-role: groupbox;
+    accessible-label: @tr("Price");
+    VerticalLayout {
+        padding: 12px;
+        spacing: 8px;
+        HorizontalLayout {
+            spacing: 12px;
+            Text {
+                min-width: 150px;
+                text: root.label ? @tr("Amount on the label") : root.weight ? @tr("Amount for this weight") : root.view.price-kind == "unit" ? @tr("Price per {}", root.view.unit) : @tr("Price");
+                color: Theme.muted;
+                font-size: 14px;
+                vertical-alignment: center;
+            }
+            Text {
+                text: root.label ? root.view.amount : root.weight ? root.view.total : root.view.price-kind == "unit" ? root.view.price : root.view.price-kind == "open" ? @tr("Typed at sale") : @tr("Not priced yet");
+                color: root.view.price-kind == "none" ? Theme.warn : Theme.text;
+                font-size: 20px;
+                font-weight: 700;
+                vertical-alignment: center;
+            }
+            Text {
+                horizontal-stretch: 1;
+                text: root.label ? (root.view.qty != "" ? @tr("Final amount: {} at {} per {}", root.view.qty, root.view.price, root.view.unit) : @tr("Final amount. No store price, so the quantity stays empty.")) : root.weight ? @tr("{} × {} per {}", root.view.qty, root.view.price, root.view.unit) : root.view.price-kind == "open" ? (root.view.price != "" ? @tr("Open price. Suggested: {}", root.view.price) : @tr("Open price: the cashier types it at sale.")) : root.view.price-kind == "none" ? @tr("Set a price in the back office before selling.") : "";
+                color: Theme.muted;
+                font-size: 13px;
+                horizontal-alignment: right;
+                vertical-alignment: center;
+                wrap: word-wrap;
+            }
+        }
+        if root.view.cust-state != 0: HorizontalLayout {
+            spacing: 12px;
+            Text {
+                min-width: 150px;
+                text: @tr("Customer price");
+                color: Theme.muted;
+                font-size: 14px;
+                vertical-alignment: center;
+            }
+            Text {
+                horizontal-stretch: root.view.cust-state == 4 ? 1 : 0;
+                text: root.view.cust-state == 1 ? @tr("Checking the customer’s price…") : root.view.cust-state == 3 ? @tr("Same as the store price") : root.view.cust-state == 4 ? Strings.message(root.view.cust-note.code, root.view.cust-note.arg) : root.weight ? root.view.cust-total : root.view.cust-price;
+                color: root.view.cust-state == 2 ? Theme.success : root.view.cust-state == 4 ? Theme.danger : Theme.muted;
+                font-size: root.view.cust-state == 2 ? 20px : 15px;
+                font-weight: root.view.cust-state == 2 ? 700 : 400;
+                vertical-alignment: center;
+                wrap: word-wrap;
+            }
+            if root.view.cust-state != 4: Text {
+                horizontal-stretch: 1;
+                text: root.view.cust-state != 2 ? "" : Strings.price-source(root.view.cust-source, root.view.cust-name) + (root.view.cust-diff != "" ? " · " + root.view.cust-diff : "") + (root.weight ? " · " + @tr("at {} per {}", root.view.cust-price, root.view.unit) : "");
+                color: Theme.muted;
+                font-size: 13px;
+                horizontal-alignment: right;
+                vertical-alignment: center;
+                wrap: word-wrap;
+            }
+        }
+    }
+}
+
+// What the last scan found, with its prices (`PriceBox`).
 component ItemPanel inherits Card {
     in property <ScanView> view;
     if root.view.state == 0: VerticalLayout {
@@ -687,35 +770,8 @@ component ItemPanel inherits Card {
         Rectangle {
             vertical-stretch: 1;
         }
-        Rectangle {
-            border-radius: 10px;
-            background: Theme.raised;
-            HorizontalLayout {
-                padding: 12px;
-                spacing: 12px;
-                Text {
-                    text: root.view.amount != "" ? @tr("Amount on the label") : @tr("Price");
-                    color: Theme.muted;
-                    font-size: 14px;
-                    vertical-alignment: center;
-                }
-                Text {
-                    text: root.view.amount != "" ? root.view.amount : "–";
-                    color: Theme.text;
-                    font-size: 20px;
-                    font-weight: 700;
-                    vertical-alignment: center;
-                }
-                Text {
-                    horizontal-stretch: 1;
-                    text: @tr("Prices and the cart arrive in a later version.");
-                    color: Theme.muted;
-                    font-size: 13px;
-                    horizontal-alignment: right;
-                    vertical-alignment: center;
-                    wrap: word-wrap;
-                }
-            }
+        PriceBox {
+            view: root.view;
         }
     }
 }
@@ -1651,6 +1707,9 @@ export component MainWindow inherits Window {
     }
     public pure function chip-label(code: string) -> string {
         return Strings.chip(code);
+    }
+    public pure function price-source(kind: string, name: string) -> string {
+        return Strings.price-source(kind, name);
     }
 
     keys := FocusScope {

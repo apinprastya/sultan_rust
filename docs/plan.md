@@ -248,11 +248,18 @@ Where we are, so any session can pick up from here. Update this section at the e
   C5 register barcode lookup · **C3b** (2026-11-11): delete never-used products/categories/brands
   (`409 in_use`), keyset paging for `/catalog/search`, device-token `/events` (Everyone events
   only), `catalog.manage` / `catalog.view_archived` from any role assignment.
-- **2.5 Customers & membership** (spec `docs/spec/2.5-customers.md` §16): **M1** `core::customer`
-  and **M2** `db` (customers, groups, tiers, balance ledger, `customer.*` permissions) done
-  2026-11-11.
-- **2.3 Pricing** (spec `docs/spec/2.3-pricing.md` §13): **R1** `core::pricing` + `core::tax` done
-  2026-11-11.
+- **2.5 Customers & membership** (spec `docs/spec/2.5-customers.md` §16), all phases M1–M5
+  (2026-11-11): M1 `core::customer` · M2 `db` (customers, groups, tiers, balance ledger,
+  `customer.*` permissions) · M3 `server` API + client (payout lowers the session's expected cash)
+  · M4 back office (F6 Customers: list, form, groups, tiers, duplicates + merge, negative balances,
+  erase, balance settings) · M5 register (F3 Customer: lookup by phone/code, name search, sign-up,
+  attach, balance payout).
+- **2.3 Pricing** (spec `docs/spec/2.3-pricing.md` §13), all phases R1–R5 (2026-11-11): R1
+  `core::pricing` + `core::tax` · R2 `db` (price lists, entries, tiers, tax rates, settings,
+  `price.manage`, `price.override` MaxPct) · R3 `server` (lists, `POST /pricing/quote`, price in
+  `/catalog/lookup`, `price.changed`) · R4 back office (F7 Pricing: price lists, tax rates,
+  settings; Prices tab on the product form with schedule) · R5 register (price on the scanned item,
+  the attached customer's price through the quote).
 - **UI only, except HQ** (§3, 2026-11-09):
   - Start screen on single-app and terminal machines: F1 Kasir, F2 Back office, F3 Settings.
   - Settings: language (F6), set up again (F8), and on a single app "Allow terminals to connect"
@@ -261,7 +268,8 @@ Where we are, so any session can pick up from here. Update this section at the e
     new `GET /registers/me` (device token) refreshes it for older pairings.
 
 **Open decisions (the user's call)**
-- None. The three earlier ones were decided on 2026-11-11 (see §3).
+- Customer permissions are checked at the session's branch (spec 2.5 §18 item 16), while
+  `catalog.manage` / `price.manage` count from any role assignment. Proposed: make customers match.
 
 **Small to-dos**
 - Settings bottom bar at 1024 px: the one-line status summary is still cut off (the full text now
@@ -270,12 +278,18 @@ Where we are, so any session can pick up from here. Update this section at the e
 - `sultan-ui` test `start_event_loop` is flaky under coverage instrumentation.
 - Customer, group, tier and price-list ids are plain `Uuid` in db/core; move them to typed ids in
   `core::ids`.
+- Back office: the Prices tab is not part of the product form's unsaved-changes check; archived
+  price lists are not listed (no unarchive on screen).
+- Register: no payout slip is printed; the attached customer does not refresh on
+  `customer.changed`; purchase history is empty until 2.6.
+- Each sub-agent worktree builds its own `target/` (20–40 GB with coverage); clear finished ones.
 
-**Next (wave 2, after the user commits wave 1)**
-- **2.5 M3** server and **2.3 R2** db, in parallel.
-- Then **2.5 M4** back office, **M5** register and **2.3 R3** server, in parallel.
-- Then **2.3 R4** back office and **R5** register.
-- Saving change and paying with the customer balance arrive with **2.6 Sales** (cart + payment).
+**Next**
+- **2.6 Sales (register)**: discuss the spec first (cart, split tenders incl. QRIS, hold/resume,
+  returns, voids, receipts), then build. It brings saving change and paying with the customer
+  balance, the manual price override flow, cash rounding, and purchase history.
+- Other P1 specs still to discuss: 2.4 is P2; 2.7 cash in/out + X/Z, 2.8 inventory, 2.9 money,
+  2.10 reports, 2.11 hardware (ESC/POS + drawer), old-Sultan importer.
 
 **Way of working**
 - Each phase is discussed, written as a spec in `docs/spec/`, then built in phases; the user usually

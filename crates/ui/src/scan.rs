@@ -9,10 +9,16 @@
 //! - Enter hands the code to the lookup and empties the field at once, so the next scan can start
 //!   while the answer is on its way. Only the answer to the newest lookup is shown; Esc forgets
 //!   the field, the waiting lookup and the shown item.
-//! - Prices are not part of the catalog (spec 2.3): the item panel only says what was found.
+//! - Prices (spec 2.3, phase R5): the lookup brings the store price of one unit
+//!   (`Lookup::unit_price`, no customer). With a customer attached, the register also quotes the
+//!   shown item for that customer ([`ScanField::start_quote`], `POST /pricing/quote`): qty 1 of
+//!   the scanned unit, or the weight of a weight label. An open-price item and a price-embedded
+//!   label are never quoted: their price is typed at sale or printed and final (spec 2.3 §5).
+//!   A failed quote only marks the customer price; the store price stays shown.
 
-use sultan_client::Lookup;
-use sultan_core::catalog::MAX_BARCODE_LEN;
+use sultan_client::{Lookup, QuoteLine, QuotedLine};
+use sultan_core::catalog::{MAX_BARCODE_LEN, Qty};
+use sultan_core::money::Money;
 
 use crate::controller::Notice;
 
@@ -26,6 +32,22 @@ pub struct Scanned {
     pub code: String,
     /// The item, or why there is none (`item_not_found`, `item_not_sold_here`, …).
     pub result: Result<Lookup, Notice>,
+    /// The attached customer's price for the item.
+    pub customer: CustomerPrice,
+}
+
+/// The attached customer's price for the shown item (spec 2.3 R5).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub enum CustomerPrice {
+    /// No customer attached, or an item that is not quoted.
+    #[default]
+    None,
+    /// The quote numbered with this sequence number is on its way.
+    Waiting(u64),
+    /// The quoted line.
+    Priced(Box<QuotedLine>),
+    /// The quote failed; the store price stays shown.
+    Failed(Notice),
 }
 
 impl Scanned {
@@ -94,13 +116,47 @@ impl ScanField {
     pub fn answer(&mut self, seq: u64, result: Result<Lookup, Notice>) -> bool {
         match self.waiting.take() {
             Some((waiting, code)) if waiting == seq => {
-                self.shown = Some(Scanned { code, result });
+                self.shown = Some(Scanned {
+                    code,
+                    result,
+                    customer: CustomerPrice::None,
+                });
                 true
             }
             other => {
                 self.waiting = other;
                 false
             }
+        }
+    }
+
+    /// Asks for the customer price of the shown item as quote `seq`: the line to quote, or `None`
+    /// when no item is shown or it is not quoted ([`quote_line`]).
+    pub fn start_quote(&mut self, seq: u64) -> Option<QuoteLine> {
+        let shown = self.shown.as_mut()?;
+        let line = quote_line(shown.result.as_ref().ok()?)?;
+        shown.customer = CustomerPrice::Waiting(seq);
+        Some(line)
+    }
+
+    /// The answer of quote `seq`: shown if it is the one waiting. Returns whether it was.
+    pub fn quoted(&mut self, seq: u64, result: Result<QuotedLine, Notice>) -> bool {
+        match &mut self.shown {
+            Some(shown) if shown.customer == CustomerPrice::Waiting(seq) => {
+                shown.customer = match result {
+                    Ok(line) => CustomerPrice::Priced(Box::new(line)),
+                    Err(notice) => CustomerPrice::Failed(notice),
+                };
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// Forgets the customer price (the customer was detached).
+    pub fn forget_quote(&mut self) {
+        if let Some(shown) = &mut self.shown {
+            shown.customer = CustomerPrice::None;
         }
     }
 
@@ -134,6 +190,53 @@ pub fn match_kind(item: &Lookup) -> &str {
         "scale_barcode" if item.amount.is_some() => "scale_price",
         "scale_barcode" => "scale_weight",
         other => other,
+    }
+}
+
+/// The line to quote for a found item: one of the scanned unit, or the weight of a weight
+/// label. `None` for an open-price item and a price-embedded label (spec 2.3 §5: typed at sale,
+/// or printed and final).
+#[must_use]
+pub fn quote_line(item: &Lookup) -> Option<QuoteLine> {
+    if item.open_price || item.amount.is_some() {
+        return None;
+    }
+    let qty = item.qty_thousandths.filter(|q| *q > 0).unwrap_or(1_000);
+    Some(QuoteLine::new(&item.variant_id, &item.unit_id, qty))
+}
+
+/// `unit_price × qty`, rounded half up to Rp 1 (spec 2.3 §4.7); `None` on overflow.
+#[must_use]
+pub fn line_amount(unit_price: i64, qty_thousandths: i64) -> Option<i64> {
+    sultan_core::pricing::line_amount(
+        Money::from_minor(unit_price),
+        Qty::from_thousandths(qty_thousandths),
+    )
+    .ok()
+    .map(Money::minor)
+}
+
+/// How far `price` is from `store`, as a signed percentage with at most one decimal and a
+/// decimal comma (`−5%`, `+2,5%`); empty without a store price or when they are equal.
+#[must_use]
+pub fn percent_off(price: i64, store: Option<i64>) -> String {
+    let Some(store) = store.filter(|s| *s > 0) else {
+        return String::new();
+    };
+    let diff = i128::from(price) - i128::from(store);
+    if diff == 0 {
+        return String::new();
+    }
+    // Tenths of a percent, rounded half away from zero.
+    let scaled = diff.abs() * 1_000;
+    let store = i128::from(store);
+    let tenths = (scaled + store / 2) / store;
+    let sign = if diff < 0 { '\u{2212}' } else { '+' };
+    let (whole, fraction) = (tenths / 10, tenths % 10);
+    if fraction == 0 {
+        format!("{sign}{whole}%")
+    } else {
+        format!("{sign}{whole},{fraction}%")
     }
 }
 
@@ -208,6 +311,67 @@ mod tests {
         assert_eq!(f.again(5), None);
         assert!(f.answer(4, Err(Notice::bad("item_archived"))));
         assert!(f.shown.as_ref().unwrap().item().is_none());
+    }
+
+    #[test]
+    fn customer_prices_follow_the_shown_item() {
+        let mut f = ScanField::default();
+        assert_eq!(f.start_quote(1), None, "nothing shown");
+        f.push('A');
+        f.take(1);
+        f.answer(1, Ok(item("plu", None)));
+        let line = f.start_quote(1).unwrap();
+        assert_eq!(
+            (line.variant_id.as_str(), line.qty_thousandths),
+            ("v", 1_000)
+        );
+        let shown = |f: &ScanField| f.shown.as_ref().unwrap().customer.clone();
+        assert_eq!(shown(&f), CustomerPrice::Waiting(1));
+        // A newer quote replaces it: the late answer is ignored.
+        f.start_quote(2);
+        assert!(!f.quoted(1, Err(Notice::bad("network"))));
+        assert!(f.quoted(2, Err(Notice::bad("no_price"))));
+        assert_eq!(shown(&f), CustomerPrice::Failed(Notice::bad("no_price")));
+        assert!(
+            !f.quoted(2, Err(Notice::bad("network"))),
+            "answered already"
+        );
+        f.forget_quote();
+        assert_eq!(shown(&f), CustomerPrice::None);
+        // A failed lookup is never quoted.
+        f.push('B');
+        f.take(3);
+        f.answer(3, Err(Notice::bad("item_not_found")));
+        assert_eq!(f.start_quote(4), None);
+        f.clear();
+        f.forget_quote();
+        assert!(!f.quoted(4, Err(Notice::bad("network"))));
+    }
+
+    #[test]
+    fn what_is_quoted_and_how_far_from_the_store_price() {
+        let mut weight = item("scale_barcode", None);
+        weight.qty_thousandths = Some(1_250);
+        assert_eq!(quote_line(&weight).unwrap().qty_thousandths, 1_250);
+        assert_eq!(
+            quote_line(&item("scale_barcode", Some(15_000))),
+            None,
+            "final amount"
+        );
+        let mut open = item("plu", None);
+        open.open_price = true;
+        assert_eq!(quote_line(&open), None, "typed at sale");
+        #[rustfmt::skip]
+        let cases = [
+            (4_750, Some(5_000), "\u{2212}5%"), (9_928, Some(10_450), "\u{2212}5%"),
+            (5_125, Some(5_000), "+2,5%"), (5_000, Some(5_000), ""), (1, None, ""),
+            (1, Some(0), ""), (0, Some(3), "\u{2212}100%"),
+        ];
+        for (price, store, text) in cases {
+            assert_eq!(percent_off(price, store), text, "{price} {store:?}");
+        }
+        assert_eq!(line_amount(12_990, 1_250), Some(16_238));
+        assert_eq!(line_amount(i64::MAX, 2_000), None);
     }
 
     #[test]

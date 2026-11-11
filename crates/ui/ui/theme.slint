@@ -113,6 +113,13 @@ export global Strings {
         if (code == "scale_value_zero") {
             return @tr("The scale label {} shows 0. Weigh the item again.", arg);
         }
+        // Prices (spec 2.3, phase R5).
+        if (code == "no_price") {
+            return @tr("No price is set for this item.");
+        }
+        if (code == "price_reference") {
+            return @tr("This customer or item cannot be priced any more. Detach the customer and find them again.");
+        }
         // Customers (spec 2.5, phase M5).
         if (code == "customer_attached") {
             return @tr("Customer attached: {}", arg);
@@ -302,6 +309,27 @@ export global Strings {
             return "PLU";
         }
         return code;
+    }
+
+    // Where a customer price comes from (a price list's kind, spec 2.3 §2); `name` is the
+    // customer's tier or group.
+    public pure function price-source(kind: string, name: string) -> string {
+        if (kind == "customer") {
+            return @tr("Contract price for this customer");
+        }
+        if (kind == "tier") {
+            return name != "" ? @tr("{} member price", name) : @tr("Member tier price");
+        }
+        if (kind == "group") {
+            return name != "" ? @tr("{} group price", name) : @tr("Customer group price");
+        }
+        if (kind == "branch") {
+            return @tr("This branch’s price");
+        }
+        if (kind == "default") {
+            return @tr("Default store price");
+        }
+        return kind;
     }
 
     // Product types (spec 2.2 §5).
