@@ -122,8 +122,17 @@ fn sync<T: Clone + PartialEq + 'static>(model: &VecModel<T>, rows: Vec<T>) {
 pub(crate) struct Watchers(RefCell<Vec<tokio::task::AbortHandle>>);
 
 impl Watchers {
+    /// Runs `watching` on the runtime. It ends when its socket closes (logout) or fails,
+    /// which needs no report; it replaces (aborts) the watchers running before.
+    pub(crate) fn start(&self, runner: &Runner, watching: sultan_client::BoxFuture<()>) {
+        let task = runner.handle().spawn(async move {
+            let _ = watching.await;
+        });
+        self.replace(task.abort_handle());
+    }
+
     /// Aborts the running watchers and keeps `handle` as the only one.
-    pub(crate) fn replace(&self, handle: tokio::task::AbortHandle) {
+    fn replace(&self, handle: tokio::task::AbortHandle) {
         let mut all = self.0.borrow_mut();
         for old in all.drain(..) {
             old.abort();
@@ -284,11 +293,7 @@ impl State {
                     wake();
                 });
                 let watching = self.service.watch_events(token, sink);
-                // Ends when the socket closes (logout) or fails; nothing to report.
-                let task = self.runner.handle().spawn(async move {
-                    let _ = watching.await;
-                });
-                self.watchers.replace(task.abort_handle());
+                self.watchers.start(&self.runner, watching);
                 continue;
             }
             if effect == Effect::Exit {

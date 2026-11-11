@@ -336,11 +336,7 @@ impl State {
                         wake();
                     });
                     let watching = self.service.watch_events(token, sink);
-                    // Ends when the socket closes (logout) or fails; nothing to report.
-                    let task = self.runner.handle().spawn(async move {
-                        let _ = watching.await;
-                    });
-                    self.watchers.replace(task.abort_handle());
+                    self.watchers.start(&self.runner, watching);
                     continue;
                 }
                 Effect::Debounce(serial) => {
