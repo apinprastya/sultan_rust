@@ -198,15 +198,16 @@ component InfoRow inherits HorizontalLayout {
         width: 180px;
         text: root.label;
         color: Theme.muted;
-        vertical-alignment: center;
+        vertical-alignment: top;
     }
+    // Wraps rather than cut off: the status text is long in Indonesian at 1024×768.
     Text {
         horizontal-stretch: 1;
         text: root.value;
         color: root.value-color;
         font-weight: 600;
-        vertical-alignment: center;
-        overflow: elide;
+        vertical-alignment: top;
+        wrap: word-wrap;
     }
 }
 
@@ -522,7 +523,9 @@ export component StartWindow inherits Window {
                                         value: root.kind == "single" ? @tr("Single app") : @tr("Terminal");
                                     }
                                     InfoRow {
-                                        label: @tr("Server address");
+                                        // A single app's own server, not the address terminals type
+                                        // (that one is in "Terminals in this shop").
+                                        label: root.kind == "single" ? @tr("This computer's address") : @tr("Server address");
                                         value: root.server;
                                     }
                                     InfoRow {

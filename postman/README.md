@@ -4,7 +4,7 @@
 and of the catalog, spec 2.2 (`docs/spec/2.2-catalog.md`), against a running node. Requests and bodies follow the OpenAPI document served at
 `GET /api/v1/openapi.json` (import that URL into Postman to browse every endpoint).
 
-Flow (68 requests, each with test scripts). Spec 2.1 (requests 01–35):
+Flow (76 requests, each with test scripts). Spec 2.1 (requests 01–35):
 password login → OpenAPI document → create branch (`PUT`, client UUIDv7, time zone
 `Asia/Makassar`) → replay the same `PUT` (idempotent) → a time zone that is not IANA (`WIB`) is
 rejected (`invalid_field`) → create register → issue pairing code → pair (the answer names the branch: `branch_code`,
@@ -24,7 +24,7 @@ response) → the owner lists the register's closed sessions one per page
 empty → an unknown `status` is rejected → logout. The open and close steps also check the session
 number `<BRANCH>-<REGISTER>-S-<YYMMDD>-<NN>`.
 
-**Catalog (folder "Catalog (spec 2.2)", requests 36–68, phase C3):** create a category and a brand →
+**Catalog (folder "Catalog (spec 2.2)", requests 36–76, phases C3 and C3b):** create a category and a brand →
 tax classes (device token) → `PUT` a product with Size × Color options, units pcs + box(24) and
 EAN-13 barcodes (default SKUs `<code>-S-RED`…, `factor_thousandths`) → replay (`200`, same body) →
 read it with the device token → duplicate barcode on another product (`409 duplicate_barcode` with
@@ -38,7 +38,11 @@ unarchive → upload an 800×400 PNG (stored 512×256 JPEG ≤ 256 KB) → downl
 `304` with `If-None-Match` → a non-image is `422 invalid_image` → catalog settings → overlapping
 scale prefix rejected → generate a product code with an `Idempotency-Key` → the retry replays the
 same code → generate an internal EAN-13 → a device token cannot write (`401`) → delete the image →
-who am I (`GET /auth/me`: the user and permission keys the back office reads, phase C4).
+who am I (`GET /auth/me`: the user and permission keys the back office reads, phase C4; with
+`permissions_anywhere`, C3b) → **C3b:** search in pages of 2 (`next_after_variant_id`, then
+`after_variant_id`) → a category with products cannot be deleted (`409 in_use`, `reason:
+has_products`) → delete the never-used product (`204`) → it is gone (`404`) → delete the category
+and the brand (`204`) → deleting the brand again is `404`.
 The upload reads `postman/fixtures/product-800x400.png`, so pass `--working-dir postman`.
 
 IDs and codes are generated fresh in the first request's test script, so the collection can be run

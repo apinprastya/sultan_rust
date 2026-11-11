@@ -186,6 +186,64 @@ pub async fn unarchive_product(
     set_archived(tx, id, false, actor, now, "catalog.product.unarchive").await
 }
 
+/// Hard-deletes a never-used product with all its rows (options, values, units, variants,
+/// barcodes, its own bundle components, branch blocks, image): `DELETE /products/{id}`, spec 2.2
+/// §9 ("a typo right after creation"). The product is used ([`ProductRecord::used`]) once any
+/// variant has `used_at` ([`mark_used`]: a sale, stock movement or price-list entry) or is a
+/// component of another bundle; such a product can only be archived. An archived product that
+/// was never used may be deleted. Audit and outbox `catalog.product.delete` in `tx`.
+///
+/// # Errors
+/// [`CatalogDbError::NotFound`]; [`CatalogDbError::InUse`] (`used` or `bundle_component`); or
+/// the database error.
+pub async fn delete_product(
+    tx: &mut Tx,
+    id: ProductId,
+    actor: &Actor,
+    now: Timestamp,
+) -> CatalogResult<()> {
+    let stored = load(Conn::Tx(&mut *tx), id)
+        .await?
+        .ok_or(CatalogDbError::NotFound("product"))?;
+    if !stored.used.is_empty() {
+        return Err(CatalogDbError::InUse("used"));
+    }
+    if !stored.referenced.is_empty() {
+        return Err(CatalogDbError::InUse("bundle_component"));
+    }
+    // Children before parents (foreign keys on both backends).
+    for sql in [
+        "DELETE FROM bundle_component WHERE bundle_id = ?",
+        "DELETE FROM variant_option_value WHERE variant_id IN \
+         (SELECT id FROM variant WHERE product_id = ?)",
+        "DELETE FROM barcode WHERE product_id = ?",
+        "DELETE FROM variant WHERE product_id = ?",
+        "DELETE FROM product_option_value WHERE option_id IN \
+         (SELECT id FROM product_option WHERE product_id = ?)",
+        "DELETE FROM product_option WHERE product_id = ?",
+        "DELETE FROM product_unit WHERE product_id = ?",
+        "DELETE FROM product_branch_block WHERE product_id = ?",
+        "DELETE FROM product_image WHERE product_id = ?",
+        "DELETE FROM product WHERE id = ?",
+    ] {
+        sql::execute(Conn::Tx(&mut *tx), sql, args![id]).await?;
+    }
+    record(
+        tx,
+        actor,
+        now,
+        Change {
+            action: "catalog.product.delete",
+            target: format!("product:{id}"),
+            before: Some(product_json(&stored.record.doc, stored.record.archived_at)),
+            after: None,
+            outbox_kind: "catalog.product.delete",
+            payload: serde_json::json!({ "id": id.to_string() }),
+        },
+    )
+    .await
+}
+
 async fn set_archived(
     tx: &mut Tx,
     id: ProductId,

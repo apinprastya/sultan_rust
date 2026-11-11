@@ -1,5 +1,6 @@
-//! Products (spec 2.2 §2–§5, §9, §10, §12): `GET /products`, `GET|PUT /products/{id}`,
-//! `POST /products/{id}/archive|unarchive`, `GET|PUT /products/{id}/branch-blocks`.
+//! Products (spec 2.2 §2–§5, §9, §10, §12): `GET /products`, `GET|PUT|DELETE /products/{id}`,
+//! `POST /products/{id}/archive|unarchive`, `GET|PUT /products/{id}/branch-blocks`. `DELETE`
+//! removes a never-used product only ([`delete`]); a used one is archived instead.
 //!
 //! **The product document.** `PUT /products/{id}` writes the product with its options, units,
 //! variants, barcodes and bundle components in one body, with client-generated IDs (`UUIDv7`
@@ -23,7 +24,7 @@
 //! `variant_id` and `value`.
 //!
 //! **Archived products** (decided in C3): `GET /products/{id}` of an archived product and
-//! `GET /products?archived=true` need `catalog.view_archived` for all branches, otherwise
+//! `GET /products?archived=true` need `catalog.view_archived` (any role assignment), otherwise
 //! `403 permission_denied` (a device token never has it). Without `archived=true` the list holds
 //! active products only.
 //!
@@ -823,6 +824,47 @@ pub async fn unarchive(
     Path(id): Path<String>,
 ) -> Result<Json<ProductDto>, ApiError> {
     set_archived(&state, &session, &id, false).await
+}
+
+/// `DELETE /api/v1/products/{id}`: hard-deletes a product that was never used (spec 2.2 §9, C3b)
+/// with all its rows, image and branch blocks → `204`. A product is used once any variant was
+/// sold, moved or priced (`used: true` in the document) or is a component of another bundle;
+/// such a product gives `409 in_use` (`reason`: `used` / `bundle_component`) and can only be
+/// archived. An archived product that was never used may be deleted. Audited
+/// (`catalog.product.delete`), with an outbox row, and publishes `catalog.changed {scope:
+/// "product", product_id}`.
+///
+/// # Errors
+/// `403 read_only_replica` / `permission_denied`, `400 invalid_body`, `404 not_found`,
+/// `409 in_use`.
+#[utoipa::path(delete, path = "/api/v1/products/{id}", tag = "catalog",
+    security(("bearer" = [])), params(("id" = String, Path, description = "Product ID")),
+    responses((status = 204, description = "Deleted"),
+        (status = 403, body = crate::openapi::Problem), (status = 404, body = crate::openapi::Problem),
+        (status = 409, body = crate::openapi::Problem)))]
+pub async fn delete(
+    State(state): State<AppState>,
+    _hq: RequireHq,
+    session: UserSession,
+    Path(id): Path<String>,
+) -> Result<StatusCode, ApiError> {
+    let id: ProductId = parse_id(&id, "id")?;
+    require_manage(&state, &session).await?;
+    let (state, actor, now) = (&state, &actor(&session), state.now());
+    retrying(|| async move {
+        let mut tx = state.db.begin().await?;
+        catalog::delete_product(&mut tx, id, actor, now).await?;
+        tx.commit().await?;
+        Ok(())
+    })
+    .await?;
+    publish_changed(
+        state,
+        Written::Updated,
+        "product",
+        json!({ "product_id": id.to_string() }),
+    );
+    Ok(StatusCode::NO_CONTENT)
 }
 
 async fn set_archived(

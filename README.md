@@ -86,10 +86,13 @@ sultan backoffice --server http://192.168.1.10:8080 --user owner
 
 The back-office window manages the catalog (spec 2.2): products with their variants, units,
 barcodes, bundle components, image and branch assortment, plus categories and brands. Editing
-needs `catalog.manage` from a role assigned for **all branches** (the seeded Owner has it); other
-users can browse read-only and the window says why. Archived products are listed only with
-`catalog.view_archived`. Changes made elsewhere arrive as `catalog.changed` events: the list
-refreshes and an open product shows a warning with "reload".
+needs `catalog.manage` from any role assignment, for all branches or for one (the seeded Owner,
+Manager and Stock clerk have it; catalog writes still happen only on the HQ or standalone
+server); other users can browse read-only and the window says why. Archived products are listed
+only with `catalog.view_archived`. A product, category or brand that was never used (e.g. a
+typo) can be deleted (asking first); anything in use is refused with "archive it instead".
+Changes made elsewhere arrive as `catalog.changed` events: the list refreshes and an open
+product shows a warning with "reload".
 
 The Start screen, the register and the back office are keyboard-first; every key is also a
 button on screen:
@@ -114,9 +117,9 @@ The back-office window is keyboard-first too; shortcuts work while a text field 
 |---|---|
 | Everywhere (after login) | F2 products · F3 categories · F4 brands · F12 log out |
 | Login | Enter in the username moves to the password · Enter logs in · F9 back to the Start screen |
-| Products | `/` or Ctrl+F search (typing filters after a short pause) · ↑/↓ move (past the last row loads more) · Enter open · Ctrl+N new product · F5 refresh · Esc back from the search to the list |
+| Products | `/` or Ctrl+F search (typing filters after a short pause) · ↑/↓ move (past the last row loads more) · Enter open · Ctrl+N new product · Ctrl+Shift+D delete the highlighted product (never used only; asks first) · F5 refresh · Esc back from the search to the list |
 | Product form | Ctrl+S save · Ctrl+1 / Ctrl+2 / Ctrl+3 tabs General / Variants / Units & barcodes · Esc back (asks first when there are unsaved changes) · Ctrl+Shift+A archive / unarchive (asks first) |
-| Categories / Brands | ↑/↓ pick · Ctrl+S save · Ctrl+N add (a child of the picked category / a brand) · Ctrl+Shift+A archive / unarchive · F5 refresh · Esc back to products |
+| Categories / Brands | ↑/↓ pick · Ctrl+S save · Ctrl+N add (a child of the picked category / a brand) · Ctrl+Shift+A archive / unarchive · Ctrl+Shift+D delete (never used only; asks first) · F5 refresh · Esc back to products |
 | Confirmation | Enter or Y yes · Esc or N no |
 
 Screenshots of every screen: `docs/screenshots/` (regenerate with

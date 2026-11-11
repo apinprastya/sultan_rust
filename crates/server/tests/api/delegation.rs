@@ -31,6 +31,7 @@ fn hr_role() -> Value {
             { "permission": "refund.with_receipt" },
             { "permission": "cash.in" },
             { "permission": "session.open_close" },
+            { "permission": "customer.create" },
         ],
     })
 }

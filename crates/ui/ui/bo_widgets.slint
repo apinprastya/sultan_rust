@@ -28,13 +28,10 @@ export global BoStrings {
             return @tr("Your login ended. Please log in again.");
         }
         if (code == "read_only") {
-            return @tr("Read-only: changing the catalog needs the permission catalog.manage from a role for all branches. Ask the owner.");
-        }
-        if (code == "read_only_branch") {
-            return @tr("Read-only: you hold catalog.manage at this branch only. The catalog is shared by all branches, so the permission must come from a role assigned for all branches. Ask the owner.");
+            return @tr("Read-only: changing the catalog needs the permission catalog.manage. Ask the owner.");
         }
         if (code == "permission_denied_catalog") {
-            return @tr("Not allowed: this needs the permission {} from a role for all branches.", arg);
+            return @tr("Not allowed: this needs the permission {}.", arg);
         }
         if (code == "read_only_replica") {
             return @tr("This is a branch server. Change the catalog at the HQ server.");
@@ -50,6 +47,24 @@ export global BoStrings {
         }
         if (code == "unarchived_done") {
             return @tr("The product is active again.");
+        }
+        if (code == "deleted_done") {
+            return @tr("Deleted.");
+        }
+        if (code == "in_use" && arg == "used") {
+            return @tr("Cannot delete: the product has been sold, stocked or priced. Archive it instead.");
+        }
+        if (code == "in_use" && arg == "bundle_component") {
+            return @tr("Cannot delete: the product is part of a bundle. Archive it instead.");
+        }
+        if (code == "in_use" && arg == "has_products") {
+            return @tr("Cannot delete: products use it (archived ones too). Archive it instead.");
+        }
+        if (code == "in_use" && arg == "has_children") {
+            return @tr("Cannot delete: the category has subcategories. Delete or move them first, or archive it.");
+        }
+        if (code == "in_use") {
+            return @tr("Cannot delete: it is in use. Archive it instead.");
         }
         if (code == "file_error") {
             return @tr("Cannot read the file: {}", arg);

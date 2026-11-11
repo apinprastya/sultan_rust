@@ -19,7 +19,8 @@
 //!
 //! - [`BackOffice`] extends [`Service`] with what the back-office window needs (phase C4, spec 2.2
 //!   §12): password login, `GET /auth/me`, branches, and the catalog (products, categories,
-//!   brands, tax classes, settings, generators, branch blocks, images, search). Its types are in
+//!   brands, tax classes, settings, generators, branch blocks, images, paged search, and the
+//!   hard delete of never-used products, categories and brands, C3b). Its types are in
 //!   [`catalog`]. A back-office [`HttpService`] ([`HttpService::user`]) has no device token.
 //!
 //! Amounts are minor units (`i64`, Rupiah minor unit = 1, `docs/plan.md` §1); times are unix ms.
@@ -36,7 +37,8 @@ use std::sync::Arc;
 
 pub use catalog::{
     Brand, BrandBody, CatalogSettings, Category, CategoryBody, CategoryNode, Generate, ImageInfo,
-    Lookup, Me, Product, ProductPage, ProductQuery, ProductSummary, SearchHit, TaxClass,
+    Lookup, Me, Product, ProductPage, ProductQuery, ProductSummary, SearchHit, SearchPage,
+    TaxClass,
 };
 pub use error::{ClientError, Duplicate, FieldError, Problem};
 pub use http::{HttpService, api_base};
@@ -99,7 +101,9 @@ pub trait Service: Send + Sync {
         override_token: Option<&str>,
     ) -> BoxFuture<ProtectedResult>;
 
-    /// `GET /events` (WebSocket): calls `sink` for each event until the socket closes.
+    /// `GET /events` (WebSocket): calls `sink` for each event until the socket closes. An empty
+    /// `token` connects with the device token alone (C3b): only company-wide events such as
+    /// `catalog.changed` arrive then.
     fn watch_events(&self, token: &str, sink: EventSink) -> BoxFuture<()>;
 
     /// `GET /catalog/lookup?code=`: resolves a scanned or typed code (spec 2.2 §6). The
@@ -174,6 +178,23 @@ pub trait BackOffice: Service {
     /// `DELETE /products/{id}/image`.
     fn delete_product_image(&self, token: &str, id: &str) -> BoxFuture<()>;
 
-    /// `GET /catalog/search?q=&limit=`: sellable variants (the bundle component picker).
-    fn search(&self, token: &str, q: &str, limit: u32) -> BoxFuture<Vec<SearchHit>>;
+    /// `GET /catalog/search?q=&limit=&after_variant_id=`: one page of sellable variants (the
+    /// bundle component picker); `after` is the previous page's `next_after_variant_id`.
+    fn search(
+        &self,
+        token: &str,
+        q: &str,
+        limit: u32,
+        after: Option<&str>,
+    ) -> BoxFuture<SearchPage>;
+
+    /// `DELETE /products/{id}`: hard-deletes a never-used product (spec 2.2 §9); a used one is
+    /// `409 in_use` (archive it instead).
+    fn delete_product(&self, token: &str, id: &str) -> BoxFuture<()>;
+
+    /// `DELETE /categories/{id}`: a category without products or children; else `409 in_use`.
+    fn delete_category(&self, token: &str, id: &str) -> BoxFuture<()>;
+
+    /// `DELETE /brands/{id}`: a brand without products; else `409 in_use`.
+    fn delete_brand(&self, token: &str, id: &str) -> BoxFuture<()>;
 }

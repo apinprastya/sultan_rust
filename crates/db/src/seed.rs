@@ -43,7 +43,8 @@ const fn pct(percent: u16) -> Limit {
 }
 
 /// The five seeded roles with their default grants (spec 2.1 §3; catalog grants spec 2.2 §11,
-/// delivered to existing installs by the migration `20261109000001_catalog.sql`). Only Owner is reset by
+/// delivered to existing installs by the migration `20261109000001_catalog.sql`; customer grants
+/// spec 2.5 §12, by `20261111000002_customers.sql`). Only Owner is reset by
 /// [`seed_defaults`]; the others are created once and are then editable.
 ///
 /// # Panics
@@ -90,6 +91,11 @@ pub fn default_roles() -> Vec<Role> {
                 (P::AuditView, None),
                 (P::CatalogManage, None),
                 (P::CatalogViewArchived, None),
+                (P::CustomerCreate, None),
+                (P::CustomerSearch, None),
+                (P::CustomerEdit, None),
+                (P::CustomerManage, None),
+                (P::CustomerBalancePayout, None),
             ],
         ),
         role(
@@ -103,6 +109,7 @@ pub fn default_roles() -> Vec<Role> {
                 (P::RefundWithReceipt, None),
                 (P::CashIn, None),
                 (P::SessionOpenClose, None),
+                (P::CustomerCreate, None),
             ],
         ),
         role(

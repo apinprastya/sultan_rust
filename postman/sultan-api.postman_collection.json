@@ -2692,7 +2692,7 @@
                 }
               ]
             },
-            "description": "Needs catalog.view_archived for all branches."
+            "description": "Needs catalog.view_archived (any role assignment)."
           }
         },
         {
@@ -3272,6 +3272,7 @@
                   "    pm.expect(body.username).to.eql(pm.collectionVariables.get('ownerUsername') || body.username);",
                   "    pm.expect(body.register_id).to.eql(null);",
                   "    pm.expect(body.permissions_everywhere).to.include.members(['catalog.manage', 'catalog.view_archived']);",
+                  "    pm.expect(body.permissions_anywhere).to.include.members(['catalog.manage', 'catalog.view_archived']);",
                   "});"
                 ]
               }
@@ -3295,7 +3296,332 @@
                 "me"
               ]
             },
-            "description": "The session's user and permission keys (at the session branch and for all branches); the back office hides what the user may not do (spec 2.2 §12)."
+            "description": "The session's user and permission keys (at the session branch, for all branches, and through any role assignment, which is what catalog.manage needs since C3b, spec 2.2 §11); the back office hides what the user may not do."
+          }
+        },
+        {
+          "name": "69 Search, first page of 2 (device token)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('a full page carries the cursor', () => {",
+                  "    pm.response.to.have.status(200);",
+                  "    const body = pm.response.json();",
+                  "    pm.expect(body.items).to.have.lengthOf(2);",
+                  "    pm.expect(body.next_after_variant_id).to.eql(body.items[1].variant_id);",
+                  "    pm.collectionVariables.set('catSearchCursor', body.next_after_variant_id);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Register-Token",
+                "value": "{{deviceToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/catalog/search?q=kaos polos&limit=2",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "catalog",
+                "search"
+              ],
+              "query": [
+                {
+                  "key": "q",
+                  "value": "kaos polos"
+                },
+                {
+                  "key": "limit",
+                  "value": "2"
+                }
+              ]
+            },
+            "description": "Spec 2.2 §6, C3b: paged search. A full page answers next_after_variant_id."
+          }
+        },
+        {
+          "name": "70 Search, next page",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('the page after the cursor', () => {",
+                  "    pm.response.to.have.status(200);",
+                  "    const body = pm.response.json();",
+                  "    pm.expect(body.items.length).to.be.within(1, 2);",
+                  "    const cursor = pm.collectionVariables.get('catSearchCursor');",
+                  "    pm.expect(body.items.map((i) => i.variant_id)).to.not.include(cursor);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Register-Token",
+                "value": "{{deviceToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/catalog/search?q=kaos polos&limit=2&after_variant_id={{catSearchCursor}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "catalog",
+                "search"
+              ],
+              "query": [
+                {
+                  "key": "q",
+                  "value": "kaos polos"
+                },
+                {
+                  "key": "limit",
+                  "value": "2"
+                },
+                {
+                  "key": "after_variant_id",
+                  "value": "{{catSearchCursor}}"
+                }
+              ]
+            },
+            "description": "Pass the previous page's next_after_variant_id as after_variant_id."
+          }
+        },
+        {
+          "name": "71 A category with products cannot be deleted",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('409 in_use (has_products)', () => {",
+                  "    pm.response.to.have.status(409);",
+                  "    const e = pm.response.json();",
+                  "    pm.expect(e.code).to.eql('in_use');",
+                  "    pm.expect(e.reason).to.eql('has_products');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/categories/{{catCategoryId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "categories",
+                "{{catCategoryId}}"
+              ]
+            },
+            "description": "Spec 2.2 §9, C3b: only never-used rows are deleted; archive the rest."
+          }
+        },
+        {
+          "name": "72 Delete the never-used product",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('204', () => {",
+                  "    pm.response.to.have.status(204);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/products/{{catProductId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "products",
+                "{{catProductId}}"
+              ]
+            },
+            "description": "Never sold, stocked, priced or used in a bundle: hard-deleted with its rows, audited."
+          }
+        },
+        {
+          "name": "73 The deleted product is gone",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('404 not_found', () => {",
+                  "    pm.response.to.have.status(404);",
+                  "    pm.expect(pm.response.json().code).to.eql('not_found');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/products/{{catProductId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "products",
+                "{{catProductId}}"
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "74 Delete the category",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('204', () => {",
+                  "    pm.response.to.have.status(204);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/categories/{{catCategoryId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "categories",
+                "{{catCategoryId}}"
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "75 Delete the brand",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('204', () => {",
+                  "    pm.response.to.have.status(204);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/brands/{{catBrandId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "brands",
+                "{{catBrandId}}"
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "76 Delete the brand again",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('404 not_found', () => {",
+                  "    pm.response.to.have.status(404);",
+                  "    pm.expect(pm.response.json().code).to.eql('not_found');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/brands/{{catBrandId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "brands",
+                "{{catBrandId}}"
+              ]
+            },
+            "description": ""
           }
         }
       ]

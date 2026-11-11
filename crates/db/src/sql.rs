@@ -75,6 +75,16 @@ impl From<Uuid> for Arg {
         Self::Bytes(id.as_bytes().to_vec())
     }
 }
+impl From<Option<Uuid>> for Arg {
+    fn from(id: Option<Uuid>) -> Self {
+        Self::OptBytes(id.map(|id| id.as_bytes().to_vec()))
+    }
+}
+impl From<Option<String>> for Arg {
+    fn from(s: Option<String>) -> Self {
+        Self::OptText(s)
+    }
+}
 impl From<Vec<u8>> for Arg {
     fn from(bytes: Vec<u8>) -> Self {
         Self::Bytes(bytes)

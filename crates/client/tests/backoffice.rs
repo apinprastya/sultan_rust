@@ -70,7 +70,8 @@ fn branch(company: CompanyId, code: &str, name: &str) -> Branch {
     }
 }
 
-/// Owner `owner` (all branches) and Manager `budi` (JKT01 only), as in the fake.
+/// Owner `owner` (all branches), Manager `budi` (JKT01 only) and Cashier `kasir` (JKT01, no
+/// catalog permission), as in the fake.
 async fn serve() -> Server {
     let db = Db::connect("sqlite::memory:").await.unwrap();
     db.migrate().await.unwrap();
@@ -84,6 +85,7 @@ async fn serve() -> Server {
     let bdg = branch(company.id, "BDG01", "Toko Bandung");
     let owner = user("owner", "Owner", "owner-pass-1");
     let budi = user("budi", "Budi", "budi-pass-1");
+    let kasir = user("kasir", "Kasir", "kasir-pass-1");
     let mut tx = db.begin().await.unwrap();
     org::save_company(&mut tx, &company, now).await.unwrap();
     for b in [&jkt, &bdg] {
@@ -92,6 +94,7 @@ async fn serve() -> Server {
     for (u, role, scope) in [
         (&owner, seed::OWNER_ROLE, BranchScope::All),
         (&budi, seed::MANAGER_ROLE, BranchScope::Branch(jkt.id)),
+        (&kasir, seed::CASHIER_ROLE, BranchScope::Branch(jkt.id)),
     ] {
         users::save_user(&mut tx, u, now).await.unwrap();
         roles::replace_assignments(&mut tx, u.id, &[(role, scope)], now)
@@ -194,6 +197,16 @@ async fn contract(c: &dyn BackOffice, branches: [&str; 2]) {
     let budi = c.password_login("budi", "budi-pass-1").await.unwrap().token;
     let me = c.me(&budi).await.unwrap();
     assert!(me.holds_here(CATALOG_MANAGE) && !me.holds_everywhere(CATALOG_MANAGE));
+    // Since C3b any assignment counts (spec 2.2 §11): Budi may manage the catalog.
+    assert!(me.holds_anywhere(CATALOG_MANAGE) && me.holds_anywhere(CATALOG_VIEW_ARCHIVED));
+    assert!(me.permissions_anywhere.contains(&CATALOG_MANAGE.to_owned()));
+    let kasir = c
+        .password_login("kasir", "kasir-pass-1")
+        .await
+        .unwrap()
+        .token;
+    let me = c.me(&kasir).await.unwrap();
+    assert!(!me.holds_anywhere(CATALOG_MANAGE) && !me.holds_anywhere(CATALOG_VIEW_ARCHIVED));
 
     let ids: Vec<String> = c
         .branches(&owner)
@@ -241,7 +254,7 @@ async fn contract(c: &dyn BackOffice, branches: [&str; 2]) {
     );
     assert_eq!(p.errors()[0].field.as_deref(), Some("name"));
     assert_eq!(
-        code_of(c.put_brand(&budi, &new_id(), &body).await),
+        code_of(c.put_brand(&kasir, &new_id(), &body).await),
         (403, "permission_denied".into())
     );
     let archived = BrandBody {
@@ -252,7 +265,7 @@ async fn contract(c: &dyn BackOffice, branches: [&str; 2]) {
     assert_eq!(c.brands(&owner, false).await.unwrap().len(), 1);
     assert_eq!(c.brands(&owner, true).await.unwrap().len(), 2);
     assert_eq!(
-        code_of(c.brands(&budi, true).await),
+        code_of(c.brands(&kasir, true).await),
         (403, "permission_denied".into())
     );
 
@@ -297,11 +310,11 @@ async fn contract(c: &dyn BackOffice, branches: [&str; 2]) {
         1
     );
     assert_eq!(
-        code_of(c.categories(&budi, true).await),
+        code_of(c.categories(&kasir, true).await),
         (403, "permission_denied".into())
     );
     assert_eq!(
-        code_of(c.put_category(&budi, &new_id(), &root).await),
+        code_of(c.put_category(&kasir, &new_id(), &root).await),
         (403, "permission_denied".into())
     );
 
@@ -391,7 +404,7 @@ async fn contract(c: &dyn BackOffice, branches: [&str; 2]) {
     assert!(fields.contains(&Some("name".into())), "{fields:?}");
     assert!(fields.contains(&Some("variants.sku".into())), "{fields:?}");
     assert_eq!(
-        code_of(c.put_product(&budi, &new_id(), &kaos("B", "B")).await),
+        code_of(c.put_product(&kasir, &new_id(), &kaos("B", "B")).await),
         (403, "permission_denied".into())
     );
 
@@ -414,7 +427,7 @@ async fn contract(c: &dyn BackOffice, branches: [&str; 2]) {
         "{barcode}"
     );
     assert_eq!(
-        code_of(c.generate(&budi, Generate::Barcode, "g-3").await),
+        code_of(c.generate(&kasir, Generate::Barcode, "g-3").await),
         (403, "permission_denied".into())
     );
 
@@ -455,9 +468,20 @@ async fn contract(c: &dyn BackOffice, branches: [&str; 2]) {
     assert_eq!(c.product_image(&owner, &shirt_id).await.unwrap(), None);
 
     // Search and a bundle of a variant: its lines are labelled.
-    let hits = c.search(&owner, "kaos", 10).await.unwrap();
+    let page = c.search(&owner, "kaos", 10, None).await.unwrap();
+    let hits = page.items;
     assert_eq!(hits.len(), 4, "{hits:?}");
     assert!(hits.iter().all(|h| h.product_id == shirt_id));
+    assert_eq!(page.next_after_variant_id, None);
+    // Paged: two full pages, then an empty one.
+    let first = c.search(&owner, "kaos", 2, None).await.unwrap();
+    assert_eq!(first.items, hits[..2]);
+    let cursor = first.next_after_variant_id.unwrap();
+    let second = c.search(&owner, "kaos", 2, Some(&cursor)).await.unwrap();
+    assert_eq!(second.items, hits[2..]);
+    let cursor = second.next_after_variant_id.unwrap();
+    let third = c.search(&owner, "kaos", 2, Some(&cursor)).await.unwrap();
+    assert!(third.items.is_empty() && third.next_after_variant_id.is_none());
     let red = &created.variants[0];
     let bundle = c
         .put_product(
@@ -498,22 +522,81 @@ async fn contract(c: &dyn BackOffice, branches: [&str; 2]) {
         1
     );
     assert_eq!(
-        code_of(c.products(&budi, &only_archived).await),
+        code_of(c.products(&kasir, &only_archived).await),
         (403, "permission_denied".into())
     );
     assert_eq!(
-        code_of(c.product(&budi, &shirt_id).await),
+        code_of(c.product(&kasir, &shirt_id).await),
         (403, "permission_denied".into())
     );
     assert_eq!(
-        code_of(c.set_archived(&budi, &shirt_id, false, "a-2").await),
+        code_of(c.set_archived(&kasir, &shirt_id, false, "a-2").await),
         (403, "permission_denied".into())
+    );
+    // Budi (Manager at one branch) sees archived products.
+    assert_eq!(
+        c.products(&budi, &only_archived).await.unwrap().items.len(),
+        1
     );
     let back = c
         .set_archived(&owner, &shirt_id, false, "a-3")
         .await
         .unwrap();
     assert!(!back.archived && back.archived_at.is_none());
+
+    // Delete (spec 2.2 §9, C3b): never-used rows only.
+    let in_use = |result: Result<(), ClientError>| {
+        let err = result.unwrap_err();
+        let p = err.problem().unwrap();
+        (p.status, p.code.clone(), p.reason().map(str::to_owned))
+    };
+    assert_eq!(
+        in_use(c.delete_product(&owner, &shirt_id).await),
+        (409, "in_use".into(), Some("bundle_component".into()))
+    );
+    assert_eq!(
+        code_of(c.delete_product(&kasir, &bundle.id).await),
+        (403, "permission_denied".into())
+    );
+    c.delete_product(&budi, &bundle.id).await.unwrap();
+    assert_eq!(
+        code_of(c.product(&owner, &bundle.id).await),
+        (404, "not_found".into())
+    );
+    c.delete_product(&owner, &shirt_id).await.unwrap();
+    assert_eq!(
+        code_of(c.delete_product(&owner, &shirt_id).await),
+        (404, "not_found".into())
+    );
+    assert_eq!(
+        in_use(c.delete_category(&owner, &drinks).await),
+        (409, "in_use".into(), Some("has_children".into()))
+    );
+    c.delete_category(&owner, &water).await.unwrap();
+    c.delete_category(&owner, &drinks).await.unwrap();
+    assert!(c.categories(&owner, true).await.unwrap().is_empty());
+    let mut bottled = kaos("AIR1", "AIR1-BC");
+    bottled.brand_id = Some(aqua.clone());
+    c.put_product(&owner, &new_id(), &bottled).await.unwrap();
+    assert_eq!(
+        in_use(c.delete_brand(&owner, &aqua).await),
+        (409, "in_use".into(), Some("has_products".into()))
+    );
+    let typo = new_id();
+    let body = BrandBody {
+        name: "Aqau".into(),
+        archived: false,
+    };
+    c.put_brand(&owner, &typo, &body).await.unwrap();
+    assert_eq!(
+        code_of(c.delete_brand(&kasir, &typo).await),
+        (403, "permission_denied".into())
+    );
+    c.delete_brand(&owner, &typo).await.unwrap();
+    assert_eq!(
+        code_of(c.delete_brand(&owner, &typo).await),
+        (404, "not_found".into())
+    );
 
     // Logout ends the session.
     c.logout(&owner).await.unwrap();
@@ -606,7 +689,8 @@ async fn unreachable_server_is_a_network_error() {
         c.password_login("owner", "x").await.map(|_| ()),
         c.product_image("t", "p").await.map(|_| ()),
         c.delete_product_image("t", "p").await,
-        c.search("t", "q", 5).await.map(|_| ()),
+        c.search("t", "q", 5, None).await.map(|_| ()),
+        c.delete_product("t", "p").await,
         c.branch_blocks("t", "p").await.map(|_| ()),
         c.generate("t", Generate::Barcode, "k").await.map(|_| ()),
     ] {
@@ -635,7 +719,7 @@ async fn fake_helpers_and_frozen_after_use() {
     assert_eq!(fake.stored_brands()[0].name, "Sultan");
     let id = new_id();
     let mut shirt = kaos("KAOS", "K");
-    shirt.category_id = Some(cat);
+    shirt.category_id = Some(cat.clone());
     let stored = fake.seed_product(&id, &shirt);
     assert_eq!(fake.product_ids(), std::slice::from_ref(&id));
     assert_eq!(fake.stored_product(&id).unwrap().code, stored.code);
@@ -689,5 +773,27 @@ async fn fake_helpers_and_frozen_after_use() {
         code_of(fake.me("nobody").await),
         (401, "invalid_session".into())
     );
-    assert!(fake.search(&token, "  ", 5).await.unwrap().is_empty());
+    assert!(
+        fake.search(&token, "  ", 5, None)
+            .await
+            .unwrap()
+            .items
+            .is_empty()
+    );
+    // A sold product is in use.
+    let err = fake.delete_product(&token, &id).await.unwrap_err();
+    assert_eq!(err.problem().unwrap().reason(), Some("used"));
+    assert_eq!(
+        code_of(fake.delete_category(&token, &new_id()).await),
+        (404, "not_found".into())
+    );
+    assert_eq!(
+        code_of(fake.delete_brand(&token, &new_id()).await),
+        (404, "not_found".into())
+    );
+    let err = fake.delete_category(&token, &cat).await.unwrap_err();
+    assert_eq!(err.problem().unwrap().reason(), Some("has_products"));
+    // An unknown search cursor ends the search.
+    let page = fake.search(&token, "kaos", 5, Some("gone")).await.unwrap();
+    assert!(page.items.is_empty());
 }

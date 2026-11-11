@@ -252,9 +252,11 @@ pub struct MeResponse {
     pub register_id: Option<String>,
     /// Permission keys held at the session's branch, in catalog order.
     pub permissions: Vec<&'static str>,
-    /// Permission keys held through a role assigned for **all** branches (what company-wide
-    /// data such as the catalog requires, spec 2.2 §12).
+    /// Permission keys held through a role assigned for **all** branches.
     pub permissions_everywhere: Vec<&'static str>,
+    /// Permission keys held through **any** role assignment, for all branches or for one (what
+    /// `catalog.manage` and `catalog.view_archived` need, spec 2.2 §11).
+    pub permissions_anywhere: Vec<&'static str>,
 }
 
 /// `GET /api/v1/auth/me`: who the session is and what it may do.
@@ -269,16 +271,10 @@ pub async fn me(
     session: UserSession,
 ) -> Result<Json<MeResponse>, ApiError> {
     let caller = Caller::load(&state.db, &session).await?;
-    let held = |everywhere: bool| -> Vec<&'static str> {
+    let held = |holds: &dyn Fn(Permission) -> bool| -> Vec<&'static str> {
         Permission::ALL
             .into_iter()
-            .filter(|p| {
-                if everywhere {
-                    caller.holds_everywhere(*p)
-                } else {
-                    caller.permissions.contains(*p)
-                }
-            })
+            .filter(|p| holds(*p))
             .map(Permission::as_str)
             .collect()
     };
@@ -288,8 +284,9 @@ pub async fn me(
         display_name: session.user.display_name.clone(),
         branch_id: session.session.branch.to_string(),
         register_id: session.session.register.map(|r| r.to_string()),
-        permissions: held(false),
-        permissions_everywhere: held(true),
+        permissions: held(&|p| caller.permissions.contains(p)),
+        permissions_everywhere: held(&|p| caller.holds_everywhere(p)),
+        permissions_anywhere: held(&|p| caller.holds_anywhere(p)),
     }))
 }
 

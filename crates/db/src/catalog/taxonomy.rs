@@ -1,5 +1,7 @@
-//! Tax classes, the category tree and brands (spec 2.2 §2, §8). Categories and brands are never
-//! deleted: archiving hides them from pickers and products keep them.
+//! Tax classes, the category tree and brands (spec 2.2 §2, §8, §9). Archiving hides a category or
+//! brand from pickers and products keep it. Only a never-used one may be deleted
+//! ([`delete_category`], [`delete_brand`]): a category without products or child categories, a
+//! brand without products (archived ones count).
 
 use serde_json::{Value, json};
 use sultan_core::catalog::{
@@ -152,6 +154,116 @@ pub async fn put_category(
     )
     .await?;
     Ok(written(saved))
+}
+
+/// Whether `sql` (one `?` for `id`) finds a row.
+async fn any_row(tx: &mut Tx, sql: &str, id: crate::sql::Arg) -> Result<bool> {
+    Ok(
+        sql::fetch_optional(Conn::Tx(&mut *tx), sql, vec![id], |_| Ok(()))
+            .await?
+            .is_some(),
+    )
+}
+
+/// Hard-deletes a never-used category (`DELETE /categories/{id}`, spec 2.2 §9). Audit and outbox
+/// `catalog.category.delete` in `tx`.
+///
+/// # Errors
+/// [`CatalogDbError::NotFound`]; [`CatalogDbError::InUse`] (`has_products`, archived products
+/// included, or `has_children`); or the database error.
+pub async fn delete_category(
+    tx: &mut Tx,
+    id: CategoryId,
+    actor: &Actor,
+    now: Timestamp,
+) -> CatalogResult<()> {
+    let old = get_category(Conn::Tx(&mut *tx), id)
+        .await?
+        .ok_or(CatalogDbError::NotFound("category"))?;
+    if any_row(
+        tx,
+        "SELECT 1 FROM product WHERE category_id = ? LIMIT 1",
+        id.into(),
+    )
+    .await?
+    {
+        return Err(CatalogDbError::InUse("has_products"));
+    }
+    if any_row(
+        tx,
+        "SELECT 1 FROM category WHERE parent_id = ? LIMIT 1",
+        id.into(),
+    )
+    .await?
+    {
+        return Err(CatalogDbError::InUse("has_children"));
+    }
+    sql::execute(
+        Conn::Tx(&mut *tx),
+        "DELETE FROM category WHERE id = ?",
+        args![id],
+    )
+    .await?;
+    record(
+        tx,
+        actor,
+        now,
+        Change {
+            action: "catalog.category.delete",
+            target: format!("category:{id}"),
+            before: Some(category_json(&old)),
+            after: None,
+            outbox_kind: "catalog.category.delete",
+            payload: json!({ "id": id.to_string() }),
+        },
+    )
+    .await
+}
+
+/// Hard-deletes a never-used brand (`DELETE /brands/{id}`, spec 2.2 §9). Audit and outbox
+/// `catalog.brand.delete` in `tx`.
+///
+/// # Errors
+/// [`CatalogDbError::NotFound`]; [`CatalogDbError::InUse`] (`has_products`, archived products
+/// included); or the database error.
+pub async fn delete_brand(
+    tx: &mut Tx,
+    id: BrandId,
+    actor: &Actor,
+    now: Timestamp,
+) -> CatalogResult<()> {
+    let old = get_brand(Conn::Tx(&mut *tx), id)
+        .await?
+        .ok_or(CatalogDbError::NotFound("brand"))?;
+    if any_row(
+        tx,
+        "SELECT 1 FROM product WHERE brand_id = ? LIMIT 1",
+        id.into(),
+    )
+    .await?
+    {
+        return Err(CatalogDbError::InUse("has_products"));
+    }
+    sql::execute(
+        Conn::Tx(&mut *tx),
+        "DELETE FROM brand WHERE id = ?",
+        args![id],
+    )
+    .await?;
+    record(
+        tx,
+        actor,
+        now,
+        Change {
+            action: "catalog.brand.delete",
+            target: format!("brand:{id}"),
+            before: Some(brand_json(&old)),
+            after: None,
+            outbox_kind: "catalog.brand.delete",
+            payload: json!({ "id": id.to_string() }),
+        },
+    )
+    .await
 }
 
 fn written(saved: crate::Saved) -> Written {

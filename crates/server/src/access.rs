@@ -119,14 +119,22 @@ impl Caller {
         self.at_scope(BranchScope::All).contains(permission)
     }
 
-    /// `403 permission_denied` unless the caller holds `permission` through a role assigned for
-    /// **all** branches ([`Caller::holds_everywhere`]). Used for company-wide data such as the
-    /// catalog (spec 2.2 §11: products are global), where a grant at one branch is not enough.
+    /// Whether `permission` comes from **any** of the caller's role assignments, for all
+    /// branches or for one (spec 2.2 §11, decided 2026-11-11: `catalog.manage` and
+    /// `catalog.view_archived` count from any assignment, since catalog writes are HQ-only
+    /// anyway).
+    #[must_use]
+    pub fn holds_anywhere(&self, permission: Permission) -> bool {
+        self.live_assignments()
+            .any(|a| self.at_scope(a.scope).contains(permission))
+    }
+
+    /// `403 permission_denied` unless [`Caller::holds_anywhere`].
     ///
     /// # Errors
     /// See above.
-    pub fn require_everywhere(&self, permission: Permission) -> Result<(), ApiError> {
-        if self.holds_everywhere(permission) {
+    pub fn require_anywhere(&self, permission: Permission) -> Result<(), ApiError> {
+        if self.holds_anywhere(permission) {
             Ok(())
         } else {
             Err(sultan_core::access::AccessError::PermissionDenied { permission }.into())

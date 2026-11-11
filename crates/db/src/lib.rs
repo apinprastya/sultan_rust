@@ -9,6 +9,7 @@
 //!   `&mut Tx` and append an [`outbox`] row **in the same transaction** (`docs/plan.md` §1).
 //! - SQL is shared between backends (`?` placeholders, portable statements). Only the migrations
 //!   (`migrations/{sqlite,mysql}`) and the few upserts in [`auth`] differ.
+//! - Customers, groups, tiers and the customer balance ledger (spec 2.5) live in [`customers`].
 //! - Rows map to and from the domain types of `sultan_core`. No access rule lives here: the
 //!   server checks permissions, lockout, override approval and the Owner invariant with `core`.
 //!
@@ -29,6 +30,7 @@ pub mod audit;
 pub mod auth;
 pub mod cashier_sessions;
 pub mod catalog;
+pub mod customers;
 pub mod devices;
 pub mod idempotency;
 pub mod org;

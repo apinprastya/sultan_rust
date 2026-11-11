@@ -28,7 +28,7 @@ use tokio::runtime::Handle;
 
 use crate::app::{Runner, Watchers};
 use crate::backoffice::form::{FormError, ProductForm, Tab};
-use crate::backoffice::{Confirm, Controller, Effect, Msg, Press, Screen, TYPES};
+use crate::backoffice::{Confirm, Controller, Deletable, Effect, Msg, Press, Screen, TYPES};
 use crate::controller::Notice;
 use crate::{
     BackOfficeWindow, BoBarcode, BoBranch, BoBrandEditor, BoCategoryEditor, BoCombo, BoComponent,
@@ -269,9 +269,10 @@ fn start(service: &dyn BackOffice, effect: &Effect) -> Option<MsgFuture> {
         Effect::Generate { token, what, key } => {
             call!(service.generate(token, *what, key), Msg::Generated)
         }
+        // The component picker shows the first page only.
         Effect::Search { token, q } => call!(
-            service.search(token, q, crate::backoffice::SEARCH_LIMIT),
-            Msg::Hits
+            service.search(token, q, crate::backoffice::SEARCH_LIMIT, None),
+            |r: Result<sultan_client::SearchPage, _>| Msg::Hits(r.map(|p| p.items))
         ),
         Effect::LoadComponent { token, id } => call!(service.product(token, id), |r: Result<
             sultan_client::Product,
@@ -290,6 +291,15 @@ fn start(service: &dyn BackOffice, effect: &Effect) -> Option<MsgFuture> {
         }
         Effect::PutBrand { token, id, body } => {
             call!(service.put_brand(token, id, body), Msg::BrandSaved)
+        }
+        Effect::Delete { token, what, id } => {
+            let what = *what;
+            let future = match what {
+                Deletable::Product => service.delete_product(token, id),
+                Deletable::Category => service.delete_category(token, id),
+                Deletable::Brand => service.delete_brand(token, id),
+            };
+            call!(future, move |r| Msg::Deleted(what, r))
         }
         Effect::Logout(token) => call!(service.logout(token), Msg::LoggedOut),
         Effect::WatchEvents { .. } | Effect::Debounce(_) | Effect::ReadFile(_) | Effect::Exit => {
@@ -528,8 +538,18 @@ fn render(ui: &BackOfficeWindow, c: &Controller, state: &State) {
                 "unarchive"
             }
             Some(Confirm::Archive) => "archive",
+            Some(Confirm::Delete(Deletable::Product)) => "delete-product",
+            Some(Confirm::Delete(Deletable::Category)) => "delete-category",
+            Some(Confirm::Delete(Deletable::Brand)) => "delete-brand",
         }
         .into(),
+    );
+    ui.set_confirm_name(
+        c.deleting
+            .as_ref()
+            .map(|(_, name)| name.as_str())
+            .unwrap_or_default()
+            .into(),
     );
 
     // Product list.

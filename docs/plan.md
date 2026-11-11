@@ -245,7 +245,14 @@ Where we are, so any session can pick up from here. Update this section at the e
   close, report), manager override, audit log, register lock screen and session home.
 - **2.2 Catalog** (spec `docs/spec/2.2-catalog.md` §15), all phases C1–C5:
   C1 `core::catalog` · C2 `db` · C3 `server` API (PR #2) · C4 back-office window (PR #3) ·
-  C5 register barcode lookup.
+  C5 register barcode lookup · **C3b** (2026-11-11): delete never-used products/categories/brands
+  (`409 in_use`), keyset paging for `/catalog/search`, device-token `/events` (Everyone events
+  only), `catalog.manage` / `catalog.view_archived` from any role assignment.
+- **2.5 Customers & membership** (spec `docs/spec/2.5-customers.md` §16): **M1** `core::customer`
+  and **M2** `db` (customers, groups, tiers, balance ledger, `customer.*` permissions) done
+  2026-11-11.
+- **2.3 Pricing** (spec `docs/spec/2.3-pricing.md` §13): **R1** `core::pricing` + `core::tax` done
+  2026-11-11.
 - **UI only, except HQ** (§3, 2026-11-09):
   - Start screen on single-app and terminal machines: F1 Kasir, F2 Back office, F3 Settings.
   - Settings: language (F6), set up again (F8), and on a single app "Allow terminals to connect"
@@ -257,17 +264,18 @@ Where we are, so any session can pick up from here. Update this section at the e
 - None. The three earlier ones were decided on 2026-11-11 (see §3).
 
 **Small to-dos**
-- Settings on a single app: "Server address" shows `127.0.0.1:8080` even when terminals may connect;
-  make clear it is this computer's own address (the terminal address is shown in the card beside it).
-- Settings at 1024 px: the long status text ("Aplikasi tunggal: server berjalan di ko…") is cut off.
+- Settings bottom bar at 1024 px: the one-line status summary is still cut off (the full text now
+  wraps in the Connection card; the address row on a single app reads "This computer's address").
+- Back office: the bundle-component picker shows only the first search page (no "load more").
+- `sultan-ui` test `start_event_loop` is flaky under coverage instrumentation.
+- Customer, group, tier and price-list ids are plain `Uuid` in db/core; move them to typed ids in
+  `core::ids`.
 
-**Next**
-- **2.5 Customers** (spec done, M1–M5 in §15 of the spec) and **C3b** can be built now.
-- **2.3 Pricing** (spec done, R1–R5 in §13 of the spec): after 2.5 M2, since its tables reference
-  customers, groups and tiers. R1 (`core`) can start right away.
-- **C3b**: the four items in spec 2.2 §17, all decided: delete never-used
-  products/categories/brands, paging for search, device-token `/events` (Everyone events only),
-  `catalog.manage` from any role assignment.
+**Next (wave 2, after the user commits wave 1)**
+- **2.5 M3** server and **2.3 R2** db, in parallel.
+- Then **2.5 M4** back office, **M5** register and **2.3 R3** server, in parallel.
+- Then **2.3 R4** back office and **R5** register.
+- Saving change and paying with the customer balance arrive with **2.6 Sales** (cart + payment).
 
 **Way of working**
 - Each phase is discussed, written as a spec in `docs/spec/`, then built in phases; the user usually

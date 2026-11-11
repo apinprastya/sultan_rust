@@ -9,6 +9,7 @@ mod auth;
 mod cashier_sessions;
 mod catalog;
 mod catalog_access;
+mod catalog_delete;
 mod catalog_fixtures;
 mod catalog_images;
 mod catalog_lookup;

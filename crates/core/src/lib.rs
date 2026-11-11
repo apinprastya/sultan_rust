@@ -7,7 +7,10 @@
 pub mod access;
 pub mod cashier_session;
 pub mod catalog;
+pub mod customer;
 pub mod doc_number;
 pub mod ids;
 pub mod money;
+pub mod pricing;
+pub mod tax;
 pub mod time;

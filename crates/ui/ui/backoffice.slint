@@ -437,6 +437,14 @@ component ProductsScreen inherits VerticalLayout {
             }
         }
         KeyButton { keys: "/  Ctrl+F"; text: @tr("Search"); }
+        KeyButton {
+            keys: "Ctrl+Shift+D";
+            text: @tr("Delete product");
+            enabled: root.list.can-edit && root.rows.length > 0;
+            clicked => {
+                root.action("delete-product");
+            }
+        }
     }
 }
 
@@ -588,6 +596,14 @@ component CategoriesScreen inherits HorizontalLayout {
                         root.action("cat-archive");
                     }
                 }
+                if !root.editor.is-new: KeyButton {
+                    keys: "Ctrl+Shift+D";
+                    text: @tr("Delete category");
+                    enabled: root.editor.can-edit;
+                    clicked => {
+                        root.action("cat-delete");
+                    }
+                }
             }
             HorizontalLayout {
                 spacing: 8px;
@@ -724,6 +740,14 @@ component BrandsScreen inherits HorizontalLayout {
                         root.action("brand-archive");
                     }
                 }
+                if !root.editor.is-new: KeyButton {
+                    keys: "Ctrl+Shift+D";
+                    text: @tr("Delete brand");
+                    enabled: root.editor.can-edit;
+                    clicked => {
+                        root.action("brand-delete");
+                    }
+                }
                 KeyButton {
                     keys: "Ctrl+N";
                     text: @tr("Add brand");
@@ -780,8 +804,11 @@ export component BackOfficeWindow inherits Window {
     in property <[string]> parent-choices;
     in property <[BoTreeRow]> brand-rows;
     in property <BoBrandEditor> brand-editor;
-    // "", "discard", "archive" or "unarchive".
+    // "", "discard", "archive", "unarchive", "delete-product", "delete-category" or
+    // "delete-brand".
     in property <string> confirm;
+    // The name of what a delete removes.
+    in property <string> confirm-name;
     in property <string> focus-target;
     in property <int> focus-serial;
     out property <bool> has-focus: keys.has-focus;
@@ -956,13 +983,13 @@ export component BackOfficeWindow inherits Window {
                     padding: 24px;
                     spacing: 16px;
                     Text {
-                        text: root.confirm == "discard" ? @tr("Discard your changes?") : root.confirm == "archive" ? @tr("Archive this product?") : @tr("Unarchive this product?");
+                        text: root.confirm == "discard" ? @tr("Discard your changes?") : root.confirm == "archive" ? @tr("Archive this product?") : root.confirm == "unarchive" ? @tr("Unarchive this product?") : root.confirm == "delete-product" ? @tr("Delete the product {}?", root.confirm-name) : root.confirm == "delete-category" ? @tr("Delete the category {}?", root.confirm-name) : @tr("Delete the brand {}?", root.confirm-name);
                         color: Theme.text;
                         font-size: 18px;
                         font-weight: 700;
                     }
                     Text {
-                        text: root.confirm == "discard" ? @tr("The product has unsaved changes. They are lost if you leave now.") : root.confirm == "archive" ? @tr("Archived products cannot be sold or bought; they stay in history and reports.") : @tr("The product can be sold and bought again.");
+                        text: root.confirm == "discard" ? @tr("The product has unsaved changes. They are lost if you leave now.") : root.confirm == "archive" ? @tr("Archived products cannot be sold or bought; they stay in history and reports.") : root.confirm == "unarchive" ? @tr("The product can be sold and bought again.") : @tr("Only an entry that was never used can be deleted, e.g. a typo. Deleting cannot be undone; anything in use must be archived instead.");
                         color: Theme.muted;
                         wrap: word-wrap;
                     }
@@ -978,7 +1005,7 @@ export component BackOfficeWindow inherits Window {
                         }
                         KeyButton {
                             keys: "Enter";
-                            text: root.confirm == "discard" ? @tr("Discard") : @tr("Yes");
+                            text: root.confirm == "discard" ? @tr("Discard") : root.confirm == "delete-product" || root.confirm == "delete-category" || root.confirm == "delete-brand" ? @tr("Delete") : @tr("Yes");
                             primary: true;
                             clicked => {
                                 root.action("confirm-yes");

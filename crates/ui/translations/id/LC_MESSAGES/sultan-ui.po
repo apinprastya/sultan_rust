@@ -1274,6 +1274,9 @@ msgstr "Terminal di toko ini"
 msgid "Other cash registers (terminals) on the shop network can use this computer's server."
 msgstr "Kasir lain (terminal) di jaringan toko dapat memakai server komputer ini."
 
+msgid "This computer's address"
+msgstr "Alamat komputer ini"
+
 msgid "Allow terminals to connect"
 msgstr "Izinkan terminal terhubung"
 
@@ -1300,3 +1303,51 @@ msgstr "Terminal tetap memerlukan login manajer atau kode pairing untuk terhubun
 
 msgid "If a terminal cannot connect, allow incoming TCP port {} in this computer's firewall."
 msgstr "Jika terminal tidak bisa terhubung, izinkan koneksi masuk ke port TCP {} di firewall komputer ini."
+
+msgid "Delete the product {}?"
+msgstr "Hapus produk {}?"
+
+msgid "Delete the category {}?"
+msgstr "Hapus kategori {}?"
+
+msgid "Delete the brand {}?"
+msgstr "Hapus merek {}?"
+
+msgid "Only an entry that was never used can be deleted, e.g. a typo. Deleting cannot be undone; anything in use must be archived instead."
+msgstr "Hanya data yang belum pernah dipakai yang bisa dihapus, misalnya salah ketik. Penghapusan tidak bisa dibatalkan; yang sudah dipakai harus diarsipkan."
+
+msgid "Delete"
+msgstr "Hapus"
+
+msgid "Delete product"
+msgstr "Hapus produk"
+
+msgid "Delete category"
+msgstr "Hapus kategori"
+
+msgid "Delete brand"
+msgstr "Hapus merek"
+
+msgid "Read-only: changing the catalog needs the permission catalog.manage. Ask the owner."
+msgstr "Hanya baca: mengubah katalog butuh izin catalog.manage. Tanyakan pemilik."
+
+msgid "Not allowed: this needs the permission {}."
+msgstr "Tidak diizinkan: ini butuh izin {}."
+
+msgid "Deleted."
+msgstr "Dihapus."
+
+msgid "Cannot delete: the product has been sold, stocked or priced. Archive it instead."
+msgstr "Tidak bisa dihapus: produk sudah pernah dijual, distok, atau diberi harga. Arsipkan saja."
+
+msgid "Cannot delete: the product is part of a bundle. Archive it instead."
+msgstr "Tidak bisa dihapus: produk menjadi bagian dari paket. Arsipkan saja."
+
+msgid "Cannot delete: products use it (archived ones too). Archive it instead."
+msgstr "Tidak bisa dihapus: masih dipakai produk (termasuk yang diarsipkan). Arsipkan saja."
+
+msgid "Cannot delete: the category has subcategories. Delete or move them first, or archive it."
+msgstr "Tidak bisa dihapus: kategori ini punya subkategori. Hapus atau pindahkan dulu, atau arsipkan."
+
+msgid "Cannot delete: it is in use. Archive it instead."
+msgstr "Tidak bisa dihapus: masih dipakai. Arsipkan saja."

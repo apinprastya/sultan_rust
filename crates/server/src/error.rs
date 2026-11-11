@@ -28,6 +28,7 @@
 //! | 409 | `no_open_session` | no open cashier session of this user on this register (§5) |
 //! | 409 | `idempotency_in_progress` | the first request with this `Idempotency-Key` is still running |
 //! | 409 | `duplicate_code` / `duplicate_sku` / `duplicate_barcode` / `duplicate_plu` | the value is used by another product (spec 2.2 §12); `product_id`, `variant_id` (null for a product code) and `value` |
+//! | 409 | `in_use` | `DELETE` of a product, category or brand that is referenced (spec 2.2 §9: archive it instead); `reason`: `used`, `bundle_component`, `has_products` or `has_children` |
 //! | 422 | `invalid_field` | a field fails validation; `field` names it |
 //! | 422 | `invalid_reference` | a referenced record (branch, role, location) does not exist |
 //! | 422 | `invalid_pin` / `weak_password` / `invalid_grant` | credential or grant rules (§3, §4) |
@@ -411,6 +412,12 @@ impl From<CatalogDbError> for ApiError {
             CatalogDbError::Rule(errors) => Self::catalog_rules(&errors),
             CatalogDbError::Duplicate(duplicate) => Self::catalog_duplicate(&duplicate),
             CatalogDbError::NotFound(what) => Self::not_found(what),
+            CatalogDbError::InUse(reason) => Self::new(
+                StatusCode::CONFLICT,
+                "in_use",
+                format!("it is in use ({reason}): archive it instead"),
+            )
+            .with("reason", reason),
             CatalogDbError::Db(error) => error.into(),
         }
     }

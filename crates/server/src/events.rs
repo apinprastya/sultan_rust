@@ -6,8 +6,12 @@
 //! send (except close frames).
 //!
 //! # Authentication
-//! The upgrade request is authenticated like any other request ([`UserSession`]): a bearer session
-//! token, plus the register's device token for a PIN session. Native clients (the register app)
+//! The upgrade request is authenticated like any other request: a bearer session token
+//! ([`UserSession`]), plus the register's device token for a PIN session. A register may also
+//! connect with its device token alone (no `Authorization`; spec 2.1 §8, decided 2026-11-11, C3b):
+//! such a socket receives only [`Audience::Everyone`] events (`catalog.changed`) and
+//! `events.lagged`; session-, branch- and user-scoped events need a session. Native clients (the
+//! register app)
 //! send the usual `Authorization` and `X-Register-Token` headers. Browsers cannot set headers on a
 //! WebSocket, so the tokens may instead travel as subprotocols:
 //! `Sec-WebSocket-Protocol: sultan.events.v1, bearer.<session token>, register.<device token>`;
@@ -32,7 +36,8 @@
 //! - `events.lagged`: `missed`. A socket that fell behind; refetch everything.
 //!
 //! Before each delivery the socket's own login session is checked again; once it is revoked,
-//! expired or its user deactivated, the socket is closed. Branch visibility is evaluated per
+//! expired or its user deactivated, the socket is closed. A device-token socket checks its token
+//! instead (closed once the register is unpaired or archived). Branch visibility is evaluated per
 //! event, so role changes apply at once.
 
 use axum::extract::ws::{CloseFrame, Message, WebSocket, WebSocketUpgrade, close_code};
@@ -44,13 +49,14 @@ use axum::response::Response;
 use serde_json::{Value, json};
 use sultan_core::access::BranchScope;
 use sultan_core::ids::{BranchId, UserId};
-use sultan_db::{TokenHash, auth, users};
+use sultan_db::{TokenHash, auth, devices, users};
 use tokio::sync::broadcast;
 
 use crate::access::Caller;
 use crate::error::ApiError;
-use crate::extract::{REGISTER_TOKEN_HEADER, UserSession};
+use crate::extract::{REGISTER_TOKEN_HEADER, RegisterCtx, UserSession};
 use crate::state::AppState;
+use crate::token;
 
 /// The subprotocol the server selects for browser clients.
 pub const SUBPROTOCOL: &str = "sultan.events.v1";
@@ -165,10 +171,24 @@ impl EventHub {
     }
 }
 
-/// [`UserSession`] for the upgrade request; tokens may also come as subprotocols (see the module
-/// docs).
+/// Who holds an events socket.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Listener {
+    /// A user session (back office, or a PIN session at a register).
+    User(Box<UserSession>),
+    /// A register with its device token only: [`Audience::Everyone`] events only.
+    Device {
+        /// The register and its branch.
+        register: RegisterCtx,
+        /// Hash of the device token, checked again before each delivery.
+        token_hash: TokenHash,
+    },
+}
+
+/// The [`Listener`] of the upgrade request; tokens may also come as subprotocols (see the module
+/// docs). With `Authorization` it is a [`UserSession`]; without, `X-Register-Token` alone.
 #[derive(Debug, Clone)]
-pub struct EventsAuth(pub UserSession);
+pub struct EventsAuth(pub Listener);
 
 /// Copies `bearer.<token>` / `register.<token>` subprotocols into the headers the session
 /// extractor reads, unless those headers are already present.
@@ -201,9 +221,23 @@ impl FromRequestParts<AppState> for EventsAuth {
 
     async fn from_request_parts(parts: &mut Parts, state: &AppState) -> Result<Self, ApiError> {
         tokens_from_subprotocols(&mut parts.headers);
+        if !parts.headers.contains_key(AUTHORIZATION)
+            && let Some(token) = parts.headers.get(REGISTER_TOKEN_HEADER)
+        {
+            let token_hash = token::hash(
+                token
+                    .to_str()
+                    .map_err(|_| ApiError::invalid_device_token())?,
+            );
+            let register = RegisterCtx::from_request_parts(parts, state).await?;
+            return Ok(Self(Listener::Device {
+                register,
+                token_hash,
+            }));
+        }
         UserSession::from_request_parts(parts, state)
             .await
-            .map(Self)
+            .map(|session| Self(Listener::User(Box::new(session))))
     }
 }
 
@@ -212,19 +246,20 @@ impl FromRequestParts<AppState> for EventsAuth {
 /// # Errors
 /// `401 invalid_session` / `invalid_device_token` before the upgrade.
 #[utoipa::path(get, path = "/api/v1/events", tag = "events",
-    security(("bearer" = []), ("bearer" = [], "register_token" = [])),
+    security(("bearer" = []), ("bearer" = [], "register_token" = []), ("register_token" = [])),
     responses((status = 101, description = "Switching to the WebSocket protocol; text frames \
         `{\"type\", \"data\"}`: session.revoked, cashier_session.opened, cashier_session.closed, \
-        user.changed, catalog.changed, events.lagged"),
+        user.changed, catalog.changed, events.lagged. A device token alone receives \
+        catalog.changed and events.lagged only."),
         (status = 401, body = crate::openapi::Problem)))]
 pub async fn events(
     State(state): State<AppState>,
-    EventsAuth(session): EventsAuth,
+    EventsAuth(listener): EventsAuth,
     ws: WebSocketUpgrade,
 ) -> Response {
     let receiver = state.events.subscribe();
     ws.protocols([SUBPROTOCOL])
-        .on_upgrade(move |socket| run(socket, state, session, receiver))
+        .on_upgrade(move |socket| run(socket, state, listener, receiver))
 }
 
 /// What one socket does with one event.
@@ -291,6 +326,33 @@ async fn sees_any(
     }))
 }
 
+/// What a device-token socket does with an event: [`Audience::Everyone`] only, while the device
+/// token is still valid.
+async fn decide_device(
+    state: &AppState,
+    token_hash: &TokenHash,
+    event: &Event,
+) -> Result<Delivery, ApiError> {
+    if event.audience != Audience::Everyone {
+        return Ok(Delivery::Skip);
+    }
+    if devices::find_device(&state.db, token_hash).await?.is_none() {
+        return Ok(Delivery::Close);
+    }
+    Ok(Delivery::Send(message(event.kind, &event.data)))
+}
+
+async fn decide_for(
+    state: &AppState,
+    listener: &Listener,
+    event: &Event,
+) -> Result<Delivery, ApiError> {
+    match listener {
+        Listener::User(me) => decide(state, me, event).await,
+        Listener::Device { token_hash, .. } => decide_device(state, token_hash, event).await,
+    }
+}
+
 async fn decide(state: &AppState, me: &UserSession, event: &Event) -> Result<Delivery, ApiError> {
     let scopes = match &event.audience {
         Audience::Sessions { user, session } => return Ok(revoked(me, event, *user, *session)),
@@ -321,7 +383,7 @@ async fn close(socket: &mut WebSocket) {
 async fn run(
     mut socket: WebSocket,
     state: AppState,
-    me: UserSession,
+    me: Listener,
     mut receiver: broadcast::Receiver<Event>,
 ) {
     loop {
@@ -332,7 +394,7 @@ async fn run(
             },
             event = receiver.recv() => {
                 let delivery = match event {
-                    Ok(event) => decide(&state, &me, &event).await.unwrap_or(Delivery::Close),
+                    Ok(event) => decide_for(&state, &me, &event).await.unwrap_or(Delivery::Close),
                     Err(broadcast::error::RecvError::Lagged(missed)) => {
                         Delivery::Send(message("events.lagged", &json!({ "missed": missed })))
                     }

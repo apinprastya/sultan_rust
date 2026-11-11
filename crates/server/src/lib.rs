@@ -160,7 +160,12 @@ fn catalog_actions() -> Router<AppState> {
 fn catalog_routes() -> Router<AppState> {
     Router::new()
         .route("/products", get(products::list))
-        .route("/products/{id}", get(products::get).put(products::put))
+        .route(
+            "/products/{id}",
+            get(products::get)
+                .put(products::put)
+                .delete(products::delete),
+        )
         .route(
             "/products/{id}/branch-blocks",
             get(products::get_branch_blocks).put(products::put_branch_blocks),
@@ -174,12 +179,16 @@ fn catalog_routes() -> Router<AppState> {
         .route("/categories", get(taxonomy::list_categories))
         .route(
             "/categories/{id}",
-            get(taxonomy::get_category).put(taxonomy::put_category),
+            get(taxonomy::get_category)
+                .put(taxonomy::put_category)
+                .delete(taxonomy::delete_category),
         )
         .route("/brands", get(taxonomy::list_brands))
         .route(
             "/brands/{id}",
-            get(taxonomy::get_brand).put(taxonomy::put_brand),
+            get(taxonomy::get_brand)
+                .put(taxonomy::put_brand)
+                .delete(taxonomy::delete_brand),
         )
         .route("/tax-classes", get(catalog::tax_classes))
         .route("/catalog/lookup", get(catalog::lookup))

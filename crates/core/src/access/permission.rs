@@ -66,11 +66,24 @@ pub enum Permission {
     CatalogManage,
     /// `catalog.view_archived`: list and open archived catalog entries (spec 2.2 §11).
     CatalogViewArchived,
+    /// `customer.create`: sign up customers at the till or in the back office (spec 2.5 §12).
+    CustomerCreate,
+    /// `customer.search`: search customers by name at the till (spec 2.5 §6).
+    CustomerSearch,
+    /// `customer.edit`: edit a customer's profile (spec 2.5 §7).
+    CustomerEdit,
+    /// `customer.manage`: customer groups, membership tiers, archive and merge (HQ only,
+    /// spec 2.5 §7).
+    CustomerManage,
+    /// `customer.erase`: erase a customer's personal data (HQ only, spec 2.5 §7).
+    CustomerErase,
+    /// `customer.balance_payout`: pay a customer balance out in cash at the till (spec 2.5 §11).
+    CustomerBalancePayout,
 }
 
 impl Permission {
     /// Every permission in the catalog, in catalog order.
-    pub const ALL: [Self; 25] = [
+    pub const ALL: [Self; 31] = [
         Self::SaleCreate,
         Self::SaleDiscount,
         Self::SaleCartDiscount,
@@ -96,6 +109,12 @@ impl Permission {
         Self::AuditView,
         Self::CatalogManage,
         Self::CatalogViewArchived,
+        Self::CustomerCreate,
+        Self::CustomerSearch,
+        Self::CustomerEdit,
+        Self::CustomerManage,
+        Self::CustomerErase,
+        Self::CustomerBalancePayout,
     ];
 
     /// The stable string key, e.g. `"sale.discount"`.
@@ -127,6 +146,12 @@ impl Permission {
             Self::AuditView => "audit.view",
             Self::CatalogManage => "catalog.manage",
             Self::CatalogViewArchived => "catalog.view_archived",
+            Self::CustomerCreate => "customer.create",
+            Self::CustomerSearch => "customer.search",
+            Self::CustomerEdit => "customer.edit",
+            Self::CustomerManage => "customer.manage",
+            Self::CustomerErase => "customer.erase",
+            Self::CustomerBalancePayout => "customer.balance_payout",
         }
     }
 
@@ -146,7 +171,9 @@ impl Permission {
     /// Overridable permissions are the till actions a cashier performs in front of a customer:
     /// discounts, voids, price overrides, refunds, cash in/out and opening the drawer. Back-office
     /// permissions (users, roles, org, reports, audit, stock), session permissions and
-    /// `sale.create` are not: a manager does those under their own login.
+    /// `sale.create` are not: a manager does those under their own login. The customer
+    /// permissions are not either (spec 2.5 §12): a balance payout is done by a manager under
+    /// their own login.
     #[must_use]
     pub const fn is_overridable(self) -> bool {
         matches!(
@@ -355,7 +382,26 @@ mod tests {
             Ok(Permission::CatalogViewArchived)
         );
         assert_eq!(Permission::CatalogManage.limit_kind(), None);
-        assert_eq!(Permission::ALL.len(), 25);
+        assert_eq!(Permission::ALL.len(), 31);
+    }
+
+    #[test]
+    fn customer_keys_are_stable_unlimited_and_not_overridable() {
+        let customer = [
+            (Permission::CustomerCreate, "customer.create"),
+            (Permission::CustomerSearch, "customer.search"),
+            (Permission::CustomerEdit, "customer.edit"),
+            (Permission::CustomerManage, "customer.manage"),
+            (Permission::CustomerErase, "customer.erase"),
+            (Permission::CustomerBalancePayout, "customer.balance_payout"),
+        ];
+        for (p, key) in customer {
+            assert_eq!(p.as_str(), key);
+            assert_eq!(key.parse::<Permission>(), Ok(p));
+            assert_eq!(p.limit_kind(), None, "{key}");
+            assert!(!p.is_overridable(), "{key}");
+        }
+        assert_eq!(Permission::ALL[25..].len(), customer.len());
     }
 
     #[test]

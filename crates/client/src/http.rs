@@ -27,7 +27,7 @@ use tokio_tungstenite::tungstenite::http::HeaderValue;
 
 use crate::catalog::{
     Brand, BrandBody, CatalogSettings, Category, CategoryBody, CategoryNode, Generate, ImageInfo,
-    Lookup, Me, Product, ProductPage, ProductQuery, SearchHit, TaxClass,
+    Lookup, Me, Product, ProductPage, ProductQuery, SearchPage, TaxClass,
 };
 use crate::{
     BackOffice, Branch, CashierSession, ClientError, CloseReport, CloseRequest, EventSink,
@@ -268,7 +268,12 @@ impl Service for HttpService {
 
     fn watch_events(&self, token: &str, sink: EventSink) -> crate::BoxFuture<()> {
         let url = events_url(&self.0.base);
-        let bearer = format!("Bearer {token}");
+        // No session: the device token alone (C3b), so no `Authorization` header.
+        let bearer = if token.is_empty() {
+            String::new()
+        } else {
+            format!("Bearer {token}")
+        };
         let device = self.0.device_token.clone();
         Box::pin(async move {
             let mut request = url
@@ -501,15 +506,41 @@ impl BackOffice for HttpService {
         Box::pin(async move { exchange(request).await.map(|_| ()) })
     }
 
-    fn search(&self, token: &str, q: &str, limit: u32) -> crate::BoxFuture<Vec<SearchHit>> {
-        #[derive(serde::Deserialize)]
-        struct Hits {
-            items: Vec<SearchHit>,
+    fn search(
+        &self,
+        token: &str,
+        q: &str,
+        limit: u32,
+        after: Option<&str>,
+    ) -> crate::BoxFuture<SearchPage> {
+        let mut query = vec![("q", q.to_owned()), ("limit", limit.to_string())];
+        if let Some(after) = after {
+            query.push(("after_variant_id", after.to_owned()));
         }
         let request = self
             .request(Method::GET, "/catalog/search", Some(token))
-            .query(&[("q", q.to_owned()), ("limit", limit.to_string())]);
-        Box::pin(async move { send::<Hits>(request).await.map(|h| h.items) })
+            .query(&query);
+        Box::pin(send(request))
+    }
+
+    fn delete_product(&self, token: &str, id: &str) -> crate::BoxFuture<()> {
+        self.delete(token, &format!("/products/{id}"))
+    }
+
+    fn delete_category(&self, token: &str, id: &str) -> crate::BoxFuture<()> {
+        self.delete(token, &format!("/categories/{id}"))
+    }
+
+    fn delete_brand(&self, token: &str, id: &str) -> crate::BoxFuture<()> {
+        self.delete(token, &format!("/brands/{id}"))
+    }
+}
+
+impl HttpService {
+    /// `DELETE {path}`, answered `204`.
+    fn delete(&self, token: &str, path: &str) -> crate::BoxFuture<()> {
+        let request = self.request(Method::DELETE, path, Some(token));
+        Box::pin(async move { exchange(request).await.map(|_| ()) })
     }
 }
 

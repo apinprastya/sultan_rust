@@ -117,6 +117,13 @@ impl Problem {
     pub fn field(&self) -> Option<&str> {
         self.text("field")
     }
+
+    /// `in_use` (spec 2.2 §9): why the row cannot be deleted (`used`, `bundle_component`,
+    /// `has_products`, `has_children`).
+    #[must_use]
+    pub fn reason(&self) -> Option<&str> {
+        self.text("reason")
+    }
 }
 
 /// One entry of a catalog rule failure's `errors` (spec 2.2 §12).
