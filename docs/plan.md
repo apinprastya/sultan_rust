@@ -215,8 +215,25 @@ audit log viewer · light/dark theme · i18n ID/EN.
   `/events` and gets only `Audience::Everyone` events, so the lock screen sees `catalog.changed`
   (spec 2.2 §17 item 3) · `catalog.manage` / `catalog.view_archived` count from **any** role
   assignment, not only an all-branches one (spec 2.2 §11, §17 item 4).
+- **2026-11-11 2.3 Pricing** (spec: `docs/spec/2.3-pricing.md`): tax-inclusive by default, one
+  company setting · tax rates with a valid-from history and a "not tax-registered" switch · entries
+  are fixed or a ± % / ± Rp rule relative to the next applicable price · no rounding step (Rp 1
+  half up) · quantity tiers price the whole line and count the variant across the cart · lists
+  without a match fall through · unit without a price = base price × factor · `no_price` unless
+  overridden · validity dates per entry · price-embedded scale labels are final · `price.override`
+  gets a MaxPct limit · cash rounding a company setting, off by default · spec 2.5 is built first.
+- **2026-11-11 2.5 Customers & membership** (spec: `docs/spec/2.5-customers.md`): P1 part only
+  (points, store credit and deposit are a P2 spec; receivables go with 2.9) · random 8-character
+  customer code, phone optional but unique · sign-up at the till also offline, profile edits at the
+  till only while HQ is reachable, group/tier/merge/erase at HQ · at most one group and one tier,
+  tier assigned by hand with an optional end date (auto tiers after sync) · company + NPWP and notes
+  fields · archive, plus an erase that blanks personal data (old audit entries are not scrubbed) ·
+  lookup by phone/code, name search with a permission · customers are company-wide · duplicates
+  merged at HQ · receipt shows name + masked phone · **customer balance for saved change**
+  ("simpan kembalian"): grows from saved change, pays as a tender, limits Rp 5 000 per sale and
+  Rp 100 000 per customer (settings), spendable offline, no expiry, erase needs balance 0.
 
-## Status (updated 2026-11-10)
+## Status (updated 2026-11-11)
 
 Where we are, so any session can pick up from here. Update this section at the end of every phase.
 
@@ -244,12 +261,13 @@ Where we are, so any session can pick up from here. Update this section at the e
   make clear it is this computer's own address (the terminal address is shown in the card beside it).
 - Settings at 1024 px: the long status text ("Aplikasi tunggal: server berjalan di ko…") is cut off.
 
-**Next (pick one)**
+**Next**
+- **2.5 Customers** (spec done, M1–M5 in §15 of the spec) and **C3b** can be built now.
+- **2.3 Pricing** (spec done, R1–R5 in §13 of the spec): after 2.5 M2, since its tables reference
+  customers, groups and tiers. R1 (`core`) can start right away.
 - **C3b**: the four items in spec 2.2 §17, all decided: delete never-used
   products/categories/brands, paging for search, device-token `/events` (Everyone events only),
   `catalog.manage` from any role assignment.
-- **2.3 Pricing**: discuss the spec first (price lists, quantity tiers, membership, tax, rounding),
-  then implement in phases like 2.2.
 
 **Way of working**
 - Each phase is discussed, written as a spec in `docs/spec/`, then built in phases; the user usually
