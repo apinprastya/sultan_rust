@@ -198,7 +198,7 @@ pub enum Page {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Effect {
     /// [`StartService::check`].
-    Check,
+    Check(u64),
     /// [`StartService::set_language`] and switch the window's language.
     SetLanguage(String),
     /// [`StartService::set_lan`].
@@ -216,8 +216,8 @@ pub enum Msg {
     /// (switch), `lang-id`, `lang-en`, `lan` (switch terminals on / off), `setup`, `confirm`,
     /// `back`.
     Action(String),
-    /// Result of [`Effect::Check`].
-    Checked(Result<Option<String>, StartError>),
+    /// Result of [`Effect::Check`] (carries its sequence number; stale answers are ignored).
+    Checked(u64, Result<Option<String>, StartError>),
     /// Result of [`Effect::SetLanguage`].
     LanguageSaved(Result<(), String>),
     /// Result of [`Effect::SetLan`].
@@ -263,6 +263,8 @@ pub struct Controller {
     pub outcome: Option<Choice>,
     /// The server is being restarted on a new address ([`Effect::SetLan`]).
     pub lan_busy: bool,
+    /// Sequence number of the latest [`Effect::Check`]; older answers are stale.
+    check_seq: u64,
 }
 
 impl Controller {
@@ -279,12 +281,13 @@ impl Controller {
             page: Page::Home,
             confirm: false,
             conn: Conn::Checking,
+            check_seq: 0,
             pending: None,
             notice,
             outcome: None,
             lan_busy: false,
         };
-        (controller, vec![Effect::Check])
+        (controller, vec![Effect::Check(0)])
     }
 
     /// The key chips of the current page.
@@ -331,8 +334,12 @@ impl Controller {
                 effects: self.on_action(&id),
                 handled: true,
             },
-            Msg::Checked(result) => Step {
-                effects: self.checked(result),
+            Msg::Checked(seq, result) => Step {
+                effects: if seq == self.check_seq {
+                    self.checked(result)
+                } else {
+                    Vec::new()
+                },
                 handled: false,
             },
             Msg::LanguageSaved(result) => {
@@ -419,6 +426,8 @@ impl Controller {
                 self.info.lan = Some(changed.lan);
                 self.info.server = changed.server;
                 self.notice = None;
+                // The server moved: an answer still in flight is about the old address.
+                self.conn = Conn::Failed(String::new());
                 self.recheck(None)
             }
             Err(e) => {
@@ -446,7 +455,8 @@ impl Controller {
             return Vec::new();
         }
         self.conn = Conn::Checking;
-        vec![Effect::Check]
+        self.check_seq += 1;
+        vec![Effect::Check(self.check_seq)]
     }
 
     /// Opens `choice` when the server answers; otherwise checks (again) first.
@@ -511,20 +521,26 @@ mod tests {
     #[test]
     fn choices_wait_for_the_check_and_failures_are_shown() {
         let (mut c, effects) = Controller::new(info(false));
-        assert_eq!(effects, [Effect::Check]);
+        assert_eq!(effects, [Effect::Check(c.check_seq)]);
         assert_eq!(c.conn.id(), "checking");
         // F1 while checking: waits, no second check.
         assert_eq!(c.update(Msg::Key(Key::F(1))).effects, []);
         assert_eq!(c.pending, Some(Choice::Register));
         let failed = Err(StartError::new("network", "refused"));
-        assert_eq!(c.update(Msg::Checked(failed.clone())).effects, []);
+        assert_eq!(
+            c.update(Msg::Checked(c.check_seq, failed.clone())).effects,
+            []
+        );
         assert_eq!(c.conn, Conn::Failed("refused".into()));
         assert_eq!(c.notice.as_ref().unwrap().code, "network");
         assert_eq!(c.outcome, None);
         // F2 after a failure checks again; this time it answers.
-        assert_eq!(action(&mut c, "backoffice"), [Effect::Check]);
+        assert_eq!(action(&mut c, "backoffice"), [Effect::Check(c.check_seq)]);
         assert_eq!(c.notice, None);
-        assert_eq!(c.update(Msg::Checked(Ok(None))).effects, [Effect::Close]);
+        assert_eq!(
+            c.update(Msg::Checked(c.check_seq, Ok(None))).effects,
+            [Effect::Close]
+        );
         assert_eq!(c.outcome, Some(Choice::BackOffice));
         // Nothing else happens once chosen.
         assert_eq!(action(&mut c, "register"), []);
@@ -535,17 +551,23 @@ mod tests {
         let (mut c, _) = Controller::new(info(false));
         assert_eq!(c.update(Msg::Key(Key::F(5))).effects, []);
         let unpaired = Err(StartError::new("unpaired", ""));
-        c.update(Msg::Checked(unpaired));
+        c.update(Msg::Checked(c.check_seq, unpaired));
         assert_eq!(c.conn.id(), "unpaired");
         assert_eq!(action(&mut c, "register"), []);
         assert_eq!(c.notice.as_ref().unwrap().code, "unpaired");
-        assert_eq!(action(&mut c, "refresh"), [Effect::Check]);
-        c.update(Msg::Checked(Err(StartError::new("unpaired", ""))));
+        assert_eq!(action(&mut c, "refresh"), [Effect::Check(c.check_seq)]);
+        c.update(Msg::Checked(
+            c.check_seq,
+            Err(StartError::new("unpaired", "")),
+        ));
         assert_eq!(action(&mut c, "backoffice"), [Effect::Close]);
         // A pending register choice after an unpaired answer.
         let (mut c, _) = Controller::new(info(false));
         action(&mut c, "register");
-        c.update(Msg::Checked(Err(StartError::new("unpaired", ""))));
+        c.update(Msg::Checked(
+            c.check_seq,
+            Err(StartError::new("unpaired", "")),
+        ));
         assert_eq!(c.outcome, None);
         assert_eq!(c.notice.as_ref().unwrap().code, "unpaired");
     }
@@ -553,7 +575,7 @@ mod tests {
     #[test]
     fn settings_switch_the_language_and_set_up_again() {
         let (mut c, _) = Controller::new(info(false));
-        c.update(Msg::Checked(Ok(None)));
+        c.update(Msg::Checked(c.check_seq, Ok(None)));
         assert!(c.update(Msg::Key(Key::F(3))).handled);
         assert_eq!(c.page, Page::Settings);
         assert!(!c.update(Msg::Key(Key::F(1))).handled, "F1 is a home key");
@@ -618,13 +640,30 @@ mod tests {
     #[test]
     fn the_check_refreshes_the_branch() {
         let (mut c, _) = Controller::new(info(false));
-        c.update(Msg::Checked(Ok(Some("JKT01 · Toko".into()))));
+        c.update(Msg::Checked(c.check_seq, Ok(Some("JKT01 · Toko".into()))));
         assert_eq!(c.info.branch, "JKT01 · Toko");
-        c.update(Msg::Checked(Ok(Some(String::new()))));
+        c.update(Msg::Checked(c.check_seq, Ok(Some(String::new()))));
         assert_eq!(
             c.info.branch, "JKT01 · Toko",
             "an empty label changes nothing"
         );
+    }
+
+    #[test]
+    fn a_stale_check_is_ignored_after_the_server_moved() {
+        let (mut c, _) = Controller::new(single(false, false));
+        let first = c.check_seq;
+        // A check is in flight while the terminals switch moves the server.
+        action(&mut c, "settings");
+        action(&mut c, "lan");
+        let effects = c.update(Msg::LanSet(Ok(changed(true)))).effects;
+        assert_eq!(effects, [Effect::Check(first + 1)]);
+        // The old answer (about the stopped listener) changes nothing.
+        let stale = Err(StartError::new("down", "refused"));
+        assert_eq!(c.update(Msg::Checked(first, stale)).effects, []);
+        assert_eq!(c.conn, Conn::Checking);
+        c.update(Msg::Checked(first + 1, Ok(None)));
+        assert_eq!(c.conn, Conn::Ok);
     }
 
     #[test]
@@ -633,7 +672,7 @@ mod tests {
         // Settings cancel a choice that waits for the check.
         action(&mut c, "register");
         action(&mut c, "settings");
-        assert_eq!(c.update(Msg::Checked(Ok(None))).effects, []);
+        assert_eq!(c.update(Msg::Checked(c.check_seq, Ok(None))).effects, []);
         assert_eq!(c.outcome, None);
         action(&mut c, "back");
         action(&mut c, "lan");
@@ -650,13 +689,13 @@ mod tests {
         assert_eq!(c.page, Page::Settings);
         assert_eq!(
             c.update(Msg::LanSet(Ok(changed(true)))).effects,
-            [Effect::Check]
+            [Effect::Check(c.check_seq)]
         );
         assert!(!c.lan_busy);
         assert_eq!(c.conn, Conn::Checking);
         assert!(c.info.lan.as_ref().unwrap().on);
         assert_eq!(c.info.server, "http://127.0.0.1:8080");
-        c.update(Msg::Checked(Ok(None)));
+        c.update(Msg::Checked(c.check_seq, Ok(None)));
         // Off again, but the port is taken: the old setting stays, the screen says why.
         assert_eq!(action(&mut c, "lan"), [Effect::SetLan(false)]);
         let in_use = Err(StartError::new("in_use", "8080"));

@@ -116,7 +116,46 @@ fn sync<T: Clone + PartialEq + 'static>(model: &VecModel<T>, rows: Vec<T>) {
     }
 }
 
+/// The running event watchers of a window. Aborted when a newer one replaces them and when the
+/// window goes away, so a long-lived process (the Start screen) does not leak sockets.
+#[derive(Default)]
+pub(crate) struct Watchers(RefCell<Vec<tokio::task::AbortHandle>>);
+
+impl Watchers {
+    /// Runs `watching` on the runtime. It ends when its socket closes (logout) or fails,
+    /// which needs no report; it replaces (aborts) the watchers running before.
+    pub(crate) fn start(&self, runner: &Runner, watching: sultan_client::BoxFuture<()>) {
+        let task = runner.handle().spawn(async move {
+            let _ = watching.await;
+        });
+        self.replace(task.abort_handle());
+    }
+
+    /// Aborts the running watchers and keeps `handle` as the only one.
+    fn replace(&self, handle: tokio::task::AbortHandle) {
+        let mut all = self.0.borrow_mut();
+        for old in all.drain(..) {
+            old.abort();
+        }
+        all.push(handle);
+    }
+
+    /// Aborts every watcher.
+    pub(crate) fn stop(&self) {
+        for old in self.0.borrow_mut().drain(..) {
+            old.abort();
+        }
+    }
+}
+
+impl Drop for Watchers {
+    fn drop(&mut self) {
+        self.stop();
+    }
+}
+
 struct State {
+    watchers: Watchers,
     ui: slint::Weak<MainWindow>,
     controller: RefCell<Controller>,
     inbox: Inbox,
@@ -254,10 +293,7 @@ impl State {
                     wake();
                 });
                 let watching = self.service.watch_events(token, sink);
-                // Ends when the socket closes (logout) or fails; nothing to report.
-                self.runner.handle().spawn(async move {
-                    let _ = watching.await;
-                });
+                self.watchers.start(&self.runner, watching);
                 continue;
             }
             if effect == Effect::Exit {
@@ -668,6 +704,7 @@ pub fn build_app(
     let (mut controller, effects) = Controller::new();
     controller.start = options.start;
     let state = Rc::new(State {
+        watchers: Watchers::default(),
         ui: ui.as_weak(),
         controller: RefCell::new(controller),
         inbox: Inbox::default(),
@@ -711,12 +748,32 @@ pub fn run(
     options: Options,
 ) -> Result<(), slint::PlatformError> {
     let app = build_app(service, Runner::Spawn(handle), options)?;
-    app.ui.run()
+    let result = app.ui.run();
+    // The window is closed: its event socket must not outlive it.
+    app.state.watchers.stop();
+    result
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn watchers_are_aborted_when_replaced_or_stopped() {
+        let watchers = Watchers::default();
+        let pending = || tokio::spawn(std::future::pending::<()>());
+        let first = pending();
+        watchers.replace(first.abort_handle());
+        let second = pending();
+        watchers.replace(second.abort_handle());
+        assert!(first.await.unwrap_err().is_cancelled(), "replaced");
+        watchers.stop();
+        assert!(second.await.unwrap_err().is_cancelled(), "stopped");
+        let third = pending();
+        watchers.replace(third.abort_handle());
+        drop(watchers);
+        assert!(third.await.unwrap_err().is_cancelled(), "dropped");
+    }
 
     #[test]
     fn initials_of_names() {

@@ -106,7 +106,9 @@ impl State {
     fn run(&self, effects: Vec<Effect>) {
         for effect in effects {
             match effect {
-                Effect::Check => self.call(self.service.check(), Msg::Checked),
+                Effect::Check(seq) => {
+                    self.call(self.service.check(), move |r| Msg::Checked(seq, r));
+                }
                 Effect::SetLan(on) => self.call(self.service.set_lan(on), Msg::LanSet),
                 Effect::SetLanguage(language) => {
                     select_language(&language);
@@ -130,7 +132,7 @@ impl State {
     fn call<T: Send + 'static>(
         &self,
         future: impl std::future::Future<Output = T> + Send + 'static,
-        msg: fn(T) -> Msg,
+        msg: impl FnOnce(T) -> Msg + Send + 'static,
     ) {
         match &self.runner {
             Runner::Block(handle) => push(&self.inbox, msg(handle.block_on(future))),
