@@ -5,8 +5,12 @@
 //!   codes and unpairing, the permission catalog and the audit log.
 //! - Phase 6: cashier sessions, manager overrides (and the demo endpoint for the `X-Override`
 //!   guard).
+//! - M3 (spec 2.5): customers, groups, membership tiers, the customer balance and its settings
+//!   ([`customers`], [`customer_groups`], [`customer_balance`]).
 //! - C3 (spec 2.2): the catalog: products, branch blocks, images, categories, brands, tax
 //!   classes, lookup and search, catalog settings and code generators ([`catalog`]).
+//! - R3 (spec 2.3): price lists, entries, tax rates, pricing settings ([`pricing`]) and the quote
+//!   and lookup price ([`pricing_quote`]).
 //!
 //! Master-data writes follow one pattern (`docs/plan.md` §1, spec 2.1 §1, §7):
 //! - `PUT /{resource}/{uuid}` creates (`201`) or overwrites (`200`) the record with a
@@ -21,9 +25,14 @@ pub mod auth;
 pub mod branches;
 pub mod cashier_sessions;
 pub mod catalog;
+pub mod customer_balance;
+pub mod customer_groups;
+pub mod customers;
 pub mod locations;
 pub mod overrides;
 pub mod permissions;
+pub mod pricing;
+pub mod pricing_quote;
 pub mod product_images;
 pub mod products;
 pub mod registers;

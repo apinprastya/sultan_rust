@@ -16,3 +16,4 @@ mod devices_auth;
 mod idempotency;
 mod org;
 mod outbox_audit;
+mod pricing;

@@ -14,6 +14,8 @@
 //!   answers `next_after_variant_id` (the last hit's variant), passed back as `after_variant_id`
 //!   for the next page; `null` when the page was not full. A cursor naming a variant that no
 //!   longer exists gives an empty last page.
+//!   A lookup also answers `unit_price`, the store chain's price of one unit (spec 2.3 §10; see
+//!   [`super::pricing_quote::lookup_price`]).
 //! - `GET /tax-classes`: session or device.
 //! - `GET /settings/catalog`: any session. `PUT /settings/catalog`: `catalog.manage`.
 //! - `POST /catalog/generate/product-code` and `/barcode` → `200 {"value"}`: `catalog.manage`;
@@ -257,13 +259,18 @@ pub struct LookupDto {
     /// The code that matched, as stored: the barcode (its UPC-A ↔ EAN-13 form for
     /// `normalized_barcode`), the scale code, the upper-cased SKU or the PLU as typed.
     pub matched_code: String,
-    /// Quantity in thousandths (`1000` = 1, `1250` = 1.250 kg); `null` for a price-embedded
-    /// scale code (it follows from the unit price, spec 2.3).
+    /// Quantity in thousandths (`1000` = 1, `1250` = 1.250 kg). A price-embedded scale code's
+    /// quantity is its amount ÷ `unit_price`, rounded to 3 dp (spec 2.3 §5); `null` when there is
+    /// no (positive) store price.
     pub qty_thousandths: Option<i64>,
     /// Line amount of a price-embedded scale code, in minor units (Rupiah).
     pub amount: Option<i64>,
     /// The branch whose assortment was applied; `null` = none (back office without `branch_id`).
     pub branch_id: Option<String>,
+    /// The unit price of one unit (this `unit_id`) from the store chain, branch → default list,
+    /// without a customer (spec 2.3 §10), in minor units; `null` when no list prices it. The
+    /// branch is the assortment's, else the session's.
+    pub unit_price: Option<i64>,
 }
 
 const fn source_str(source: MatchSource) -> &'static str {
@@ -295,6 +302,7 @@ fn lookup_dto(item: &LookupItem, branch: Option<BranchId>) -> LookupDto {
         qty_thousandths: item.qty.map(sultan_core::catalog::Qty::thousandths),
         amount: item.amount.map(sultan_core::money::Money::minor),
         branch_id: branch.map(|b| b.to_string()),
+        unit_price: None,
     }
 }
 
@@ -356,7 +364,21 @@ pub async fn lookup(
         return Err(ApiError::catalog_rules(&[CatalogError::NotFound]));
     }
     let item = catalog::lookup(&state.db, code, blocks_at(branch)).await?;
-    Ok(Json(lookup_dto(&item, branch)))
+    let mut dto = lookup_dto(&item, branch);
+    let label_amount = item.amount.filter(|_| item.qty.is_none());
+    let price = super::pricing_quote::lookup_price(
+        &state,
+        branch.or_else(|| super::pricing_quote::reader_branch(&reader)),
+        item.product,
+        (item.variant, item.unit),
+        label_amount,
+    )
+    .await?;
+    dto.unit_price = price.unit_price.map(sultan_core::money::Money::minor);
+    if let Some(qty) = price.label_qty {
+        dto.qty_thousandths = Some(qty.thousandths());
+    }
+    Ok(Json(dto))
 }
 
 /// Query of `GET /catalog/search`.

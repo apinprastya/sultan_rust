@@ -747,7 +747,8 @@ pub struct Lookup {
     /// The code that matched, as stored.
     #[serde(default)]
     pub matched_code: String,
-    /// Quantity in thousandths; `None` for a price-embedded scale code.
+    /// Quantity in thousandths; for a price-embedded scale code the amount ÷ `unit_price`
+    /// (`None` without a store price).
     #[serde(default)]
     pub qty_thousandths: Option<i64>,
     /// Line amount of a price-embedded scale code (minor units).
@@ -756,6 +757,10 @@ pub struct Lookup {
     /// The branch whose assortment applied (`None`: none).
     #[serde(default)]
     pub branch_id: Option<String>,
+    /// The store price (branch → default list, no customer) of one unit, minor units; `None`
+    /// when no list prices it (spec 2.3 §10).
+    #[serde(default)]
+    pub unit_price: Option<i64>,
 }
 
 #[cfg(test)]

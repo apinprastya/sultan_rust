@@ -887,6 +887,29 @@ pub async fn search_customers<'c>(
     sql::fetch_all(conn.into(), &sql, values, map_record).await
 }
 
+/// The back office's customer list (`GET /customers` without `q`, phase M3): customers ordered
+/// by name, archived ones (merged and erased included) only with `include_archived`. `limit` 0
+/// = 50, at most [`MAX_PAGE`]; `offset` skips rows.
+///
+/// # Errors
+/// The database error.
+pub async fn list_customers<'c>(
+    conn: impl Into<Conn<'c>>,
+    include_archived: bool,
+    offset: u32,
+    limit: u32,
+) -> Result<Vec<CustomerRecord>> {
+    let mut values = Vec::new();
+    page_args(&mut values, offset, limit, 50, MAX_PAGE);
+    let filter = if include_archived {
+        ""
+    } else {
+        " WHERE archived_at IS NULL"
+    };
+    let sql = format!("{SELECT}{filter} ORDER BY name, id LIMIT ? OFFSET ?");
+    sql::fetch_all(conn.into(), &sql, values, map_record).await
+}
+
 /// "Possible duplicates" (spec 2.5 §7): non-archived customers whose phone clashed at sync,
 /// ordered by the clashing phone. `limit` 0 = 50, at most [`MAX_PAGE`].
 ///

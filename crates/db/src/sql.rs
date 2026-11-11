@@ -10,6 +10,7 @@ use sultan_core::ids::{
     OptionValueId, ProductId, RegisterId, RoleId, TaxClassId, UnitId, UserId, VariantId,
 };
 use sultan_core::money::Money;
+use sultan_core::pricing::{PriceEntryId, PriceListId};
 use sultan_core::time::Timestamp;
 use uuid::Uuid;
 
@@ -61,6 +62,8 @@ arg_from_id!(
     LocationId,
     OptionId,
     OptionValueId,
+    PriceEntryId,
+    PriceListId,
     ProductId,
     RegisterId,
     RoleId,

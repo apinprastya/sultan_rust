@@ -1,6 +1,7 @@
 //! Renders the Start screen (files `0a`–`0d`, `0d` the single app's settings with terminals
 //! allowed), every register screen (with the barcode lookup of
-//! phase C5, files `5a`–`5c`) and every back-office screen (phase C4, files `bo-*`) to PNG
+//! phase C5, files `5a`–`5c`) and every back-office screen (phase C4, files `bo-*`; the
+//! customer screens of spec 2.5 M4 are `bo-10`–`bo-19`) to PNG
 //! with Slint's software renderer (no display needed), driven by keys against the fake service,
 //! like the headless tests.
 //!
@@ -18,8 +19,8 @@ use slint::platform::software_renderer::{
 };
 use slint::platform::{Key, Platform, WindowAdapter, WindowEvent};
 use slint::{ComponentHandle, PhysicalSize, PlatformError, SharedString};
-use sultan_client::fake::{BRANCH_ID, FakeService, STANDARD_TAX_CLASS};
-use sultan_client::{BackOffice, CategoryBody, Product};
+use sultan_client::fake::{BRANCH_ID, FakeService, SEED_BUDI, SEED_SILVER, STANDARD_TAX_CLASS};
+use sultan_client::{BackOffice, CategoryBody, Customer, Product};
 use sultan_core::catalog::gtin_check_digit;
 use sultan_ui::start::{
     AppKind, Lan, LanChanged, LanFuture, StartError, StartFuture, StartInfo, StartService,
@@ -213,9 +214,45 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     digits(&app, "5555");
     press(&app, Key::Return);
     shot("9-register-in-use")?;
+
+    customers(&app, &shot)?;
     drop(app);
 
     backoffice(&window, &dir, (width, height), &language, &runtime)
+}
+
+type Shot = Result<(), Box<dyn std::error::Error>>;
+
+/// The customer step (spec 2.5, phase M5), from the "register in use" screen, as Budi (a
+/// manager: name search and payout).
+fn customers(app: &App, shot: &dyn Fn(&str) -> Shot) -> Shot {
+    press(app, Key::Escape);
+    press(app, Key::RightArrow);
+    digits(app, "9999");
+    press(app, Key::Return);
+    press(app, Key::F3);
+    press(app, Key::Tab);
+    digits(app, "a");
+    press(app, Key::Return);
+    shot("10-customer-search")?;
+    press(app, Key::Return);
+    shot("10a-customer")?;
+    press(app, Key::Return);
+    shot("10b-customer-attached")?;
+    press(app, Key::F3);
+    press(app, Key::F7);
+    digits(app, "2200");
+    press(app, Key::Return);
+    shot("10c-customer-payout")?;
+    press(app, Key::Return);
+    press(app, Key::Escape);
+    press(app, Key::F6);
+    digits(app, "Budi Lagi");
+    press(app, Key::Tab);
+    digits(app, "0812-3456-789");
+    press(app, Key::Return);
+    shot("10d-customer-sign-up-taken")?;
+    Ok(())
 }
 
 fn id() -> String {
@@ -475,6 +512,7 @@ fn backoffice(
     };
     let w = ui.window();
     let ctrl = |c: &str| key(w, &[Key::Control.into(), c.into()]);
+    let ctrl_shift = |c: &str| key(w, &[Key::Control.into(), Key::Shift.into(), c.into()]);
 
     shot("bo-1-login")?;
     edit("login", 0, "password", "owner-pass-1");
@@ -514,5 +552,72 @@ fn backoffice(
     shot("bo-8-categories")?;
     key(w, &[Key::F4.into()]);
     shot("bo-9-brands")?;
+
+    // Customers (spec 2.5, M4).
+    demo_customers(&fake);
+    key(w, &[Key::F6.into()]);
+    shot("bo-10-customers")?;
+    // Budi Santoso (Gold, balance Rp 2 200) is the third row.
+    key(w, &[Key::DownArrow.into()]);
+    key(w, &[Key::DownArrow.into()]);
+    key(w, &[Key::Return.into()]);
+    shot("bo-11-customer-form")?;
+    // Siti's phone: taken.
+    edit("customer", 0, "phone", "0812-9876-5432");
+    ctrl("s");
+    shot("bo-12-customer-phone-taken")?;
+    edit("customer", 0, "phone", "08123456789");
+    ctrl_shift("e");
+    edit("erase", 0, "code", "K7QH-29XM");
+    shot("bo-13-customer-erase")?;
+    key(w, &[Key::Escape.into()]);
+    key(w, &[Key::Escape.into()]);
+    ctrl("2");
+    shot("bo-14-customer-groups")?;
+    ctrl("3");
+    shot("bo-15-customer-tiers")?;
+    ctrl("4");
+    shot("bo-16-possible-duplicates")?;
+    ctrl("m");
+    shot("bo-17-merge-confirm")?;
+    key(w, &[Key::Escape.into()]);
+    ctrl("5");
+    shot("bo-18-negative-balances")?;
+    ctrl("6");
+    shot("bo-19-balance-settings")?;
     Ok(())
+}
+
+/// More customers for the customer screens: an expired tier, a negative balance and a
+/// possible duplicate of Budi.
+fn demo_customers(fake: &FakeService) {
+    let customer = |id: &str, code: &str, name: &str| Customer {
+        id: id.into(),
+        code: code.into(),
+        display_code: format!("{}-{}", &code[..4], &code[4..]),
+        name: name.into(),
+        signed_up_at: 1_790_000_000_000,
+        created_at: 1_790_000_000_000,
+        ..Customer::default()
+    };
+    fake.seed_customer(Customer {
+        phone: Some("+6281377778888".into()),
+        tier_id: Some(SEED_SILVER.into()),
+        tier_valid_until: Some("2026-06-30".into()),
+        ..customer("demo-rina", "R8NA5XK2", "Rina Kartika")
+    });
+    fake.seed_customer(Customer {
+        phone: Some("+6285611112222".into()),
+        company_name: Some("CV Maju Jaya".into()),
+        ..customer("demo-agus", "A6GS7MJ3", "Agus Salim")
+    });
+    fake.add_customer_balance("demo-agus", "payment", -1_500);
+    // Budi's history: more saved change, then a payment.
+    fake.add_customer_balance(SEED_BUDI, "change_saved", 700);
+    fake.add_customer_balance(SEED_BUDI, "payment", -500);
+    fake.seed_customer(Customer {
+        email: Some("budi.s@example.com".into()),
+        phone_conflict: Some("+628123456789".into()),
+        ..customer("demo-dup", "QW3R7TY9", "Budi S.")
+    });
 }

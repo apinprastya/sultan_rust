@@ -5357,6 +5357,7 @@ name = "sultan-client"
 version = "0.1.0"
 dependencies = [
  "axum",
+ "chrono",
  "futures-util",
  "reqwest",
  "serde",
@@ -5383,6 +5384,7 @@ dependencies = [
 name = "sultan-db"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "serde_json",
  "sqlx",
  "sultan-core",
@@ -5399,6 +5401,7 @@ dependencies = [
  "argon2",
  "axum",
  "base64 0.22.1",
+ "chrono",
  "futures-util",
  "http-body-util",
  "image",

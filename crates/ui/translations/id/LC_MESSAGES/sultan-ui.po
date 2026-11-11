@@ -1351,3 +1351,502 @@ msgstr "Tidak bisa dihapus: kategori ini punya subkategori. Hapus atau pindahkan
 
 msgid "Cannot delete: it is in use. Archive it instead."
 msgstr "Tidak bisa dihapus: masih dipakai. Arsipkan saja."
+
+# Register customer step (spec 2.5, phase M5): ui/app.slint (CustomerStrip, CustomerDialog) and
+# ui/theme.slint (messages, chips).
+msgid "CUSTOMER"
+msgstr "PELANGGAN"
+
+msgid "Attached customer"
+msgstr "Pelanggan terpasang"
+
+msgid "No customer attached"
+msgstr "Belum ada pelanggan"
+
+msgid "None. F3 finds a customer or signs one up."
+msgstr "Belum ada. F3 mencari atau mendaftarkan pelanggan."
+
+msgid "Balance {}"
+msgstr "Saldo {}"
+
+msgid "Find a customer"
+msgstr "Cari pelanggan"
+
+msgid "Type part of the name or the company name, then press Enter."
+msgstr "Ketik sebagian nama atau nama perusahaan, lalu tekan Enter."
+
+msgid "Type the phone number or the member code, or scan the member card, then press Enter."
+msgstr "Ketik nomor HP atau kode member, atau pindai kartu member, lalu tekan Enter."
+
+msgid "Phone or member code"
+msgstr "Nomor HP atau kode member"
+
+msgid "e.g. Budi"
+msgstr "mis. Budi"
+
+msgid "e.g. 0812 3456 789 or K7QH-29XM"
+msgstr "mis. 0812 3456 789 atau K7QH-29XM"
+
+msgid "Attached"
+msgstr "Terpasang"
+
+msgid "Member code"
+msgstr "Kode member"
+
+msgid "Phone"
+msgstr "Nomor HP"
+
+# Back office: customers (spec 2.5, phase M4)
+
+msgid "Customers"
+msgstr "Pelanggan"
+
+msgid "Archive the customer {}?"
+msgstr "Arsipkan pelanggan {}?"
+
+msgid "Unarchive the customer {}?"
+msgstr "Aktifkan lagi pelanggan {}?"
+
+msgid "Merge {} into {}?"
+msgstr "Gabungkan {} ke {}?"
+
+msgid "The customer has unsaved changes. They are lost if you leave now."
+msgstr "Data pelanggan ini belum disimpan. Perubahannya hilang jika Anda keluar sekarang."
+
+msgid "The till no longer finds an archived customer. Sales and the balance stay; unarchive brings the customer back."
+msgstr "Kasir tidak bisa lagi menemukan pelanggan yang diarsipkan. Penjualan dan saldo tetap ada; aktifkan lagi untuk mengembalikannya."
+
+msgid "The till finds the customer again."
+msgstr "Kasir bisa menemukan pelanggan ini lagi."
+
+msgid "{1} keeps its own details; only its empty fields are filled from {0} (the phone too when {1} has none), and its group and tier when it has none. The balance of {0} moves to {1}. {0} is archived; its code and phone still find {1} at the till. This cannot be undone."
+msgstr "{1} tetap memakai datanya sendiri; hanya kolom yang kosong diisi dari {0} (termasuk telepon jika {1} belum punya), begitu juga grup dan tingkat jika belum ada. Saldo {0} pindah ke {1}. {0} diarsipkan; kode dan teleponnya tetap menemukan {1} di kasir. Ini tidak bisa dibatalkan."
+
+msgid "Merge"
+msgstr "Gabungkan"
+
+msgid "Customer list"
+msgstr "Daftar pelanggan"
+
+msgid "Groups"
+msgstr "Grup"
+
+msgid "Tiers"
+msgstr "Tingkat"
+
+msgid "Possible duplicates"
+msgstr "Kemungkinan duplikat"
+
+msgid "Negative balances"
+msgstr "Saldo minus"
+
+msgid "Balance settings"
+msgstr "Pengaturan saldo"
+
+msgid "No customers found."
+msgstr "Tidak ada pelanggan."
+
+msgid "Group"
+msgstr "Grup"
+
+msgid "Tier"
+msgstr "Tingkat"
+
+msgid "{} (expired {})"
+msgstr "{} (berakhir {})"
+
+msgid "{} · until {}"
+msgstr "{} · sampai {}"
+
+msgid "Balance"
+msgstr "Saldo"
+
+msgid "On the receipt"
+msgstr "Di struk"
+
+msgid "RECENT RECEIPTS"
+msgstr "STRUK TERAKHIR"
+
+msgid "No receipts yet. The 5 most recent receipts show here once selling arrives."
+msgstr "Belum ada struk. 5 struk terakhir tampil di sini setelah fitur penjualan tersedia."
+
+msgid "Search name or company  ( / )"
+msgstr "Cari nama atau perusahaan  ( / )"
+
+msgid "New customer"
+msgstr "Pelanggan baru"
+
+msgid "Type the name and, if the customer wants, the phone number. The member code is given automatically. Tab moves to the next field."
+msgstr "Ketik nama dan, bila pelanggan mau, nomor HP. Kode member dibuat otomatis. Tab pindah ke kolom berikutnya."
+
+msgid "Full name"
+msgstr "Nama lengkap"
+
+msgid "Phone (optional)"
+msgstr "Nomor HP (opsional)"
+
+msgid "e.g. 0812 3456 789"
+msgstr "mis. 0812 3456 789"
+
+msgid "Pay out the balance"
+msgstr "Cairkan saldo"
+
+msgid "{} has a balance of {}. The amount is paid in cash from your drawer."
+msgstr "{} punya saldo {}. Jumlahnya dibayar tunai dari laci Anda."
+
+msgid "Amount to pay out"
+msgstr "Jumlah yang dicairkan"
+
+msgid "Pay out {} in cash to {}?"
+msgstr "Cairkan {} secara tunai kepada {}?"
+
+msgid "Enter pays out. Esc changes the amount."
+msgstr "Enter mencairkan. Esc mengubah jumlah."
+
+msgid "Customer attached: {}"
+msgstr "Pelanggan terpasang: {}"
+
+msgid "Customer detached."
+msgstr "Pelanggan dilepas."
+
+msgid "No customer has the phone or member code {}."
+msgstr "Tidak ada pelanggan dengan nomor HP atau kode member {}."
+
+msgid "That is not a valid phone number."
+msgstr "Nomor HP tidak valid."
+
+msgid "{} is not a valid member code."
+msgstr "{} bukan kode member yang valid."
+
+msgid "This phone already belongs to customer {}. F8 shows that customer."
+msgstr "Nomor HP ini sudah dipakai pelanggan {}. F8 menampilkan pelanggan itu."
+
+msgid "The balance is only {}."
+msgstr "Saldonya hanya {}."
+
+msgid "The name is too long or not valid."
+msgstr "Nama terlalu panjang atau tidak valid."
+
+msgid "A field is not valid ({})."
+msgstr "Ada kolom yang tidak valid ({})."
+
+msgid "Type a phone number or a member code first."
+msgstr "Ketik nomor HP atau kode member dulu."
+
+msgid "Type part of a name first."
+msgstr "Ketik sebagian nama dulu."
+
+msgid "No customer is named “{}”."
+msgstr "Tidak ada pelanggan bernama “{}”."
+
+msgid "The name is required."
+msgstr "Nama wajib diisi."
+
+msgid "Signed up. Member code {}. Enter attaches the customer."
+msgstr "Terdaftar. Kode member {}. Enter memasang pelanggan ini."
+
+msgid "Paid out {} in cash."
+msgstr "{} dicairkan secara tunai."
+
+msgid "Customer"
+msgstr "Pelanggan"
+
+msgid "Detach customer"
+msgstr "Lepas pelanggan"
+
+msgid "Find"
+msgstr "Cari"
+
+msgid "Search by name"
+msgstr "Cari nama"
+
+msgid "Phone or code"
+msgstr "HP atau kode"
+
+msgid "Close"
+msgstr "Tutup"
+
+msgid "Attach"
+msgstr "Pasang"
+
+msgid "Pay out"
+msgstr "Cairkan"
+
+msgid "Yes, pay out"
+msgstr "Ya, cairkan"
+
+msgid "Change amount"
+msgstr "Ubah jumlah"
+
+msgid "Sign up"
+msgstr "Daftarkan"
+
+msgid "Next field"
+msgstr "Kolom berikutnya"
+
+msgid "Show that customer"
+msgstr "Tampilkan pelanggan itu"
+
+msgid "Email"
+msgstr "Email"
+
+msgid "Birthday: day"
+msgstr "Ulang tahun: tanggal"
+
+msgid "Month"
+msgstr "Bulan"
+
+msgid "Year (optional)"
+msgstr "Tahun (opsional)"
+
+msgid "Address"
+msgstr "Alamat"
+
+msgid "Tax ID (NPWP or NIK)"
+msgstr "NPWP atau NIK"
+
+msgid "Tax address"
+msgstr "Alamat pajak"
+
+msgid "Notes for staff (not printed)"
+msgstr "Catatan untuk staf (tidak dicetak)"
+
+msgid "The member code is drawn when you save."
+msgstr "Kode member dibuat saat disimpan."
+
+msgid "Personal data erased"
+msgstr "Data pribadi dihapus"
+
+msgid "Erase personal data"
+msgstr "Hapus data pribadi"
+
+msgid "Profile"
+msgstr "Profil"
+
+msgid "Membership"
+msgstr "Keanggotaan"
+
+msgid "Tier valid until (optional, YYYY-MM-DD)"
+msgstr "Tingkat berlaku sampai (opsional, TTTT-BB-HH)"
+
+msgid "The tier has expired: set a new date to renew it."
+msgstr "Masa tingkat sudah habis: isi tanggal baru untuk memperpanjang."
+
+msgid "Manual tier (never automatic)"
+msgstr "Tingkat manual (tidak otomatis)"
+
+msgid "Changing the group or tier needs the permission customer.manage."
+msgstr "Mengubah grup atau tingkat butuh izin customer.manage."
+
+msgid "Balance (saved change)"
+msgstr "Saldo (simpan kembalian)"
+
+msgid "Read-only. Change is saved and spent at the till."
+msgstr "Hanya baca. Kembalian disimpan dan dipakai di kasir."
+
+msgid "No balance entries yet."
+msgstr "Belum ada mutasi saldo."
+
+msgid "Rank (higher = better)"
+msgstr "Peringkat (lebih tinggi = lebih baik)"
+
+msgid "Membership tiers"
+msgstr "Tingkat keanggotaan"
+
+msgid "Customer groups"
+msgstr "Grup pelanggan"
+
+msgid "rank {}"
+msgstr "peringkat {}"
+
+msgid "No tiers yet. Add one, e.g. Silver, Gold, Platinum."
+msgstr "Belum ada tingkat. Tambahkan, mis. Silver, Gold, Platinum."
+
+msgid "No groups yet. Add one, e.g. Wholesale."
+msgstr "Belum ada grup. Tambahkan, mis. Grosir."
+
+msgid "New tier"
+msgstr "Tingkat baru"
+
+msgid "Edit tier"
+msgstr "Ubah tingkat"
+
+msgid "New group"
+msgstr "Grup baru"
+
+msgid "Edit group"
+msgstr "Ubah grup"
+
+msgid "Add tier"
+msgstr "Tambah tingkat"
+
+msgid "Add group"
+msgstr "Tambah grup"
+
+msgid "Price lists can be linked to a tier. An archived tier stops applying; customers keep it until you change it."
+msgstr "Daftar harga bisa dikaitkan ke tingkat. Tingkat yang diarsipkan tidak berlaku lagi; pelanggan tetap memilikinya sampai Anda mengubahnya."
+
+msgid "Price lists can be linked to a group. An archived group stops applying; customers keep it until you move them."
+msgstr "Daftar harga bisa dikaitkan ke grup. Grup yang diarsipkan tidak berlaku lagi; pelanggan tetap di grup itu sampai Anda memindahkannya."
+
+msgid "Customers whose phone was already used by another customer when a branch synced. Merge each into the customer to keep."
+msgstr "Pelanggan yang teleponnya sudah dipakai pelanggan lain saat cabang disinkronkan. Gabungkan masing-masing ke pelanggan yang dipertahankan."
+
+msgid "Clashing phone"
+msgstr "Telepon bentrok"
+
+msgid "No possible duplicates."
+msgstr "Tidak ada kemungkinan duplikat."
+
+msgid "Merge from (archived afterwards)"
+msgstr "Digabungkan dari (lalu diarsipkan)"
+
+msgid "Pick a row in the list."
+msgstr "Pilih baris di daftar."
+
+msgid "Keep: member code"
+msgstr "Pertahankan: kode member"
+
+msgid "Keep"
+msgstr "Dipertahankan"
+
+msgid "The customer with the same phone, or type a code."
+msgstr "Pelanggan dengan telepon yang sama, atau ketik kodenya."
+
+msgid "Merge customers"
+msgstr "Gabungkan pelanggan"
+
+msgid "Swap"
+msgstr "Tukar"
+
+msgid "A balance can go below zero when two branches spend it while offline. The next saved change fills it."
+msgstr "Saldo bisa minus jika dua cabang memakainya saat offline. Kembalian berikutnya yang disimpan akan menutupnya."
+
+msgid "No customer has a negative balance."
+msgstr "Tidak ada pelanggan dengan saldo minus."
+
+msgid "Most change saved per sale (Rp)"
+msgstr "Kembalian maksimal yang disimpan per penjualan (Rp)"
+
+msgid "Most balance per customer (Rp)"
+msgstr "Saldo maksimal per pelanggan (Rp)"
+
+msgid "Customer balance (saved change)"
+msgstr "Saldo pelanggan (simpan kembalian)"
+
+msgid "When coins for change are short, the cashier can save the change to the customer's balance; it pays a later sale. These limits apply to every branch."
+msgstr "Jika uang receh untuk kembalian kurang, kasir bisa menyimpan kembalian ke saldo pelanggan; saldo itu membayar penjualan berikutnya. Batas ini berlaku di semua cabang."
+
+msgid "0 per sale turns saving change off. A merge may go over the most balance."
+msgstr "0 per penjualan mematikan simpan kembalian. Penggabungan boleh melebihi saldo maksimal."
+
+msgid "Erase the personal data of {}?"
+msgstr "Hapus data pribadi {}?"
+
+msgid "The name becomes “Erased customer”; phone, email, birthday, address, company, tax data and notes are blanked and the customer is archived. Sales and receipts stay. This cannot be undone."
+msgstr "Nama menjadi “Erased customer”; telepon, email, ulang tahun, alamat, perusahaan, data pajak, dan catatan dikosongkan, lalu pelanggan diarsipkan. Penjualan dan struk tetap ada. Ini tidak bisa dibatalkan."
+
+msgid "The balance is {}: the erase is refused until it is spent or paid out at the till."
+msgstr "Saldonya {}: penghapusan ditolak sampai saldo dipakai atau dicairkan di kasir."
+
+msgid "Type the member code {} to confirm"
+msgstr "Ketik kode member {} untuk konfirmasi"
+
+msgid "Erase"
+msgstr "Hapus data"
+
+msgid "Listing and searching customers needs the permission {}. You can still add a customer (Ctrl+N)."
+msgstr "Melihat dan mencari pelanggan butuh izin {}. Anda tetap bisa menambah pelanggan (Ctrl+N)."
+
+msgid "Type a name (1 to 100 characters)."
+msgstr "Ketik nama (1 sampai 100 karakter)."
+
+msgid "Not a phone number: use 8 to 15 digits, e.g. 0812-3456-789."
+msgstr "Bukan nomor telepon: pakai 8 sampai 15 angka, mis. 0812-3456-789."
+
+msgid "Not an email address."
+msgstr "Bukan alamat email."
+
+msgid "A tax ID (NPWP or NIK) has 15 or 16 digits."
+msgstr "NPWP atau NIK terdiri dari 15 atau 16 angka."
+
+msgid "Not a date: type the day and the month (the year is optional)."
+msgstr "Bukan tanggal: ketik tanggal dan bulan (tahun opsional)."
+
+msgid "Type the date as YYYY-MM-DD, e.g. 2027-12-31."
+msgstr "Ketik tanggal sebagai TTTT-BB-HH, mis. 2027-12-31."
+
+msgid "Pick a tier first."
+msgstr "Pilih tingkat dulu."
+
+msgid "This phone is already used by the customer {}."
+msgstr "Telepon ini sudah dipakai pelanggan {}."
+
+msgid "The customer is archived. Unarchive the customer first."
+msgstr "Pelanggan ini diarsipkan. Aktifkan lagi dulu."
+
+msgid "This customer was merged into another customer."
+msgstr "Pelanggan ini sudah digabungkan ke pelanggan lain."
+
+msgid "Cannot erase: the balance is {}. It must be spent or paid out at the till first."
+msgstr "Tidak bisa dihapus: saldonya {}. Saldo harus dipakai atau dicairkan di kasir dulu."
+
+msgid "The group or tier no longer exists. Refresh and pick again."
+msgstr "Grup atau tingkat itu sudah tidak ada. Muat ulang dan pilih lagi."
+
+msgid "The customer is archived. The till no longer finds the customer."
+msgstr "Pelanggan diarsipkan. Kasir tidak bisa menemukannya lagi."
+
+msgid "The customer is active again."
+msgstr "Pelanggan aktif lagi."
+
+msgid "The personal data is erased."
+msgstr "Data pribadi sudah dihapus."
+
+msgid "Merged. The customer {} was kept."
+msgstr "Digabungkan. Pelanggan {} dipertahankan."
+
+msgid "Pick the duplicate in the list and the customer to keep."
+msgstr "Pilih duplikat di daftar dan pelanggan yang dipertahankan."
+
+msgid "That is the same customer. Type the code of the customer to keep."
+msgstr "Itu pelanggan yang sama. Ketik kode pelanggan yang dipertahankan."
+
+msgid "No active customer has this code or phone."
+msgstr "Tidak ada pelanggan aktif dengan kode atau telepon ini."
+
+msgid "The rank is a whole number."
+msgstr "Peringkat harus bilangan bulat."
+
+msgid "Another tier has this rank."
+msgstr "Tingkat lain sudah memakai peringkat ini."
+
+msgid "Type an amount in Rupiah, 0 or more."
+msgstr "Isi jumlah dalam Rupiah, 0 atau lebih."
+
+msgid "(No group)"
+msgstr "(Tanpa grup)"
+
+msgid "(No tier)"
+msgstr "(Tanpa tingkat)"
+
+msgid "Change saved"
+msgstr "Kembalian disimpan"
+
+msgid "Paid with the balance"
+msgstr "Dibayar dengan saldo"
+
+msgid "Saved change reversed"
+msgstr "Simpan kembalian dibatalkan"
+
+msgid "Payment reversed"
+msgstr "Pembayaran dibatalkan"
+
+msgid "Paid out in cash"
+msgstr "Dicairkan tunai"
+
+msgid "Moved by a merge"
+msgstr "Dipindah karena penggabungan"
+
+msgid "Received by a merge"
+msgstr "Diterima dari penggabungan"

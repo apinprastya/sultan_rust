@@ -9,13 +9,17 @@
 //!   time texts.
 //! - [`scan`]: the session home's barcode field (phase C5): typed code, waiting lookup, shown
 //!   item.
+//! - [`customer`]: the session home's customer step (spec 2.5, phase M5): find, sign up,
+//!   attach, balance payout.
 //! - [`setup`] and [`setup_app`]: the first-run setup wizard (single app, HQ server, branch
 //!   server (not available yet), terminal), a separate window with its own controller.
 //! - [`start`] and [`start_app`]: the Start screen of a single app or a terminal (register,
 //!   back office, settings), a window of its own with its own controller.
 //! - [`backoffice`] and [`backoffice_app`]: the back office (phase C4, spec 2.2): login,
-//!   product list, product form, category and brand editors, a window of its own with its own
-//!   controller, driven through [`sultan_client::BackOffice`].
+//!   product list, product form, category and brand editors, and the customer screens (spec 2.5,
+//!   phase M4: list, form, groups, tiers, duplicates and merge, negative balances, erase, balance
+//!   settings; [`backoffice::customers`]), a window of its own with its own controller, driven
+//!   through [`sultan_client::BackOffice`].
 //! - `ui/*.slint`: the window, mostly declarative. Every user-facing string is `@tr()` in
 //!   `ui/theme.slint` or `ui/app.slint`; the Indonesian translation is bundled from
 //!   `translations/id/LC_MESSAGES/sultan-ui.po` and picked from the system locale or
@@ -27,6 +31,7 @@ pub mod backoffice;
 pub mod backoffice_app;
 pub mod controller;
 pub mod count;
+pub mod customer;
 pub mod input;
 pub mod scan;
 pub mod setup;

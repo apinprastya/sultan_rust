@@ -25,6 +25,13 @@
 //!    cash is never shown before the close. Enter asks for confirmation, Enter again closes.
 //! 5. **Report** — expected, counted, over/short and tender totals; Enter logs out to Lock.
 //!
+//! **Customer** (spec 2.5 §6–§11, phase M5; [`crate::customer`]): F3 on the session home opens
+//! the customer dialog (find by phone, member code or, with `customer.search`, name; sign up;
+//! pay a balance out). Enter on a found customer attaches them: the home shows their receipt
+//! line and balance until F4 detaches them, the user locks or the session closes (the cart and
+//! its customer come with 2.6). After login the register asks `GET /auth/me` for the user's
+//! permissions, so the dialog shows only what the user may do.
+//!
 //! **Manager override** ([`Approval`], spec 2.1 §6): an action answered with `403 needs_override`
 //! opens a dialog over the current screen with the action, the value and the cashier's limit; the
 //! manager is picked with ↑/↓ (or a click) and types their PIN; Enter asks `POST /overrides` and
@@ -42,12 +49,13 @@
 //! twice.
 
 use sultan_client::{
-    Branch, CashierSession, ClientError, CloseReport, CloseRequest, LockUser, Login, Lookup,
-    OverrideGrant, OverrideRequest, ProtectedAction, ProtectedResult, ServerEvent,
+    Branch, CashierSession, ClientError, CloseReport, CloseRequest, Customer, LockUser, Login,
+    Lookup, OverrideGrant, OverrideRequest, ProtectedAction, ProtectedResult, ServerEvent,
 };
 
 use crate::amount::{Digits, percent, rupiah};
 use crate::count::{CountForm, wrap};
+use crate::customer::{Call, Dialog, Outcome, Perms, Reply};
 use crate::input::{Key, Pin};
 use crate::scan::ScanField;
 
@@ -216,8 +224,8 @@ fn ends_login(error: &ClientError) -> bool {
     )
 }
 
-/// A fresh idempotency key / context reference.
-fn new_key() -> String {
+/// A fresh idempotency key / context reference (also the id of a new customer).
+pub(crate) fn new_key() -> String {
     uuid::Uuid::now_v7().to_string()
 }
 
@@ -238,10 +246,24 @@ pub enum Action {
     TestOverride,
     /// Leave the register for the Start screen (lock screen only, when opened from it).
     Start,
+    /// Open the customer dialog.
+    Customer,
+    /// Detach the attached customer.
+    Detach,
+    /// Customer dialog: phone or code ↔ name search.
+    SwitchMode,
+    /// Customer dialog: sign up a new customer.
+    NewCustomer,
+    /// Customer dialog: pay the balance out.
+    PayOut,
+    /// Customer dialog: show the customer whose phone the sign-up wanted.
+    ShowTaken,
+    /// Customer dialog: the sign-up's next field.
+    NextField,
 }
 
 impl Action {
-    const ALL: [Self; 7] = [
+    const ALL: [Self; 14] = [
         Self::Confirm,
         Self::Back,
         Self::Retry,
@@ -249,6 +271,13 @@ impl Action {
         Self::CloseSession,
         Self::TestOverride,
         Self::Start,
+        Self::Customer,
+        Self::Detach,
+        Self::SwitchMode,
+        Self::NewCustomer,
+        Self::PayOut,
+        Self::ShowTaken,
+        Self::NextField,
     ];
 
     /// The ID used by the UI.
@@ -262,6 +291,13 @@ impl Action {
             Self::CloseSession => "close-session",
             Self::TestOverride => "test-override",
             Self::Start => "start",
+            Self::Customer => "customer",
+            Self::Detach => "detach-customer",
+            Self::SwitchMode => "switch-mode",
+            Self::NewCustomer => "new-customer",
+            Self::PayOut => "pay-out",
+            Self::ShowTaken => "show-taken",
+            Self::NextField => "next-field",
         }
     }
 
@@ -469,6 +505,16 @@ pub enum Effect {
         /// The login generation the lookup was started for.
         generation: u64,
     },
+    /// A customer call ([`Call`]); the answer comes back as [`Msg::Customer`] with
+    /// `generation`.
+    Customer {
+        /// Session token.
+        token: String,
+        /// The call.
+        call: Call,
+        /// The login generation the call was made for.
+        generation: u64,
+    },
     /// [`sultan_client::Service::watch_events`]; events come back as [`Msg::Event`] with
     /// `generation`.
     WatchEvents {
@@ -517,6 +563,12 @@ pub enum Msg {
     /// Result of [`Effect::Lookup`] number `seq` (second field) of the login `generation`
     /// (first field).
     Looked(u64, u64, Result<Lookup, ClientError>),
+    /// Result of [`Effect::Customer`] of the login `generation`.
+    Customer(u64, Box<Reply>),
+    /// A click on a name-search result in the customer dialog.
+    PickCustomer(usize),
+    /// A click on a sign-up field in the customer dialog.
+    PickField(usize),
 }
 
 /// What [`Controller::update`] did.
@@ -563,6 +615,12 @@ pub struct Controller {
     lookups: u64,
     /// The window was opened from the Start screen: the lock screen offers F9 to go back.
     pub start: bool,
+    /// The customer attached to the session home (spec 2.5 M5).
+    pub customer: Option<Customer>,
+    /// The customer dialog, when open.
+    pub dialog: Option<Dialog>,
+    /// The logged-in user's customer permissions.
+    pub perms: Perms,
 }
 
 impl Controller {
@@ -582,6 +640,9 @@ impl Controller {
             generation: 0,
             lookups: 0,
             start: false,
+            customer: None,
+            dialog: None,
+            perms: Perms::default(),
         };
         (controller, vec![Effect::LoadUsers])
     }
@@ -606,15 +667,21 @@ impl Controller {
             .collect()
     }
 
-    /// The actions of the session home (also shown as large buttons there).
+    /// The actions of the session home (also shown as large buttons there). F4 detaches the
+    /// customer, when one is attached.
     #[must_use]
-    pub fn home_actions() -> Vec<Shortcut> {
+    pub fn home_actions(&self) -> Vec<Shortcut> {
         let s = |key, action, label| Shortcut { key, action, label };
-        vec![
+        let mut keys = vec![
             s(Key::F(2), Action::TestOverride, "test_override"),
-            s(Key::F(10), Action::CloseSession, "close_session"),
-            s(Key::F(12), Action::Lock, "lock"),
-        ]
+            s(Key::F(3), Action::Customer, "customer"),
+        ];
+        if self.customer.is_some() {
+            keys.push(s(Key::F(4), Action::Detach, "detach_customer"));
+        }
+        keys.push(s(Key::F(10), Action::CloseSession, "close_session"));
+        keys.push(s(Key::F(12), Action::Lock, "lock"));
+        keys
     }
 
     /// The keys of the barcode field (shown next to it): Enter looks up, Esc clears.
@@ -637,6 +704,9 @@ impl Controller {
                 s(Key::Enter, Confirm, "approve"),
                 s(Key::Escape, Back, "cancel"),
             ];
+        }
+        if let Some(d) = &self.dialog {
+            return d.shortcuts(self.perms);
         }
         match &self.screen {
             Screen::Lock(l) if l.pad.is_some() => {
@@ -661,7 +731,7 @@ impl Controller {
                 s(Key::Escape, Lock, "lock"),
             ],
             Screen::Home(_) => {
-                let mut keys = Self::home_actions();
+                let mut keys = self.home_actions();
                 keys.extend(Self::scan_actions());
                 keys
             }
@@ -690,6 +760,18 @@ impl Controller {
                 let count = self.approvers().len();
                 if let Some(a) = self.approval.as_mut().filter(|_| i < count) {
                     a.cursor = i;
+                }
+                Step::default()
+            }
+            Msg::PickCustomer(i) => {
+                if let Some(d) = self.dialog.as_mut().filter(|_| !self.busy) {
+                    d.pick(i);
+                }
+                Step::default()
+            }
+            Msg::PickField(i) => {
+                if let Some(d) = self.dialog.as_mut().filter(|_| !self.busy) {
+                    d.pick_field(i);
                 }
                 Step::default()
             }
@@ -747,6 +829,9 @@ impl Controller {
                 }
                 _ => false,
             };
+        }
+        if let Some(d) = &mut self.dialog {
+            return d.edit(key);
         }
         let users = self.users.len();
         match &mut self.screen {
@@ -819,6 +904,10 @@ impl Controller {
         if self.busy || !self.shortcuts().iter().any(|s| s.action == action) {
             return Vec::new();
         }
+        if let Some(d) = &mut self.dialog {
+            let outcome = d.act(action);
+            return self.dialog_outcome(outcome);
+        }
         match action {
             Action::Confirm => self.confirm(),
             Action::Back => {
@@ -845,7 +934,74 @@ impl Controller {
                 };
                 self.protected(body, None)
             }
+            Action::Customer => {
+                self.dialog = Some(Dialog::new(self.customer.as_ref()));
+                Vec::new()
+            }
+            Action::Detach => {
+                self.customer = None;
+                self.set_notice(Notice::new("customer_detached", "", Tone::Neutral));
+                Vec::new()
+            }
+            // Dialog actions; never on a screen's shortcuts.
+            Action::SwitchMode
+            | Action::NewCustomer
+            | Action::PayOut
+            | Action::ShowTaken
+            | Action::NextField => Vec::new(),
         }
+    }
+
+    /// What the customer dialog's action leads to.
+    fn dialog_outcome(&mut self, outcome: Outcome) -> Vec<Effect> {
+        match outcome {
+            Outcome::Stay => Vec::new(),
+            Outcome::Close => {
+                self.dialog = None;
+                Vec::new()
+            }
+            Outcome::Call(call) => {
+                self.busy = true;
+                vec![Effect::Customer {
+                    token: self.token(),
+                    call,
+                    generation: self.generation,
+                }]
+            }
+            Outcome::Attach(customer) => {
+                let line = crate::customer::receipt_line(&customer);
+                self.customer = Some(*customer);
+                self.dialog = None;
+                self.set_notice(Notice::new("customer_attached", line, Tone::Good));
+                Vec::new()
+            }
+        }
+    }
+
+    /// The answer to a customer call: the permissions after login, or the dialog's call.
+    fn customer_reply(&mut self, generation: u64, reply: Reply) -> Vec<Effect> {
+        if generation != self.generation || self.login.is_none() {
+            return Vec::new();
+        }
+        if let Some(e) = reply.error().filter(|e| ends_login(e)).cloned() {
+            return self.fail(&e);
+        }
+        if let Reply::Permissions(result) = reply {
+            // Still busy until the current session is known; without the keys, the dialog
+            // offers only the lookup.
+            self.perms = result.map(|keys| Perms::of(&keys)).unwrap_or_default();
+            return Vec::new();
+        }
+        self.busy = false;
+        let Some(d) = &mut self.dialog else {
+            return Vec::new();
+        };
+        if let Some(after) = d.reply(reply)
+            && self.customer.as_ref().is_some_and(|c| c.id == after.id)
+        {
+            self.customer = Some(after);
+        }
+        Vec::new()
     }
 
     fn token(&self) -> String {
@@ -980,6 +1136,9 @@ impl Controller {
         let token = self.login.take().map(|l| l.token);
         self.session = None;
         self.approval = None;
+        self.customer = None;
+        self.dialog = None;
+        self.perms = Perms::default();
         self.pending = None;
         self.busy = false;
         self.generation += 1;
@@ -1061,6 +1220,7 @@ impl Controller {
                 self.catalog_event(&event)
             }
             Msg::Looked(generation, seq, result) => self.looked(generation, seq, result),
+            Msg::Customer(generation, reply) => self.customer_reply(generation, *reply),
             // Logout and branch failures change nothing on screen.
             _ => Vec::new(),
         }
@@ -1142,10 +1302,15 @@ impl Controller {
                 ];
                 if self.branch.is_none() {
                     effects.push(Effect::LoadBranch {
-                        token,
+                        token: token.clone(),
                         branch_id: login.branch_id.clone(),
                     });
                 }
+                effects.push(Effect::Customer {
+                    token,
+                    call: Call::Permissions,
+                    generation: self.generation,
+                });
                 self.login = Some(login);
                 // Still busy until the current session is known.
                 effects
@@ -1229,6 +1394,7 @@ impl Controller {
         match result {
             Ok(report) => {
                 self.session = None;
+                self.customer = None;
                 self.screen = Screen::Report(Box::new(report));
                 Vec::new()
             }
@@ -1568,6 +1734,54 @@ mod tests {
                 .effects
                 .is_empty()
         );
+    }
+
+    #[test]
+    fn customer_answers_of_another_login_or_an_ended_login() {
+        let mut c = at_home();
+        let keys = vec!["customer.search".to_owned()];
+        c.update(Msg::Customer(0, Box::new(Reply::Permissions(Ok(keys)))));
+        assert!(c.perms.search);
+        // An answer of an earlier login is ignored.
+        c.update(Msg::Customer(
+            9,
+            Box::new(Reply::Permissions(Ok(Vec::new()))),
+        ));
+        assert!(c.perms.search);
+        // Without the keys, only the lookup is offered.
+        let lost = ClientError::Network("x".into());
+        c.update(Msg::Customer(0, Box::new(Reply::Permissions(Err(lost)))));
+        assert_eq!(c.perms, Perms::default());
+        // The dialog was closed meanwhile: the answer only ends the wait.
+        c.busy = true;
+        c.update(Msg::Customer(
+            0,
+            Box::new(Reply::Found(Ok(Customer::default()))),
+        ));
+        assert!(!c.busy && c.dialog.is_none());
+        for msg in [Msg::PickCustomer(0), Msg::PickField(1)] {
+            assert_eq!(c.update(msg), Step::default());
+        }
+        // A payout of a customer who is not attached leaves the attached one alone.
+        c.customer = Some(Customer {
+            id: "other".into(),
+            balance: 5,
+            ..Customer::default()
+        });
+        let mut d = Dialog::new(Some(&Customer {
+            id: "shown".into(),
+            ..Customer::default()
+        }));
+        d.page = crate::customer::Page::Payout;
+        c.dialog = Some(d);
+        let paid = sultan_client::Payout::default();
+        c.update(Msg::Customer(0, Box::new(Reply::PaidOut(Ok(paid)))));
+        assert_eq!(c.customer.as_ref().map(|x| x.balance), Some(5));
+        // The login ended.
+        let ended = api(Problem::new(401, "invalid_session", "x"));
+        c.update(Msg::Customer(0, Box::new(Reply::Found(Err(ended)))));
+        assert_eq!(c.screen.name(), "lock");
+        assert!(c.customer.is_none() && c.dialog.is_none());
     }
 
     #[test]

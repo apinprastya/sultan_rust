@@ -232,6 +232,76 @@ export global BoStrings {
         if (code == "frozen_options" || code == "frozen_options_values") {
             return @tr("Options cannot be added or removed after the product was used.");
         }
+        // Customers (spec 2.5, M4).
+        if (code == "customer_search_needed") {
+            return @tr("Listing and searching customers needs the permission {}. You can still add a customer (Ctrl+N).", arg);
+        }
+        if (code == "invalid_customer_name") {
+            return @tr("Type a name (1 to 100 characters).");
+        }
+        if (code == "invalid_phone") {
+            return @tr("Not a phone number: use 8 to 15 digits, e.g. 0812-3456-789.");
+        }
+        if (code == "invalid_email") {
+            return @tr("Not an email address.");
+        }
+        if (code == "invalid_tax_id") {
+            return @tr("A tax ID (NPWP or NIK) has 15 or 16 digits.");
+        }
+        if (code == "invalid_birthday") {
+            return @tr("Not a date: type the day and the month (the year is optional).");
+        }
+        if (code == "invalid_date") {
+            return @tr("Type the date as YYYY-MM-DD, e.g. 2027-12-31.");
+        }
+        if (code == "valid_until_needs_tier") {
+            return @tr("Pick a tier first.");
+        }
+        if (code == "phone_taken") {
+            return @tr("This phone is already used by the customer {}.", arg);
+        }
+        if (code == "customer_archived") {
+            return @tr("The customer is archived. Unarchive the customer first.");
+        }
+        if (code == "customer_merged") {
+            return @tr("This customer was merged into another customer.");
+        }
+        if (code == "balance_not_zero") {
+            return @tr("Cannot erase: the balance is {}. It must be spent or paid out at the till first.", arg);
+        }
+        if (code == "customer_reference_gone") {
+            return @tr("The group or tier no longer exists. Refresh and pick again.");
+        }
+        if (code == "customer_archived_done") {
+            return @tr("The customer is archived. The till no longer finds the customer.");
+        }
+        if (code == "customer_unarchived_done") {
+            return @tr("The customer is active again.");
+        }
+        if (code == "erased_done") {
+            return @tr("The personal data is erased.");
+        }
+        if (code == "merged_done") {
+            return @tr("Merged. The customer {} was kept.", arg);
+        }
+        if (code == "merge_pick_both") {
+            return @tr("Pick the duplicate in the list and the customer to keep.");
+        }
+        if (code == "merge_same") {
+            return @tr("That is the same customer. Type the code of the customer to keep.");
+        }
+        if (code == "partner_not_found") {
+            return @tr("No active customer has this code or phone.");
+        }
+        if (code == "invalid_rank") {
+            return @tr("The rank is a whole number.");
+        }
+        if (code == "duplicate_rank") {
+            return @tr("Another tier has this rank.");
+        }
+        if (code == "invalid_amount") {
+            return @tr("Type an amount in Rupiah, 0 or more.");
+        }
         if (code == "error") {
             return @tr("Something went wrong ({}).", arg);
         }
@@ -267,6 +337,34 @@ export global BoStrings {
         if (code == "top_level") {
             return @tr("(Top level)");
         }
+        if (code == "no_group") {
+            return @tr("(No group)");
+        }
+        if (code == "no_tier") {
+            return @tr("(No tier)");
+        }
+        // Customer balance entries (spec 2.5 §11).
+        if (code == "change_saved") {
+            return @tr("Change saved");
+        }
+        if (code == "payment") {
+            return @tr("Paid with the balance");
+        }
+        if (code == "change_saved_reversed") {
+            return @tr("Saved change reversed");
+        }
+        if (code == "payment_reversed") {
+            return @tr("Payment reversed");
+        }
+        if (code == "payout") {
+            return @tr("Paid out in cash");
+        }
+        if (code == "merge_out") {
+            return @tr("Moved by a merge");
+        }
+        if (code == "merge_in") {
+            return @tr("Received by a merge");
+        }
         return code;
     }
 }
@@ -282,6 +380,8 @@ export component Field inherits VerticalLayout {
     callback edited(string);
     callback accepted();
     spacing: 3px;
+    // Next to a taller neighbour (one with an error line) the field keeps its height.
+    alignment: start;
     public function focus-edit() {
         edit.focus();
     }

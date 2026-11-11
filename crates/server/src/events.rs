@@ -9,7 +9,7 @@
 //! The upgrade request is authenticated like any other request: a bearer session token
 //! ([`UserSession`]), plus the register's device token for a PIN session. A register may also
 //! connect with its device token alone (no `Authorization`; spec 2.1 §8, decided 2026-11-11, C3b):
-//! such a socket receives only [`Audience::Everyone`] events (`catalog.changed`) and
+//! such a socket receives only [`Audience::Everyone`] events (`catalog.changed`, `price.changed`) and
 //! `events.lagged`; session-, branch- and user-scoped events need a session. Native clients (the
 //! register app)
 //! send the usual `Authorization` and `X-Register-Token` headers. Browsers cannot set headers on a
@@ -33,6 +33,10 @@
 //! - `catalog.changed`: `scope` (`product` / `category` / `brand` / `settings`), plus
 //!   `product_id`, `category_id` or `brand_id`. Every socket: the catalog is company-wide
 //!   (spec 2.2 §11), so registers drop cached lookups.
+//! - `price.changed`: `scope` (`price_list` / `price_entry` / `tax_rate` / `settings`) and
+//!   `variant_ids` (the variants an entry write touched, or `null` when any price may have
+//!   changed). Every socket (spec 2.3 §9): registers re-price open carts and refresh the shown
+//!   item.
 //! - `events.lagged`: `missed`. A socket that fell behind; refetch everything.
 //!
 //! Before each delivery the socket's own login session is checked again; once it is revoked,
@@ -127,6 +131,17 @@ impl Event {
         Self {
             kind: "catalog.changed",
             data,
+            audience: Audience::Everyone,
+        }
+    }
+
+    /// `customer.changed {customer_id}` (spec 2.5 §12) for every socket, so an open till
+    /// refreshes the attached customer. No personal data: the client reads the customer again.
+    #[must_use]
+    pub fn customer_changed(customer: uuid::Uuid) -> Self {
+        Self {
+            kind: "customer.changed",
+            data: json!({ "customer_id": customer.to_string() }),
             audience: Audience::Everyone,
         }
     }

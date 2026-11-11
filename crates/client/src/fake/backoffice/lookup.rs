@@ -190,7 +190,15 @@ impl State {
                     .map(|x| x.name.clone())
             })
             .collect();
+        let label_amount = found.amount.filter(|_| found.qty.is_none());
+        let (unit_price, label_qty) = self.lookup_price(
+            p,
+            &variant_id,
+            &unit_id,
+            label_amount.map(sultan_core::money::Money::minor),
+        );
         Ok(Lookup {
+            unit_price,
             product_id: p.id.clone(),
             variant_id,
             unit_id,
@@ -205,7 +213,10 @@ impl State {
             requires_note: p.requires_note,
             source: source_str(found.source).to_owned(),
             matched_code: matched_code(code, found.source),
-            qty_thousandths: found.qty.map(sultan_core::catalog::Qty::thousandths),
+            qty_thousandths: found
+                .qty
+                .map(sultan_core::catalog::Qty::thousandths)
+                .or(label_qty),
             amount: found.amount.map(sultan_core::money::Money::minor),
             branch_id: branch.map(str::to_owned),
         })

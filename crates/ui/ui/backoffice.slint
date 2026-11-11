@@ -1,5 +1,6 @@
 // The back-office window (phase C4, spec 2.2): login, product list, product form
-// (`bo_form.slint`), category tree and brand list. Mostly declarative: Rust
+// (`bo_form.slint`), category tree and brand list; the customer screens (spec 2.5, phase M4)
+// are in `bo_customers.slint`. Mostly declarative: Rust
 // (`crates/ui/src/backoffice_app.rs`, `crates/ui/src/backoffice/`) sets the view properties and
 // receives keys, actions, edits, toggles, choices and picks.
 //
@@ -14,8 +15,10 @@ import { Theme } from "theme.slint";
 import { Note, Card } from "widgets.slint";
 import { BoStrings, Field, SmallButton, KeyButton, Banner, SectionTitle } from "bo_widgets.slint";
 import { FormScreen, BoForm, BoGeneral, BoOption, BoValue, BoCombo, BoUnit, BoBarcode, BoComponent, BoHit, BoBranch } from "bo_form.slint";
+import { CustomersScreen, CustomerFormScreen, NamedScreen, DuplicatesScreen, NegativeScreen, BalanceSettingsScreen, EraseDialog, BoCustomerRow, BoCustomerList, BoCustomerForm, BoBalanceRow, BoNamedRow, BoNamedEditor, BoReview, BoMerge, BoBalanceSettings } from "bo_customers.slint";
 
 export { BoStrings, BoForm, BoGeneral, BoOption, BoValue, BoCombo, BoUnit, BoBarcode, BoComponent, BoHit, BoBranch }
+export { BoCustomerRow, BoCustomerList, BoCustomerForm, BoBalanceRow, BoNamedRow, BoNamedEditor, BoReview, BoMerge, BoBalanceSettings }
 
 export struct BoLogin {
     server: string,
@@ -115,6 +118,7 @@ component Header inherits Rectangle {
             { id: "nav-products", keys: "F2", label: @tr("Products"), on: root.screen == "products" || root.screen == "form" },
             { id: "nav-categories", keys: "F3", label: @tr("Categories"), on: root.screen == "categories" },
             { id: "nav-brands", keys: "F4", label: @tr("Brands"), on: root.screen == "brands" },
+            { id: "nav-customers", keys: "F6", label: @tr("Customers"), on: root.screen == "customers" || root.screen == "customer-form" || root.screen == "customer-groups" || root.screen == "customer-tiers" || root.screen == "duplicates" || root.screen == "negative-balances" || root.screen == "balance-settings" },
         ]: VerticalLayout {
             alignment: center;
             KeyButton {
@@ -804,11 +808,36 @@ export component BackOfficeWindow inherits Window {
     in property <[string]> parent-choices;
     in property <[BoTreeRow]> brand-rows;
     in property <BoBrandEditor> brand-editor;
-    // "", "discard", "archive", "unarchive", "delete-product", "delete-category" or
-    // "delete-brand".
+    // Customers (spec 2.5, M4).
+    in property <BoCustomerList> customer-list;
+    in property <[BoCustomerRow]> customer-rows;
+    in property <BoCustomerForm> customer-form;
+    in property <[BoBalanceRow]> balance-rows;
+    in property <[string]> group-choices;
+    in property <[string]> tier-choices;
+    in property <[BoNamedRow]> group-rows;
+    in property <BoNamedEditor> group-editor;
+    in property <[BoNamedRow]> tier-rows;
+    in property <BoNamedEditor> tier-editor;
+    in property <[BoCustomerRow]> duplicate-rows;
+    in property <BoReview> duplicates;
+    in property <BoMerge> merge;
+    in property <[BoCustomerRow]> negative-rows;
+    in property <BoReview> negative;
+    in property <BoBalanceSettings> balance-settings;
+    // Bumped when Rust changes customer texts under the user (the fields are rebuilt).
+    in property <int> customer-serial;
+    // "", "discard", "discard-customer", "archive", "unarchive", "delete-product",
+    // "delete-category", "delete-brand", "archive-customer", "unarchive-customer", "merge" or
+    // "erase".
     in property <string> confirm;
-    // The name of what a delete removes.
+    // The name of what a delete removes; the customer merged away; the customer to erase.
     in property <string> confirm-name;
+    // The customer kept by a merge; the code to type for an erase.
+    in property <string> confirm-other;
+    // Erase: the balance when it is not 0, and whether the typed code matches.
+    in property <string> erase-balance;
+    in property <bool> erase-ready;
     in property <string> focus-target;
     in property <int> focus-serial;
     out property <bool> has-focus: keys.has-focus;
@@ -833,6 +862,16 @@ export component BackOfficeWindow inherits Window {
 
     changed focus-serial => {
         if (root.focus-target == "list") {
+            keys.focus();
+        }
+    }
+    // The customer fields were rebuilt: the focused one is gone (see `bo_customers.slint`).
+    changed customer-serial => {
+        keys.focus();
+    }
+    // A closed dialog may have held the focus (the erase dialog's field).
+    changed confirm => {
+        if (root.confirm == "") {
             keys.focus();
         }
     }
@@ -970,10 +1009,122 @@ export component BackOfficeWindow inherits Window {
                         root.pick(k, r, s);
                     }
                 }
+                if root.screen == "customers": CustomersScreen {
+                    screen: root.screen;
+                    list: root.customer-list;
+                    rows: root.customer-rows;
+                    focus-target: root.focus-target;
+                    focus-serial: root.focus-serial;
+                    action(id) => {
+                        root.action(id);
+                    }
+                    edit(k, r, s, f, v) => {
+                        root.edit(k, r, s, f, v);
+                    }
+                    toggle(k, r, f, on) => {
+                        root.toggle(k, r, f, on);
+                    }
+                    pick(k, r, s) => {
+                        root.pick(k, r, s);
+                    }
+                }
+                if root.screen == "customer-form": CustomerFormScreen {
+                    form: root.customer-form;
+                    entries: root.balance-rows;
+                    group-choices: root.group-choices;
+                    tier-choices: root.tier-choices;
+                    serial: root.customer-serial;
+                    focus-target: root.focus-target;
+                    focus-serial: root.focus-serial;
+                    action(id) => {
+                        root.action(id);
+                    }
+                    edit(k, r, s, f, v) => {
+                        root.edit(k, r, s, f, v);
+                    }
+                    toggle(k, r, f, on) => {
+                        root.toggle(k, r, f, on);
+                    }
+                    choose(k, r, f, i) => {
+                        root.choose(k, r, f, i);
+                    }
+                }
+                if root.screen == "customer-groups" || root.screen == "customer-tiers": NamedScreen {
+                    screen: root.screen;
+                    tiers: root.screen == "customer-tiers";
+                    rows: root.screen == "customer-tiers" ? root.tier-rows : root.group-rows;
+                    editor: root.screen == "customer-tiers" ? root.tier-editor : root.group-editor;
+                    serial: root.customer-serial;
+                    focus-target: root.focus-target;
+                    focus-serial: root.focus-serial;
+                    action(id) => {
+                        root.action(id);
+                    }
+                    edit(k, r, s, f, v) => {
+                        root.edit(k, r, s, f, v);
+                    }
+                    pick(k, r, s) => {
+                        root.pick(k, r, s);
+                    }
+                }
+                if root.screen == "duplicates": DuplicatesScreen {
+                    screen: root.screen;
+                    rows: root.duplicate-rows;
+                    review: root.duplicates;
+                    merge: root.merge;
+                    serial: root.customer-serial;
+                    focus-target: root.focus-target;
+                    focus-serial: root.focus-serial;
+                    action(id) => {
+                        root.action(id);
+                    }
+                    edit(k, r, s, f, v) => {
+                        root.edit(k, r, s, f, v);
+                    }
+                    pick(k, r, s) => {
+                        root.pick(k, r, s);
+                    }
+                }
+                if root.screen == "negative-balances": NegativeScreen {
+                    screen: root.screen;
+                    rows: root.negative-rows;
+                    review: root.negative;
+                    action(id) => {
+                        root.action(id);
+                    }
+                    pick(k, r, s) => {
+                        root.pick(k, r, s);
+                    }
+                }
+                if root.screen == "balance-settings": BalanceSettingsScreen {
+                    screen: root.screen;
+                    settings: root.balance-settings;
+                    serial: root.customer-serial;
+                    focus-target: root.focus-target;
+                    focus-serial: root.focus-serial;
+                    action(id) => {
+                        root.action(id);
+                    }
+                    edit(k, r, s, f, v) => {
+                        root.edit(k, r, s, f, v);
+                    }
+                }
             }
         }
 
-        if root.confirm != "": Rectangle {
+        if root.confirm == "erase": EraseDialog {
+            name: root.confirm-name;
+            code: root.confirm-other;
+            balance: root.erase-balance;
+            ready: root.erase-ready;
+            action(id) => {
+                root.action(id);
+            }
+            edit(k, r, s, f, v) => {
+                root.edit(k, r, s, f, v);
+            }
+        }
+        if root.confirm != "" && root.confirm != "erase": Rectangle {
             background: Theme.scrim;
             TouchArea { }
             Card {
@@ -983,13 +1134,14 @@ export component BackOfficeWindow inherits Window {
                     padding: 24px;
                     spacing: 16px;
                     Text {
-                        text: root.confirm == "discard" ? @tr("Discard your changes?") : root.confirm == "archive" ? @tr("Archive this product?") : root.confirm == "unarchive" ? @tr("Unarchive this product?") : root.confirm == "delete-product" ? @tr("Delete the product {}?", root.confirm-name) : root.confirm == "delete-category" ? @tr("Delete the category {}?", root.confirm-name) : @tr("Delete the brand {}?", root.confirm-name);
+                        text: root.confirm == "discard" || root.confirm == "discard-customer" ? @tr("Discard your changes?") : root.confirm == "archive" ? @tr("Archive this product?") : root.confirm == "unarchive" ? @tr("Unarchive this product?") : root.confirm == "archive-customer" ? @tr("Archive the customer {}?", root.confirm-name) : root.confirm == "unarchive-customer" ? @tr("Unarchive the customer {}?", root.confirm-name) : root.confirm == "merge" ? @tr("Merge {} into {}?", root.confirm-name, root.confirm-other) : root.confirm == "delete-product" ? @tr("Delete the product {}?", root.confirm-name) : root.confirm == "delete-category" ? @tr("Delete the category {}?", root.confirm-name) : @tr("Delete the brand {}?", root.confirm-name);
                         color: Theme.text;
                         font-size: 18px;
                         font-weight: 700;
+                        wrap: word-wrap;
                     }
                     Text {
-                        text: root.confirm == "discard" ? @tr("The product has unsaved changes. They are lost if you leave now.") : root.confirm == "archive" ? @tr("Archived products cannot be sold or bought; they stay in history and reports.") : root.confirm == "unarchive" ? @tr("The product can be sold and bought again.") : @tr("Only an entry that was never used can be deleted, e.g. a typo. Deleting cannot be undone; anything in use must be archived instead.");
+                        text: root.confirm == "discard" ? @tr("The product has unsaved changes. They are lost if you leave now.") : root.confirm == "discard-customer" ? @tr("The customer has unsaved changes. They are lost if you leave now.") : root.confirm == "archive" ? @tr("Archived products cannot be sold or bought; they stay in history and reports.") : root.confirm == "unarchive" ? @tr("The product can be sold and bought again.") : root.confirm == "archive-customer" ? @tr("The till no longer finds an archived customer. Sales and the balance stay; unarchive brings the customer back.") : root.confirm == "unarchive-customer" ? @tr("The till finds the customer again.") : root.confirm == "merge" ? @tr("{1} keeps its own details; only its empty fields are filled from {0} (the phone too when {1} has none), and its group and tier when it has none. The balance of {0} moves to {1}. {0} is archived; its code and phone still find {1} at the till. This cannot be undone.", root.confirm-name, root.confirm-other) : @tr("Only an entry that was never used can be deleted, e.g. a typo. Deleting cannot be undone; anything in use must be archived instead.");
                         color: Theme.muted;
                         wrap: word-wrap;
                     }
@@ -1005,7 +1157,7 @@ export component BackOfficeWindow inherits Window {
                         }
                         KeyButton {
                             keys: "Enter";
-                            text: root.confirm == "discard" ? @tr("Discard") : root.confirm == "delete-product" || root.confirm == "delete-category" || root.confirm == "delete-brand" ? @tr("Delete") : @tr("Yes");
+                            text: root.confirm == "discard" || root.confirm == "discard-customer" ? @tr("Discard") : root.confirm == "merge" ? @tr("Merge") : root.confirm == "delete-product" || root.confirm == "delete-category" || root.confirm == "delete-brand" ? @tr("Delete") : @tr("Yes");
                             primary: true;
                             clicked => {
                                 root.action("confirm-yes");

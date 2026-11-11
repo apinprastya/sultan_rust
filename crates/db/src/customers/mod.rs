@@ -37,12 +37,13 @@ pub use crate::catalog::{Actor, Written};
 pub use balance::{
     BalanceEntry, BalanceEntryKind, CustomerBalance, CustomerBalanceSettings, MAX_ENTRY_PAGE,
     append_balance_entry, get_balance, get_balance_settings, ledger_balance, put_balance_settings,
+    session_payouts,
 };
 pub use customer::{
     Birthday, Customer, CustomerRecord, ERASED_NAME, MAX_PAGE, MAX_SEARCH_PAGE, archive_customer,
-    erase_customer, get_customer, list_duplicates, list_negative_balances, lookup_by_code,
-    lookup_by_phone, merge_customers, put_customer, put_synced_customer, search_customers,
-    unarchive_customer,
+    erase_customer, get_customer, list_customers, list_duplicates, list_negative_balances,
+    lookup_by_code, lookup_by_phone, merge_customers, put_customer, put_synced_customer,
+    search_customers, unarchive_customer,
 };
 pub use groups::{
     CustomerGroup, MembershipTier, archive_group, archive_tier, get_group, get_tier, list_groups,

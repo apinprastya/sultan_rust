@@ -16,7 +16,7 @@ export { SetupWindow, SetupForm, SetupStrings } from "setup.slint";
 // The Start screen of a single app or a terminal, a window of its own.
 export { StartWindow, StartStrings } from "start.slint";
 // The back office (phase C4), a window of its own.
-export { BackOfficeWindow, BoStrings, BoLogin, BoList, BoProductRow, BoTreeRow, BoCategoryEditor, BoBrandEditor, BoForm, BoGeneral, BoOption, BoValue, BoCombo, BoUnit, BoBarcode, BoComponent, BoHit, BoBranch } from "backoffice.slint";
+export { BackOfficeWindow, BoStrings, BoLogin, BoList, BoProductRow, BoTreeRow, BoCategoryEditor, BoBrandEditor, BoForm, BoGeneral, BoOption, BoValue, BoCombo, BoUnit, BoBarcode, BoComponent, BoHit, BoBranch, BoCustomerRow, BoCustomerList, BoCustomerForm, BoBalanceRow, BoNamedRow, BoNamedEditor, BoReview, BoMerge, BoBalanceSettings } from "backoffice.slint";
 
 export struct UserTile {
     name: string,
@@ -45,6 +45,44 @@ export struct HomeView {
     number: string,
     since: string,
     opening: string,
+    note: Note,
+    // The attached customer's receipt line (spec 2.5 §10), member code and balance; "" = none.
+    customer: string,
+    customer-code: string,
+    customer-balance: string,
+}
+
+// A name-search result in the customer dialog.
+export struct CustomerRow {
+    name: string,
+    detail: string,
+}
+
+// The customer dialog (spec 2.5 M5; `crates/ui/src/customer.rs`).
+// page: find, shown, sign-up, payout.
+export struct CustomerView {
+    open: bool,
+    page: string,
+    by-name: bool,
+    can-search: bool,
+    query: string,
+    cursor: int,
+    name: string,
+    company: string,
+    code: string,
+    phone: string,
+    group: string,
+    tier: string,
+    tier-until: string,
+    tier-expired: bool,
+    balance: string,
+    line: string,
+    attached: bool,
+    field: int,
+    new-name: string,
+    new-phone: string,
+    amount: string,
+    confirm: bool,
     note: Note,
 }
 
@@ -682,6 +720,61 @@ component ItemPanel inherits Card {
     }
 }
 
+// The attached customer on the session home; a click opens the customer dialog.
+component CustomerStrip inherits Rectangle {
+    in property <HomeView> view;
+    callback clicked;
+    accessible-role: button;
+    accessible-label: root.view.customer != "" ? @tr("Attached customer") : @tr("No customer attached");
+    accessible-value: root.view.customer;
+    accessible-action-default => { root.clicked(); }
+    height: 56px;
+    border-radius: 12px;
+    border-width: 1px;
+    border-color: root.view.customer != "" ? Theme.success : Theme.border;
+    background: touch.has-hover ? Theme.raised : Theme.panel;
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => {
+            root.clicked();
+        }
+    }
+    HorizontalLayout {
+        padding-left: 16px;
+        padding-right: 16px;
+        spacing: 14px;
+        Text {
+            text: @tr("CUSTOMER");
+            color: Theme.muted;
+            font-size: 11px;
+            font-weight: 700;
+            vertical-alignment: center;
+        }
+        Text {
+            horizontal-stretch: 1;
+            text: root.view.customer != "" ? root.view.customer : @tr("None. F3 finds a customer or signs one up.");
+            color: root.view.customer != "" ? Theme.text : Theme.muted;
+            font-size: root.view.customer != "" ? 18px : 14px;
+            font-weight: root.view.customer != "" ? 600 : 400;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+        if root.view.customer-code != "": Text {
+            text: root.view.customer-code;
+            color: Theme.muted;
+            font-size: 13px;
+            vertical-alignment: center;
+        }
+        if root.view.customer != "": Text {
+            text: @tr("Balance {}", root.view.customer-balance);
+            color: Theme.text;
+            font-size: 15px;
+            font-weight: 700;
+            vertical-alignment: center;
+        }
+    }
+}
+
 component HomePage inherits Rectangle {
     in property <string> user;
     in property <HomeView> view;
@@ -715,6 +808,12 @@ component HomePage inherits Rectangle {
                 Stat {
                     label: @tr("Opening cash");
                     value: root.view.opening;
+                }
+            }
+            CustomerStrip {
+                view: root.view;
+                clicked => {
+                    root.action("customer");
                 }
             }
             ScanBox {
@@ -751,6 +850,373 @@ component HomePage inherits Rectangle {
             }
             Rectangle {
                 vertical-stretch: 1;
+            }
+        }
+    }
+}
+
+// A text field of the customer dialog: drawn here, edited in Rust like the barcode field.
+component TypedField inherits Rectangle {
+    in property <string> label;
+    in property <string> value;
+    in property <string> placeholder;
+    in property <bool> focused: true;
+    callback clicked;
+    accessible-role: text-input;
+    accessible-label: root.label;
+    accessible-value: root.value;
+    height: 64px;
+    border-radius: 12px;
+    border-width: root.focused ? 2px : 1px;
+    border-color: root.focused ? Theme.accent : Theme.border;
+    background: Theme.bg;
+    TouchArea {
+        clicked => {
+            root.clicked();
+        }
+    }
+    VerticalLayout {
+        padding-left: 14px;
+        padding-right: 14px;
+        alignment: center;
+        spacing: 2px;
+        Text {
+            text: root.label;
+            color: Theme.muted;
+            font-size: 12px;
+            font-weight: 700;
+        }
+        HorizontalLayout {
+            spacing: 2px;
+            alignment: start;
+            if root.value != "": Text {
+                text: root.value;
+                color: Theme.text;
+                font-size: 20px;
+                font-weight: 600;
+                vertical-alignment: center;
+                overflow: elide;
+            }
+            if root.focused: VerticalLayout {
+                alignment: center;
+                Rectangle {
+                    width: 2px;
+                    height: 22px;
+                    background: Theme.accent;
+                }
+            }
+            if root.value == "": Text {
+                text: root.placeholder;
+                color: Theme.muted;
+                font-size: 15px;
+                vertical-alignment: center;
+                overflow: elide;
+            }
+        }
+    }
+}
+
+component CustomerLine inherits Rectangle {
+    in property <CustomerRow> item;
+    in property <bool> selected;
+    callback clicked;
+    accessible-role: button;
+    accessible-label: root.item.name;
+    accessible-action-default => { root.clicked(); }
+    height: 54px;
+    border-radius: 10px;
+    background: root.selected ? Theme.accent-soft : touch.has-hover ? Theme.border : transparent;
+    border-width: root.selected ? 2px : 0px;
+    border-color: Theme.accent;
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => {
+            root.clicked();
+        }
+    }
+    VerticalLayout {
+        padding-left: 12px;
+        padding-right: 12px;
+        alignment: center;
+        spacing: 2px;
+        Text {
+            text: root.item.name;
+            color: Theme.text;
+            font-size: 16px;
+            font-weight: 600;
+            overflow: elide;
+        }
+        Text {
+            text: root.item.detail;
+            color: Theme.muted;
+            font-size: 13px;
+            overflow: elide;
+        }
+    }
+}
+
+// The customer dialog (spec 2.5 M5): find, the found customer, sign-up, balance payout. Keys go
+// to Rust like everywhere else; the chips are the dialog's keys.
+component CustomerDialog inherits Rectangle {
+    in property <CustomerView> view;
+    in property <[CustomerRow]> rows;
+    in property <[Chip]> chips;
+    callback key(string);
+    callback pick(string, int);
+    callback action(string);
+    background: Theme.scrim;
+    TouchArea { }
+    Card {
+        width: min(root.width - 48px, 820px);
+        height: min(root.height - 48px, 620px);
+        background: Theme.raised;
+        VerticalLayout {
+            padding: 26px;
+            spacing: 14px;
+            if root.view.page == "find": VerticalLayout {
+                vertical-stretch: 1;
+                spacing: 12px;
+                Title {
+                    text: @tr("Find a customer");
+                    font-size: 22px;
+                }
+                Subtitle {
+                    text: root.view.by-name ? @tr("Type part of the name or the company name, then press Enter.") : @tr("Type the phone number or the member code, or scan the member card, then press Enter.");
+                }
+                TypedField {
+                    label: root.view.by-name ? @tr("Name") : @tr("Phone or member code");
+                    value: root.view.query;
+                    placeholder: root.view.by-name ? @tr("e.g. Budi") : @tr("e.g. 0812 3456 789 or K7QH-29XM");
+                }
+                if root.view.by-name: Flickable {
+                    vertical-stretch: 1;
+                    content-height: root.rows.length * 58px;
+                    for r[i] in root.rows: CustomerLine {
+                        y: i * 58px;
+                        width: parent.width;
+                        item: r;
+                        selected: i == root.view.cursor;
+                        clicked => {
+                            root.pick("customer", i);
+                        }
+                    }
+                }
+                if !root.view.by-name: Rectangle {
+                    vertical-stretch: 1;
+                }
+            }
+            if root.view.page == "shown": VerticalLayout {
+                vertical-stretch: 1;
+                spacing: 14px;
+                HorizontalLayout {
+                    spacing: 12px;
+                    VerticalLayout {
+                        horizontal-stretch: 1;
+                        spacing: 2px;
+                        Title {
+                            text: root.view.name;
+                            overflow: elide;
+                        }
+                        if root.view.company != "": Subtitle {
+                            text: root.view.company;
+                        }
+                    }
+                    if root.view.attached: VerticalLayout {
+                        alignment: start;
+                        Badge {
+                            text: @tr("Attached");
+                            tint: Theme.success;
+                        }
+                    }
+                }
+                HorizontalLayout {
+                    spacing: 16px;
+                    Field {
+                        horizontal-stretch: 1;
+                        label: @tr("Member code");
+                        value: root.view.code;
+                    }
+                    Field {
+                        horizontal-stretch: 1;
+                        label: @tr("Phone");
+                        value: root.view.phone;
+                    }
+                    Field {
+                        horizontal-stretch: 1;
+                        label: @tr("Group");
+                        value: root.view.group;
+                    }
+                }
+                HorizontalLayout {
+                    spacing: 16px;
+                    VerticalLayout {
+                        horizontal-stretch: 1;
+                        alignment: center;
+                        spacing: 2px;
+                        Text {
+                            text: @tr("Tier");
+                            color: Theme.muted;
+                            font-size: 12px;
+                        }
+                        Text {
+                            text: root.view.tier == "" ? "–" : root.view.tier-expired ? @tr("{} (expired {})", root.view.tier, root.view.tier-until) : root.view.tier-until != "" ? @tr("{} · until {}", root.view.tier, root.view.tier-until) : root.view.tier;
+                            color: root.view.tier-expired ? Theme.warn : Theme.text;
+                            font-size: 18px;
+                            font-weight: 600;
+                            overflow: elide;
+                        }
+                    }
+                    Stat {
+                        label: @tr("Balance");
+                        value: root.view.balance;
+                    }
+                }
+                Rectangle {
+                    height: 44px;
+                    border-radius: 10px;
+                    background: Theme.bg;
+                    HorizontalLayout {
+                        padding-left: 12px;
+                        padding-right: 12px;
+                        spacing: 12px;
+                        Text {
+                            text: @tr("On the receipt");
+                            color: Theme.muted;
+                            font-size: 13px;
+                            vertical-alignment: center;
+                        }
+                        Text {
+                            horizontal-stretch: 1;
+                            text: root.view.line;
+                            color: Theme.text;
+                            font-size: 15px;
+                            vertical-alignment: center;
+                            overflow: elide;
+                        }
+                    }
+                }
+                Text {
+                    text: @tr("RECENT RECEIPTS");
+                    color: Theme.muted;
+                    font-size: 12px;
+                    font-weight: 700;
+                }
+                Subtitle {
+                    text: @tr("No receipts yet. The 5 most recent receipts show here once selling arrives.");
+                }
+                Rectangle {
+                    vertical-stretch: 1;
+                }
+            }
+            if root.view.page == "sign-up": VerticalLayout {
+                vertical-stretch: 1;
+                spacing: 12px;
+                Title {
+                    text: @tr("New customer");
+                    font-size: 22px;
+                }
+                Subtitle {
+                    text: @tr("Type the name and, if the customer wants, the phone number. The member code is given automatically. Tab moves to the next field.");
+                }
+                TypedField {
+                    label: @tr("Name");
+                    value: root.view.new-name;
+                    placeholder: @tr("Full name");
+                    focused: root.view.field == 0;
+                    clicked => {
+                        root.pick("field", 0);
+                    }
+                }
+                TypedField {
+                    label: @tr("Phone (optional)");
+                    value: root.view.new-phone;
+                    placeholder: @tr("e.g. 0812 3456 789");
+                    focused: root.view.field == 1;
+                    clicked => {
+                        root.pick("field", 1);
+                    }
+                }
+                Rectangle {
+                    vertical-stretch: 1;
+                }
+            }
+            if root.view.page == "payout": HorizontalLayout {
+                vertical-stretch: 1;
+                spacing: 24px;
+                VerticalLayout {
+                    horizontal-stretch: 1;
+                    spacing: 12px;
+                    Title {
+                        text: @tr("Pay out the balance");
+                        font-size: 22px;
+                    }
+                    Subtitle {
+                        text: @tr("{} has a balance of {}. The amount is paid in cash from your drawer.", root.view.name, root.view.balance);
+                    }
+                    Rectangle {
+                        accessible-role: text-input;
+                        accessible-label: @tr("Amount to pay out");
+                        accessible-value: root.view.amount;
+                        height: 84px;
+                        border-radius: 12px;
+                        background: Theme.bg;
+                        border-width: 2px;
+                        border-color: root.view.confirm ? Theme.border : Theme.accent;
+                        Text {
+                            text: root.view.amount;
+                            color: Theme.text;
+                            font-size: 40px;
+                            font-weight: 700;
+                        }
+                    }
+                    if root.view.confirm: Rectangle {
+                        border-radius: 12px;
+                        border-width: 1px;
+                        border-color: Theme.warn;
+                        background: Theme.panel;
+                        VerticalLayout {
+                            padding: 14px;
+                            spacing: 4px;
+                            Text {
+                                text: @tr("Pay out {} in cash to {}?", root.view.amount, root.view.name);
+                                color: Theme.text;
+                                font-size: 17px;
+                                font-weight: 700;
+                                wrap: word-wrap;
+                            }
+                            Subtitle {
+                                text: @tr("Enter pays out. Esc changes the amount.");
+                            }
+                        }
+                    }
+                    Rectangle {
+                        vertical-stretch: 1;
+                    }
+                }
+                VerticalLayout {
+                    width: 280px;
+                    alignment: start;
+                    Keypad {
+                        key(k) => {
+                            root.key(k);
+                        }
+                    }
+                }
+            }
+            NoteLine {
+                note: root.view.note;
+                horizontal-alignment: left;
+            }
+            HorizontalLayout {
+                spacing: 10px;
+                alignment: end;
+                for c in root.chips: KeyChip {
+                    keys: c.keys;
+                    label: Strings.chip(c.label);
+                    clicked => {
+                        root.action(c.id);
+                    }
+                }
             }
         }
     }
@@ -1166,13 +1632,15 @@ export component MainWindow inherits Window {
     in property <ReportView> report;
     in property <[UserTile]> managers;
     in property <OverrideView> approval;
+    in property <CustomerView> customer;
+    in property <[CustomerRow]> customers;
     out property <bool> has-focus: keys.has-focus;
 
     // A key (Slint key text and modifiers); true = handled.
     callback key(string, bool, bool) -> bool;
     // A chip or button (`crates/ui/src/controller.rs` `Action` IDs).
     callback action(string);
-    // A click on a list item: kind (`user`, `approver`, `row`) and index.
+    // A click on a list item: kind (`user`, `approver`, `row`, `customer`, `field`) and index.
     callback pick(string, int);
     // Results of background calls are waiting (posted from other threads).
     callback pump();
@@ -1278,6 +1746,23 @@ export component MainWindow inherits Window {
                         }
                     }
                 }
+            }
+        }
+
+        if root.customer.open: CustomerDialog {
+            width: 100%;
+            height: 100%;
+            view: root.customer;
+            rows: root.customers;
+            chips: root.chips;
+            key(k) => {
+                root.key(k, false, false);
+            }
+            pick(kind, i) => {
+                root.pick(kind, i);
+            }
+            action(a) => {
+                root.action(a);
             }
         }
 

@@ -16,7 +16,7 @@ use sultan_core::access::{
     Assignment, BranchScope, Grant, Permission, PermissionSet, effective_permissions,
     ensure_active_owner_remains, ensure_can_grant, scope_permissions,
 };
-use sultan_core::ids::BranchId;
+use sultan_core::ids::{BranchId, RoleId};
 use sultan_db::roles::UserAccess;
 use sultan_db::{Db, Tx, roles, seed, users};
 
@@ -159,6 +159,15 @@ impl Caller {
             .filter(|b| self.at_scope(BranchScope::Branch(*b)).contains(permission))
             .collect();
         Some(branches.into_iter().collect())
+    }
+
+    /// Whether the caller holds the (non-archived) role `role` through an assignment that covers
+    /// `branch`. Used where the spec names a role rather than a permission, e.g. "Owner only" for
+    /// writing off a negative customer balance (spec 2.5 §11).
+    #[must_use]
+    pub fn has_role_at(&self, role: RoleId, branch: BranchId) -> bool {
+        self.live_assignments()
+            .any(|a| a.role == role && a.scope.applies_to(branch))
     }
 
     /// The caller's permissions everywhere in `scope` (`core::access::scope_permissions`).

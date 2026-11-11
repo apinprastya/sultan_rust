@@ -41,6 +41,7 @@ db_tests!(
     groups,
     tiers,
     customer_permissions_on_a_fresh_database,
+    list_and_session_payouts,
 );
 
 /// A `YYYYMMDD` day.
@@ -1294,4 +1295,64 @@ async fn mysql_upgrade_adds_customer_grants() {
     old_migrator("mysql").await.run(pool).await.unwrap();
     upgrade_adds_customer_grants(&test_db.db).await;
     test_db.drop().await;
+}
+
+/// Phase M3 additions: the back-office list and the cash a session paid out.
+async fn list_and_session_payouts(db: &Db) {
+    let o = org(db).await;
+    let act = actor(&o);
+    let a = customer("LISTAAAA", "Zed", None, &o);
+    let b = customer("LISTBBBB", "Adi", None, &o);
+    for c in [&a, &b] {
+        put(db, &o, c).await.unwrap();
+    }
+    commit!(db, |tx| cust::archive_customer(&mut tx, a.id, &act, t(40))).unwrap();
+    let names = |list: Vec<CustomerRecord>| -> Vec<String> {
+        list.into_iter().map(|r| r.customer.name).collect()
+    };
+    assert_eq!(
+        names(cust::list_customers(db, false, 0, 0).await.unwrap()),
+        ["Adi"]
+    );
+    assert_eq!(
+        names(cust::list_customers(db, true, 0, 0).await.unwrap()),
+        ["Adi", "Zed"]
+    );
+    assert_eq!(
+        names(cust::list_customers(db, true, 1, 1).await.unwrap()),
+        ["Zed"]
+    );
+
+    let session = sultan_core::ids::CashierSessionId::generate();
+    assert_eq!(
+        cust::session_payouts(db, session).await.unwrap(),
+        Money::ZERO
+    );
+    entry(db, b.id, BalanceEntryKind::ChangeSaved, 5_000)
+        .await
+        .unwrap();
+    for amount in [-2_000, -500] {
+        let e = BalanceEntry {
+            cashier_session: Some(session),
+            ..BalanceEntry::new(
+                b.id,
+                BalanceEntryKind::Payout,
+                Money::from_minor(amount),
+                t(50),
+            )
+        };
+        commit!(db, |tx| cust::append_balance_entry(&mut tx, &e, t(50))).unwrap();
+    }
+    // A payout outside the session is not counted.
+    let other = BalanceEntry::new(
+        b.id,
+        BalanceEntryKind::Payout,
+        Money::from_minor(-100),
+        t(51),
+    );
+    commit!(db, |tx| cust::append_balance_entry(&mut tx, &other, t(51))).unwrap();
+    assert_eq!(
+        cust::session_payouts(db, session).await.unwrap(),
+        Money::from_minor(2_500)
+    );
 }

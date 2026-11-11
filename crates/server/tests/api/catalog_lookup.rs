@@ -54,6 +54,7 @@ async fn lookup_by_device_token_or_session(h: &Harness) {
             "qty_thousandths": 1000,
             "amount": null,
             "branch_id": h.jkt.id.to_string(),
+            "unit_price": null,
         })
     );
     // The query cannot move a register to another branch.

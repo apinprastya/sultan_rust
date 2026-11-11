@@ -22,19 +22,23 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use slint::{ComponentHandle, Model, ModelRc, SharedString, VecModel};
-use sultan_client::{BackOffice, EventSink};
+use sultan_client::customers::{CUSTOMER_CREATE, CUSTOMER_ERASE, CUSTOMER_MANAGE, CUSTOMER_SEARCH};
+use sultan_client::{BackOffice, Customer, EventSink};
 use sultan_core::catalog::{ProductType, UnitKind};
 use tokio::runtime::Handle;
 
 use crate::app::{Runner, Watchers};
+use crate::backoffice::customers::{self, Call, CustomerForm, Reply};
 use crate::backoffice::form::{FormError, ProductForm, Tab};
 use crate::backoffice::{Confirm, Controller, Deletable, Effect, Msg, Press, Screen, TYPES};
 use crate::controller::Notice;
 use crate::{
-    BackOfficeWindow, BoBarcode, BoBranch, BoBrandEditor, BoCategoryEditor, BoCombo, BoComponent,
-    BoForm, BoGeneral, BoHit, BoList, BoLogin, BoOption, BoProductRow, BoTreeRow, BoUnit, BoValue,
-    Note,
+    BackOfficeWindow, BoBalanceRow, BoBalanceSettings, BoBarcode, BoBranch, BoBrandEditor,
+    BoCategoryEditor, BoCombo, BoComponent, BoCustomerForm, BoCustomerList, BoCustomerRow, BoForm,
+    BoGeneral, BoHit, BoList, BoLogin, BoMerge, BoNamedEditor, BoNamedRow, BoOption, BoProductRow,
+    BoReview, BoTreeRow, BoUnit, BoValue, Note,
 };
+use crate::{amount, input};
 
 /// What the back-office window needs besides the service.
 #[derive(Debug, Clone)]
@@ -124,6 +128,14 @@ struct Models {
     category_rows: Rc<VecModel<BoTreeRow>>,
     parent_choices: Rc<VecModel<SharedString>>,
     brand_rows: Rc<VecModel<BoTreeRow>>,
+    customer_rows: Rc<VecModel<BoCustomerRow>>,
+    balance_rows: Rc<VecModel<BoBalanceRow>>,
+    group_choices: Rc<VecModel<SharedString>>,
+    tier_choices: Rc<VecModel<SharedString>>,
+    group_rows: Rc<VecModel<BoNamedRow>>,
+    tier_rows: Rc<VecModel<BoNamedRow>>,
+    duplicate_rows: Rc<VecModel<BoCustomerRow>>,
+    negative_rows: Rc<VecModel<BoCustomerRow>>,
 }
 
 struct State {
@@ -302,8 +314,76 @@ fn start(service: &dyn BackOffice, effect: &Effect) -> Option<MsgFuture> {
             call!(future, move |r| Msg::Deleted(what, r))
         }
         Effect::Logout(token) => call!(service.logout(token), Msg::LoggedOut),
+        Effect::Customers { token, call } => Some(start_customer(service, token, call)),
         Effect::WatchEvents { .. } | Effect::Debounce(_) | Effect::ReadFile(_) | Effect::Exit => {
             None
+        }
+    }
+}
+
+/// Starts a customer call (spec 2.5, M4); the answer comes back as [`Msg::Customers`].
+fn start_customer(service: &dyn BackOffice, token: &str, call: &Call) -> MsgFuture {
+    macro_rules! call {
+        ($future:expr, $reply:expr) => {{
+            let future = $future;
+            let wrap = $reply;
+            Box::pin(async move { Msg::Customers(Box::new(wrap(future.await))) }) as MsgFuture
+        }};
+    }
+    match call {
+        Call::Search { query, append } => {
+            let append = *append;
+            call!(service.search_customers(token, query), move |r| {
+                Reply::Page(append, r)
+            })
+        }
+        Call::Get(id) => call!(service.customer(token, id), Reply::Opened),
+        Call::Balance(id) => {
+            let id = id.clone();
+            call!(service.customer_balance(token, &id, None), move |r| {
+                Reply::Balance(id, r)
+            })
+        }
+        Call::Put { id, body } => call!(service.put_customer(token, id, body), Reply::Saved),
+        Call::SetArchived { id, archived, key } => call!(
+            service.set_customer_archived(token, id, *archived, key),
+            Reply::Archived
+        ),
+        Call::Merge { into, from, key } => {
+            call!(
+                service.merge_customer(token, into, from, key),
+                Reply::Merged
+            )
+        }
+        Call::Erase { id, key } => call!(service.erase_customer(token, id, key), Reply::Erased),
+        Call::Duplicates(page) => call!(service.customer_duplicates(token, *page), |r| {
+            Reply::Review(false, r)
+        }),
+        Call::Negative(page) => call!(service.negative_balances(token, *page), |r| {
+            Reply::Review(true, r)
+        }),
+        Call::Groups(all) => call!(service.customer_groups(token, *all), Reply::Groups),
+        Call::Tiers(all) => call!(service.membership_tiers(token, *all), Reply::Tiers),
+        Call::PutGroup { id, body } => {
+            call!(
+                service.put_customer_group(token, id, body),
+                Reply::GroupSaved
+            )
+        }
+        Call::PutTier { id, body } => {
+            call!(
+                service.put_membership_tier(token, id, body),
+                Reply::TierSaved
+            )
+        }
+        Call::Settings => call!(service.customer_balance_settings(token), Reply::Settings),
+        Call::PutSettings(body) => call!(
+            service.put_customer_balance_settings(token, body),
+            Reply::SettingsSaved
+        ),
+        Call::FindByCode(code) => call!(service.customer_by_code(token, code), Reply::Partner),
+        Call::FindByPhone(phone) => {
+            call!(service.customer_by_phone(token, phone), Reply::Partner)
         }
     }
 }
@@ -499,7 +579,14 @@ fn render(ui: &BackOfficeWindow, c: &Controller, state: &State) {
     let models = &state.models;
     let screen = c.screen();
     ui.set_screen(screen.name().into());
-    ui.set_busy(c.busy || c.list.loading || c.form.as_ref().is_some_and(|f| f.saving));
+    let cs = &c.customers;
+    ui.set_busy(
+        c.busy
+            || c.list.loading
+            || c.form.as_ref().is_some_and(|f| f.saving)
+            || cs.list.loading
+            || cs.form.as_ref().is_some_and(|f| f.saving),
+    );
     ui.set_server(state.options.server.as_str().into());
     ui.set_user_name(
         c.session
@@ -533,6 +620,7 @@ fn render(ui: &BackOfficeWindow, c: &Controller, state: &State) {
     ui.set_confirm(
         match c.confirm {
             None => "",
+            Some(Confirm::Discard(_)) if screen == Screen::CustomerForm => "discard-customer",
             Some(Confirm::Discard(_)) => "discard",
             Some(Confirm::Archive) if c.form.as_ref().is_some_and(|f| f.form.archived) => {
                 "unarchive"
@@ -541,16 +629,20 @@ fn render(ui: &BackOfficeWindow, c: &Controller, state: &State) {
             Some(Confirm::Delete(Deletable::Product)) => "delete-product",
             Some(Confirm::Delete(Deletable::Category)) => "delete-category",
             Some(Confirm::Delete(Deletable::Brand)) => "delete-brand",
+            Some(Confirm::CustomerArchive)
+                if cs.form.as_ref().is_some_and(CustomerForm::archived) =>
+            {
+                "unarchive-customer"
+            }
+            Some(Confirm::CustomerArchive) => "archive-customer",
+            Some(Confirm::Merge) => "merge",
+            Some(Confirm::Erase) => "erase",
         }
         .into(),
     );
-    ui.set_confirm_name(
-        c.deleting
-            .as_ref()
-            .map(|(_, name)| name.as_str())
-            .unwrap_or_default()
-            .into(),
-    );
+    let (name, other) = confirm_names(c);
+    ui.set_confirm_name(name.into());
+    ui.set_confirm_other(other.into());
 
     // Product list.
     let r = &c.reference;
@@ -661,6 +753,320 @@ fn render(ui: &BackOfficeWindow, c: &Controller, state: &State) {
     {
         render_form(ui, c, f, state);
     }
+    if customers::in_section(screen) {
+        render_customers(ui, c, state);
+    }
+}
+
+/// `Budi Santoso (K7QH-29XM)`.
+fn who(customer: &Customer) -> String {
+    format!("{} ({})", customer.name, customer.display_code)
+}
+
+/// The names the confirmation dialog shows: what a delete removes, the customer an archive,
+/// merge (B, then A) or erase (name, then the code to type) is about.
+fn confirm_names(c: &Controller) -> (String, String) {
+    let form = c.customers.form.as_ref().and_then(|f| f.stored.as_ref());
+    match c.confirm {
+        Some(Confirm::CustomerArchive) => (form.map(who).unwrap_or_default(), String::new()),
+        Some(Confirm::Erase) => form.map_or_else(Default::default, |f| {
+            (f.name.clone(), f.display_code.clone())
+        }),
+        Some(Confirm::Merge) => {
+            let m = &c.customers.merge;
+            (
+                m.from.as_ref().map(who).unwrap_or_default(),
+                m.into.as_ref().map(who).unwrap_or_default(),
+            )
+        }
+        _ => (
+            c.deleting
+                .as_ref()
+                .map(|(_, name)| name.clone())
+                .unwrap_or_default(),
+            String::new(),
+        ),
+    }
+}
+
+/// A customer as a table row; `phone` is the column's text (the masked phone, or the clashing
+/// phone on the duplicates screen).
+fn customer_row(customer: &Customer, phone: String) -> BoCustomerRow {
+    BoCustomerRow {
+        code: customer.display_code.as_str().into(),
+        name: customer.name.as_str().into(),
+        phone: phone.into(),
+        group: customer.group_name.clone().unwrap_or_default().into(),
+        tier: customer.tier_name.clone().unwrap_or_default().into(),
+        until: customer.tier_valid_until.clone().unwrap_or_default().into(),
+        expired: customer.tier_applies == Some(false),
+        balance: amount::rupiah(customer.balance).into(),
+        negative: customer.balance < 0,
+        archived: customer.archived,
+    }
+}
+
+fn masked(customer: &Customer) -> String {
+    customer.masked_phone.clone().unwrap_or_default()
+}
+
+fn review(r: &customers::Review, can_manage: bool) -> BoReview {
+    BoReview {
+        cursor: index(r.cursor),
+        loading: r.loading,
+        can_manage,
+        notice: note(r.notice.as_ref()),
+    }
+}
+
+fn named_editor(e: &customers::NamedEditor, archived: bool, can_edit: bool) -> BoNamedEditor {
+    BoNamedEditor {
+        is_new: e.editing.is_none(),
+        name: e.name.as_str().into(),
+        rank: e.rank.as_str().into(),
+        archived,
+        cursor: index(e.cursor),
+        can_edit,
+        notice: note(e.notice.as_ref()),
+    }
+}
+
+fn issue_note(issue: Option<&customers::Issue>) -> Note {
+    issue.map_or_else(Note::default, |i| Note {
+        code: i.code.into(),
+        arg: i.arg.as_str().into(),
+        tone: -1,
+    })
+}
+
+fn named_rows(rows: impl Iterator<Item = (String, String, bool)>) -> Vec<BoNamedRow> {
+    rows.map(|(name, rank, archived)| BoNamedRow {
+        name: name.into(),
+        rank: rank.into(),
+        archived,
+    })
+    .collect()
+}
+
+#[allow(clippy::too_many_lines)] // one assignment per window property
+fn render_customers(ui: &BackOfficeWindow, c: &Controller, state: &State) {
+    let models = &state.models;
+    let cs = &c.customers;
+    let manage = c.may(CUSTOMER_MANAGE);
+    ui.set_customer_serial(i32::try_from(cs.serial % 1_000_000).unwrap_or(0));
+
+    let l = &cs.list;
+    ui.set_customer_list(BoCustomerList {
+        search: l.search.as_str().into(),
+        archived: l.archived,
+        show_archived: manage,
+        can_search: c.may(CUSTOMER_SEARCH),
+        can_create: c.may(CUSTOMER_CREATE),
+        cursor: index(l.cursor),
+        has_more: l.next_page.is_some(),
+        loading: l.loading,
+        notice: note(l.notice.as_ref()),
+    });
+    sync(
+        &models.customer_rows,
+        l.rows.iter().map(|x| customer_row(x, masked(x))).collect(),
+    );
+
+    // Groups and tiers.
+    sync(
+        &models.group_rows,
+        named_rows(
+            cs.groups
+                .iter()
+                .map(|g| (g.name.clone(), String::new(), g.archived)),
+        ),
+    );
+    sync(
+        &models.tier_rows,
+        named_rows(
+            cs.tiers
+                .iter()
+                .map(|t| (t.name.clone(), t.rank.to_string(), t.archived)),
+        ),
+    );
+    let archived_group = cs
+        .group_editor
+        .editing
+        .as_ref()
+        .and_then(|id| cs.groups.iter().find(|g| g.id == *id))
+        .is_some_and(|g| g.archived);
+    let archived_tier = cs
+        .tier_editor
+        .editing
+        .as_ref()
+        .and_then(|id| cs.tiers.iter().find(|t| t.id == *id))
+        .is_some_and(|t| t.archived);
+    ui.set_group_editor(named_editor(&cs.group_editor, archived_group, manage));
+    ui.set_tier_editor(named_editor(&cs.tier_editor, archived_tier, manage));
+
+    // Review lists and the merge panel.
+    ui.set_duplicates(review(&cs.duplicates, manage));
+    sync(
+        &models.duplicate_rows,
+        cs.duplicates
+            .rows
+            .iter()
+            .map(|x| {
+                let clash = x.phone_conflict.as_deref().map(customers::local_phone);
+                customer_row(x, clash.unwrap_or_default())
+            })
+            .collect(),
+    );
+    ui.set_negative(review(&cs.negative, manage));
+    sync(
+        &models.negative_rows,
+        cs.negative
+            .rows
+            .iter()
+            .map(|x| customer_row(x, masked(x)))
+            .collect(),
+    );
+    let m = &cs.merge;
+    let side = |x: Option<&Customer>| {
+        x.map_or_else(Default::default, |x| {
+            (
+                SharedString::from(x.name.as_str()),
+                SharedString::from(x.display_code.as_str()),
+                SharedString::from(masked(x)),
+            )
+        })
+    };
+    let (from_name, from_code, from_phone) = side(m.from.as_ref());
+    let (into_name, into_code, into_phone) = side(m.into.as_ref());
+    ui.set_merge(BoMerge {
+        from_name,
+        from_code,
+        from_phone,
+        into_name,
+        into_code,
+        into_phone,
+        code: m.code.as_str().into(),
+        ready: m.from.is_some() && m.into.is_some(),
+        notice: note(m.notice.as_ref()),
+    });
+
+    // Balance settings.
+    let s = &cs.settings;
+    let settings_issue = |field: &str| issue_note(s.issues.iter().find(|i| i.field == field));
+    ui.set_balance_settings(BoBalanceSettings {
+        per_sale: s.per_sale.as_str().into(),
+        max_balance: s.max_balance.as_str().into(),
+        can_edit: manage && s.stored.is_some(),
+        notice: note(s.notice.as_ref()),
+        per_sale_error: settings_issue("max_saved_per_sale"),
+        max_error: settings_issue("max_balance"),
+    });
+
+    // Erase dialog.
+    let balance = cs
+        .form
+        .as_ref()
+        .and_then(|f| f.stored.as_ref())
+        .map_or(0, |x| x.balance);
+    ui.set_erase_balance(if balance == 0 {
+        SharedString::new()
+    } else {
+        amount::rupiah(balance).into()
+    });
+    ui.set_erase_ready(c.erase_code_matches());
+
+    if let Some(f) = &cs.form {
+        render_customer_form(ui, c, f, models);
+    }
+}
+
+fn render_customer_form(ui: &BackOfficeWindow, c: &Controller, f: &CustomerForm, models: &Models) {
+    let cs = &c.customers;
+    let manage = c.may(CUSTOMER_MANAGE);
+    let p = &f.fields;
+    let groups = cs.group_choices(p.group.as_deref());
+    let tiers = cs.tier_choices(p.tier.as_deref());
+    sync(
+        &models.group_choices,
+        choice_labels(ui, &groups, "no_group"),
+    );
+    sync(&models.tier_choices, choice_labels(ui, &tiers, "no_tier"));
+    let stored = f.stored.as_ref();
+    let editable = c.customer_editable();
+    let issue = |field: &str| issue_note(f.issue(field));
+    let balance = f
+        .balance
+        .as_ref()
+        .map_or_else(|| stored.map_or(0, |x| x.balance), |b| b.balance);
+    ui.set_customer_form(BoCustomerForm {
+        is_new: f.is_new(),
+        title: stored.map(|x| x.name.as_str()).unwrap_or_default().into(),
+        code: stored
+            .map(|x| x.display_code.as_str())
+            .unwrap_or_default()
+            .into(),
+        signed_up: stored
+            .map(|x| input::date_time(x.signed_up_at))
+            .unwrap_or_default()
+            .into(),
+        archived: f.archived(),
+        erased: f.erased(),
+        dirty: f.is_dirty(),
+        saving: f.saving,
+        can_edit: editable,
+        can_manage: manage && editable,
+        can_archive: manage && !f.is_new() && !f.erased(),
+        can_erase: c.may(CUSTOMER_ERASE) && !f.is_new() && !f.erased(),
+        notice: note(f.notice.as_ref()),
+        name: p.name.as_str().into(),
+        phone: p.phone.as_str().into(),
+        email: p.email.as_str().into(),
+        birth_day: p.birth_day.as_str().into(),
+        birth_month: p.birth_month.as_str().into(),
+        birth_year: p.birth_year.as_str().into(),
+        address: p.address.as_str().into(),
+        company: p.company.as_str().into(),
+        tax_id: p.tax_id.as_str().into(),
+        tax_address: p.tax_address.as_str().into(),
+        notes: p.notes.as_str().into(),
+        group_index: position(groups.iter().map(|x| &x.0), &&p.group),
+        tier_index: position(tiers.iter().map(|x| &x.0), &&p.tier),
+        valid_until: p.valid_until.as_str().into(),
+        manual_tier: p.manual_tier,
+        // Expired as stored, while the tier and date are unchanged.
+        tier_expired: stored.is_some_and(|x| {
+            x.tier_applies == Some(false)
+                && x.tier_id == p.tier
+                && x.tier_valid_until.as_deref().unwrap_or_default() == p.valid_until
+        }),
+        name_error: issue("name"),
+        phone_error: issue("phone"),
+        email_error: issue("email"),
+        birthday_error: issue("birthday"),
+        tax_id_error: issue("tax_id"),
+        valid_until_error: issue("tier_valid_until"),
+        balance: amount::rupiah(balance).into(),
+        balance_negative: balance < 0,
+        balance_loaded: f.balance.is_some(),
+    });
+    sync(
+        &models.balance_rows,
+        f.balance
+            .as_ref()
+            .map(|b| {
+                b.entries
+                    .iter()
+                    .take(customers::SHOWN_ENTRIES)
+                    .map(|e| BoBalanceRow {
+                        when: input::date_time(e.occurred_at).into(),
+                        kind: e.kind.as_str().into(),
+                        amount: amount::signed_rupiah(e.amount).into(),
+                        negative: e.amount < 0,
+                    })
+                    .collect()
+            })
+            .unwrap_or_default(),
+    );
 }
 
 #[allow(clippy::too_many_lines)] // one assignment per form property
@@ -1089,6 +1495,14 @@ pub fn build_backoffice(
     ui.set_category_rows(ModelRc::from(models.category_rows.clone()));
     ui.set_parent_choices(ModelRc::from(models.parent_choices.clone()));
     ui.set_brand_rows(ModelRc::from(models.brand_rows.clone()));
+    ui.set_customer_rows(ModelRc::from(models.customer_rows.clone()));
+    ui.set_balance_rows(ModelRc::from(models.balance_rows.clone()));
+    ui.set_group_choices(ModelRc::from(models.group_choices.clone()));
+    ui.set_tier_choices(ModelRc::from(models.tier_choices.clone()));
+    ui.set_group_rows(ModelRc::from(models.group_rows.clone()));
+    ui.set_tier_rows(ModelRc::from(models.tier_rows.clone()));
+    ui.set_duplicate_rows(ModelRc::from(models.duplicate_rows.clone()));
+    ui.set_negative_rows(ModelRc::from(models.negative_rows.clone()));
 
     let wake: Wake = match &runner {
         Runner::Spawn(_) => {

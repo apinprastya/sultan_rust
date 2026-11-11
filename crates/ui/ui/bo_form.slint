@@ -157,7 +157,7 @@ component Picker inherits VerticalLayout {
     }
 }
 
-component TabButton inherits Rectangle {
+export component TabButton inherits Rectangle {
     in property <string> text;
     in property <string> keys;
     in property <bool> selected;
@@ -208,7 +208,7 @@ component TabButton inherits Rectangle {
     }
 }
 
-component Badge inherits Rectangle {
+export component Badge inherits Rectangle {
     in property <string> text;
     in property <color> tone: Theme.warn;
     height: 24px;

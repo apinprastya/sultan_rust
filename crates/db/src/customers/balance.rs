@@ -314,6 +314,28 @@ pub async fn ledger_balance<'c>(conn: impl Into<Conn<'c>>, customer: CustomerId)
     .map(Option::unwrap_or_default)
 }
 
+/// The cash a cashier session paid out of its drawer for balance payouts (spec 2.5 §11, phase
+/// M3): minus the sum of its negative `payout` entries, so `0` or more. A positive `payout`
+/// entry (a negative balance written off) moves no cash and is not counted. The close report
+/// counts this as cash out.
+///
+/// # Errors
+/// The database error.
+pub async fn session_payouts<'c>(
+    conn: impl Into<Conn<'c>>,
+    session: CashierSessionId,
+) -> Result<Money> {
+    sql::fetch_optional(
+        conn.into(),
+        "SELECT CAST(COALESCE(SUM(amount), 0) AS SIGNED) AS total FROM customer_balance_entry \
+         WHERE cashier_session_id = ? AND kind = ? AND amount < 0",
+        args![session, BalanceEntryKind::Payout.as_str()],
+        |row| sql::money(row, "total"),
+    )
+    .await
+    .map(|total| Money::from_minor(-total.unwrap_or_default().minor()))
+}
+
 /// The company settings for saved change (spec 2.5 §11). `max_saved_per_sale = 0` turns saving
 /// change off.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

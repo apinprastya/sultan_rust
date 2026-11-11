@@ -17,12 +17,17 @@
 //!   (PNG/JPEG/WebP magic bytes only, stored as sent) and search (paged by
 //!   `after_variant_id`).
 //! - The register's lookup ([`crate::Service::lookup`], phase C5) in `lookup`.
+//! - Pricing (phase R3): price lists, entries, tax rates, settings, the quote and the lookup
+//!   price in `pricing`.
 //!
 //! Users: `owner` / `owner-pass-1` (all-branches Owner), `budi` / `budi-pass-1` (Manager at one
 //! branch: `catalog.manage` and `catalog.view_archived` there only, which is enough since C3b)
 //! and `kasir` / `kasir-pass-1` (Cashier: no catalog permission, so the catalog is read-only).
 
 mod lookup;
+mod pricing;
+
+pub use pricing::{PriceCustomer, PricingDemo};
 
 use std::collections::{BTreeMap, HashMap};
 
@@ -115,6 +120,7 @@ pub(super) struct Catalog {
     blocks: HashMap<String, Vec<String>>,
     images: HashMap<String, Vec<u8>>,
     events: Vec<ServerEvent>,
+    pricing: pricing::Pricing,
 }
 
 impl Default for Catalog {
@@ -160,6 +166,7 @@ impl Default for Catalog {
             blocks: HashMap::new(),
             images: HashMap::new(),
             events: Vec::new(),
+            pricing: pricing::Pricing::default(),
         }
     }
 }
@@ -304,7 +311,7 @@ fn magic_ok(bytes: &[u8]) -> bool {
 }
 
 impl State {
-    fn bo_user(&self, token: &str) -> Result<BackOfficeUser, ClientError> {
+    pub(super) fn bo_user(&self, token: &str) -> Result<BackOfficeUser, ClientError> {
         self.catalog
             .tokens
             .get(token)
@@ -1016,6 +1023,100 @@ macro_rules! call {
 }
 
 impl BackOffice for FakeService {
+    fn price_lists(
+        &self,
+        token: &str,
+        include_archived: bool,
+    ) -> crate::BoxFuture<Vec<crate::PriceList>> {
+        call!(self, "price_lists", include_archived.to_string(), |s| s
+            .price_lists(token, include_archived))
+    }
+
+    fn put_price_list(
+        &self,
+        token: &str,
+        id: &str,
+        body: &crate::PriceListBody,
+    ) -> crate::BoxFuture<crate::PriceList> {
+        call!(self, "put_price_list", id.to_owned(), |s| s
+            .put_price_list(token, id, body))
+    }
+
+    fn archive_price_list(
+        &self,
+        token: &str,
+        id: &str,
+        key: &str,
+    ) -> crate::BoxFuture<crate::PriceList> {
+        call!(self, "archive_price_list", format!("{id} key={key}"), |s| s
+            .archive_price_list(token, id))
+    }
+
+    fn price_entries(
+        &self,
+        token: &str,
+        list_id: &str,
+        variant_id: Option<&str>,
+        after: Option<&str>,
+    ) -> crate::BoxFuture<crate::EntryPage> {
+        call!(self, "price_entries", list_id.to_owned(), |s| s
+            .price_entries(token, list_id, variant_id, after))
+    }
+
+    fn put_price_entry(
+        &self,
+        token: &str,
+        list_id: &str,
+        id: &str,
+        body: &crate::PriceEntryBody,
+    ) -> crate::BoxFuture<crate::PriceEntry> {
+        call!(self, "put_price_entry", format!("{list_id}/{id}"), |s| s
+            .put_price_entry(token, list_id, id, body))
+    }
+
+    fn delete_price_entry(&self, token: &str, list_id: &str, id: &str) -> crate::BoxFuture<()> {
+        call!(self, "delete_price_entry", format!("{list_id}/{id}"), |s| s
+            .delete_price_entry(token, list_id, id))
+    }
+
+    fn product_prices(
+        &self,
+        token: &str,
+        product_id: &str,
+    ) -> crate::BoxFuture<crate::ProductPrices> {
+        call!(self, "product_prices", product_id.to_owned(), |s| s
+            .product_prices(token, product_id))
+    }
+
+    fn tax_rates(&self, token: &str, tax_class_id: &str) -> crate::BoxFuture<Vec<crate::TaxRate>> {
+        call!(self, "tax_rates", tax_class_id.to_owned(), |s| s
+            .tax_rates(token, tax_class_id))
+    }
+
+    fn put_tax_rate(
+        &self,
+        token: &str,
+        tax_class_id: &str,
+        rate: &crate::TaxRate,
+    ) -> crate::BoxFuture<Vec<crate::TaxRate>> {
+        call!(self, "put_tax_rate", tax_class_id.to_owned(), |s| s
+            .put_tax_rate(token, tax_class_id, rate))
+    }
+
+    fn pricing_settings(&self, token: &str) -> crate::BoxFuture<crate::PricingSettings> {
+        call!(self, "pricing_settings", String::new(), |s| s
+            .pricing_settings(token))
+    }
+
+    fn put_pricing_settings(
+        &self,
+        token: &str,
+        body: &crate::PricingSettings,
+    ) -> crate::BoxFuture<crate::PricingSettings> {
+        call!(self, "put_pricing_settings", String::new(), |s| s
+            .put_pricing_settings(token, body))
+    }
+
     fn password_login(&self, username: &str, password: &str) -> crate::BoxFuture<Login> {
         call!(self, "password_login", username.to_owned(), |s| {
             let user = s
@@ -1057,6 +1158,25 @@ impl BackOffice for FakeService {
             }
             if u.view_archived {
                 here.push(CATALOG_VIEW_ARCHIVED.to_owned());
+            }
+            // Customer permissions follow the seeded roles (see `customers`).
+            let role = if u.manage {
+                super::customers::Role::Owner
+            } else if u.manage_here {
+                super::customers::Role::Manager
+            } else {
+                super::customers::Role::Cashier
+            };
+            here.extend(role.keys());
+            if u.manage {
+                everywhere.extend(role.keys());
+            }
+            // `price.manage` goes with `catalog.manage` in the fake (pricing module docs).
+            if u.manage {
+                everywhere.push(crate::pricing::PRICE_MANAGE.to_owned());
+            }
+            if u.manage || u.manage_here {
+                here.push(crate::pricing::PRICE_MANAGE.to_owned());
             }
             let anywhere = here.clone();
             Me {
@@ -1346,5 +1466,101 @@ impl BackOffice for FakeService {
     fn delete_brand(&self, token: &str, id: &str) -> crate::BoxFuture<()> {
         call!(self, "delete_brand", id.to_owned(), |s| s
             .delete_brand(token, id))
+    }
+
+    fn customer(&self, token: &str, id: &str) -> crate::BoxFuture<crate::Customer> {
+        self.bo_customer(token, id)
+    }
+
+    fn put_customer(
+        &self,
+        token: &str,
+        id: &str,
+        body: &crate::CustomerBody,
+    ) -> crate::BoxFuture<crate::Customer> {
+        self.put_customer_call("put_customer", token, id, body)
+    }
+
+    fn set_customer_archived(
+        &self,
+        token: &str,
+        id: &str,
+        archived: bool,
+        key: &str,
+    ) -> crate::BoxFuture<crate::Customer> {
+        self.bo_set_customer_archived(token, id, archived, key)
+    }
+
+    fn merge_customer(
+        &self,
+        token: &str,
+        into: &str,
+        from: &str,
+        key: &str,
+    ) -> crate::BoxFuture<crate::Customer> {
+        self.bo_merge_customer(token, into, from, key)
+    }
+
+    fn erase_customer(
+        &self,
+        token: &str,
+        id: &str,
+        key: &str,
+    ) -> crate::BoxFuture<crate::Customer> {
+        self.bo_erase_customer(token, id, key)
+    }
+
+    fn customer_duplicates(&self, token: &str, page: u32) -> crate::BoxFuture<crate::CustomerPage> {
+        self.bo_review(token, page, false)
+    }
+
+    fn negative_balances(&self, token: &str, page: u32) -> crate::BoxFuture<crate::CustomerPage> {
+        self.bo_review(token, page, true)
+    }
+
+    fn customer_groups(
+        &self,
+        token: &str,
+        include_archived: bool,
+    ) -> crate::BoxFuture<Vec<crate::CustomerGroup>> {
+        self.bo_customer_groups(token, include_archived)
+    }
+
+    fn put_customer_group(
+        &self,
+        token: &str,
+        id: &str,
+        body: &crate::GroupBody,
+    ) -> crate::BoxFuture<crate::CustomerGroup> {
+        self.bo_put_customer_group(token, id, body)
+    }
+
+    fn membership_tiers(
+        &self,
+        token: &str,
+        include_archived: bool,
+    ) -> crate::BoxFuture<Vec<crate::MembershipTier>> {
+        self.bo_membership_tiers(token, include_archived)
+    }
+
+    fn put_membership_tier(
+        &self,
+        token: &str,
+        id: &str,
+        body: &crate::TierBody,
+    ) -> crate::BoxFuture<crate::MembershipTier> {
+        self.bo_put_membership_tier(token, id, body)
+    }
+
+    fn customer_balance_settings(&self, token: &str) -> crate::BoxFuture<crate::BalanceSettings> {
+        self.bo_balance_settings(token)
+    }
+
+    fn put_customer_balance_settings(
+        &self,
+        token: &str,
+        body: &crate::BalanceSettings,
+    ) -> crate::BoxFuture<crate::BalanceSettings> {
+        self.bo_put_balance_settings(token, body)
     }
 }

@@ -37,6 +37,20 @@
 //! | 422 | catalog rule codes | a product, category, brand or settings write breaks a catalog rule (spec 2.2 §12): `invalid_field`, `invalid_code`, `invalid_check_digit`, `frozen_after_use`, `bundle_nesting`, `invalid_unit_factor`, `scale_prefix_overlap`, … `code` is the first failure; `errors` lists all of them as `{code, field?, message}`; `field` is the first one's field |
 //! | 422 | `archived` / `not_sold_here` / `not_sellable` / `scale_value_zero` | catalog lookup found the code but it cannot be sold here (spec 2.2 §6); with `errors` like above |
 //! | 422 | `invalid_image` | the image body is not a PNG, JPEG or WebP image (spec 2.2 §8) |
+//! | 422 | `invalid_phone` | a customer phone that does not normalize to 8–15 digits (spec 2.5 §2); `field: phone` |
+//! | 422 | `invalid_tax_id` | a customer tax id that is not 15 or 16 digits (spec 2.5 §2); `field: tax_id` |
+//! | 422 | `invalid_code` | a customer code (`PUT` or lookup) that is not 8 symbols of the code alphabet (spec 2.5 §2); `field: code` |
+//! | 409 | `phone_taken` | another non-archived customer has the phone (spec 2.5 §7); `customer_id`, `customer_code` (`K7QH-29XM`) and `masked_phone` of that customer |
+//! | 409 | `merged` | the customer was merged into another one: no edit, unarchive or merge (spec 2.5 §8) |
+//! | 409 | `archived` | an archived (or erased) customer cannot be edited or merged (spec 2.5 §18) |
+//! | 409 | `balance_not_zero` | erasing a customer whose balance is not 0 (spec 2.5 §11); `balance` |
+//! | 422 | `balance_limit` | saving more change than the limits allow (spec 2.5 §11, used with 2.6); `max` = the most that can still be saved |
+//! | 422 | `insufficient_balance` | paying or paying out more than the customer balance (spec 2.5 §11); `balance` |
+//! | 503 | `hq_unreachable` | **reserved** (spec 2.5 §7): a till edit forwarded to HQ while HQ is unreachable. Not returned yet: forwarding comes with sync; until then a branch node answers `read_only_replica` |
+//! | 409 | `price_list_conflict` | another active, non-archived price list has the same kind and target (spec 2.3 §2); `price_list_id` names it |
+//! | 409 | `price_overlap` | two entries of a price list for the same variant + unit share a day (spec 2.3 §3); `entry_id` names the other one |
+//! | 422 | `invalid_rule` | a rule on (or in an entry of) the `default` price list, or a % rule of −100% or less (spec 2.3 §2, §15); `field` |
+//! | 422 | `no_price` | no price list prices the line (spec 2.3 §4.5); in a quote it is a per-line error, with `suggestion` on an open-price line |
 //! | 413 | `payload_too_large` | the request body is over the endpoint's limit (product images: 10 MB) |
 //! | 423 | `locked_out` | too many failures; `locked_until` (unix ms) is included (§4) |
 //! | 500 | `internal` | database or other unexpected error (details are not exposed) |
@@ -48,8 +62,11 @@ use serde_json::{Map, Value, json};
 use sultan_core::access::{AccessError, Limit};
 use sultan_core::cashier_session::{OpenConflict, SessionError};
 use sultan_core::catalog::CatalogError;
+use sultan_core::customer::{CustomerCode, CustomerError, Phone};
 use sultan_db::DbError;
 use sultan_db::catalog::{CatalogDbError, Duplicate};
+use sultan_db::customers::CustomerDbError;
+use sultan_db::pricing::PricingDbError;
 
 /// The media type of every error body.
 pub const PROBLEM_JSON: &str = "application/problem+json";
@@ -419,6 +436,145 @@ impl From<CatalogDbError> for ApiError {
             )
             .with("reason", reason),
             CatalogDbError::Db(error) => error.into(),
+        }
+    }
+}
+
+impl From<CustomerError> for ApiError {
+    fn from(error: CustomerError) -> Self {
+        let status = match &error {
+            CustomerError::Merged
+            | CustomerError::Archived
+            | CustomerError::BalanceNotZero { .. } => StatusCode::CONFLICT,
+            _ => StatusCode::UNPROCESSABLE_ENTITY,
+        };
+        let mut api = Self::new(status, error.code(), error.to_string());
+        if let Some(field) = error.field() {
+            api = api.with("field", field);
+        }
+        match error {
+            CustomerError::BalanceLimit { max } => api.with("max", max.minor()),
+            CustomerError::InsufficientBalance { balance }
+            | CustomerError::BalanceNotZero { balance } => api.with("balance", balance.minor()),
+            _ => api,
+        }
+    }
+}
+
+/// `K7QH29XM` → `K7QH-29XM`; anything else as stored.
+fn shown_code(code: &str) -> String {
+    CustomerCode::parse(code).map_or_else(|_| code.to_owned(), |c| c.to_string())
+}
+
+impl From<CustomerDbError> for ApiError {
+    fn from(error: CustomerDbError) -> Self {
+        let detail = error.to_string();
+        match error {
+            CustomerDbError::NotFound(what) => Self::not_found(what),
+            CustomerDbError::Invalid { field, message } => Self::invalid_field(field, message),
+            CustomerDbError::SameCustomer => Self::invalid_field("from", detail),
+            CustomerDbError::InvalidReference(what) => {
+                let field = if what == "customer_group" {
+                    "group_id"
+                } else {
+                    "tier_id"
+                };
+                Self::new(
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    "invalid_reference",
+                    detail,
+                )
+                .with("field", field)
+            }
+            CustomerDbError::CodeTaken { .. } => {
+                Self::new(StatusCode::CONFLICT, "conflict", detail).with("field", "code")
+            }
+            CustomerDbError::Duplicate { field, .. } => {
+                Self::new(StatusCode::CONFLICT, "conflict", detail).with("field", field)
+            }
+            CustomerDbError::EntryConflict(_) => {
+                Self::new(StatusCode::CONFLICT, "conflict", detail)
+            }
+            CustomerDbError::PhoneTaken {
+                customer,
+                code,
+                phone,
+            } => Self::new(
+                StatusCode::CONFLICT,
+                "phone_taken",
+                format!(
+                    "the phone is already used by customer {}",
+                    shown_code(&code)
+                ),
+            )
+            .with("field", "phone")
+            .with("customer_id", customer.to_string())
+            .with("customer_code", shown_code(&code))
+            .with(
+                "masked_phone",
+                Phone::parse(&phone).map(|p| p.masked()).unwrap_or_default(),
+            ),
+            CustomerDbError::Archived => CustomerError::Archived.into(),
+            CustomerDbError::Merged => CustomerError::Merged.into(),
+            CustomerDbError::BalanceNotZero { balance } => {
+                CustomerError::BalanceNotZero { balance }.into()
+            }
+            CustomerDbError::Db(error) => error.into(),
+        }
+    }
+}
+
+/// The request-body name of a pricing rule's field (spec 2.3 §15.5).
+fn pricing_field(field: &'static str) -> &'static str {
+    match field {
+        "min_qty" => "tiers.min_qty_thousandths",
+        "price" => "tiers.price",
+        _ => field,
+    }
+}
+
+impl From<sultan_core::pricing::PricingError> for ApiError {
+    fn from(error: sultan_core::pricing::PricingError) -> Self {
+        use sultan_core::pricing::PricingError as E;
+        let api = |status| Self::new(status, error.code(), error.to_string());
+        match error {
+            E::InvalidField { field, .. } => {
+                api(StatusCode::UNPROCESSABLE_ENTITY).with("field", pricing_field(field))
+            }
+            E::InvalidRule { .. } => api(StatusCode::UNPROCESSABLE_ENTITY).with("field", "rule"),
+            E::PriceOverlap { other, .. } => {
+                api(StatusCode::CONFLICT).with("entry_id", other.to_string())
+            }
+            E::NoPrice { suggestion } => api(StatusCode::UNPROCESSABLE_ENTITY).with(
+                "suggestion",
+                suggestion.map_or(Value::Null, |m| m.minor().into()),
+            ),
+            E::Overflow => api(StatusCode::UNPROCESSABLE_ENTITY),
+        }
+    }
+}
+
+impl From<PricingDbError> for ApiError {
+    fn from(error: PricingDbError) -> Self {
+        match error {
+            PricingDbError::NotFound(what) => Self::not_found(what),
+            PricingDbError::Rule(rule) => rule.into(),
+            PricingDbError::ListConflict { existing } => Self::new(
+                StatusCode::CONFLICT,
+                "price_list_conflict",
+                "another active price list already has this target",
+            )
+            .with("price_list_id", existing.to_string()),
+            PricingDbError::InvalidReference(what) => Self::new(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "invalid_reference",
+                format!("unknown {what}"),
+            )
+            .with("field", format!("{what}_id")),
+            PricingDbError::Invalid { field, message } => {
+                Self::invalid_field(field, format!("`{field}` {message}"))
+            }
+            PricingDbError::Db(error) => error.into(),
         }
     }
 }
@@ -915,6 +1071,154 @@ mod tests {
     }
 
     #[test]
+    fn customer_errors_map_to_status_code_and_members() {
+        use sultan_core::money::Money;
+        let m = Money::from_minor(700);
+        let field = |field, reason| CustomerError::InvalidField { field, reason };
+        let cases = [
+            (field("name", "x"), 422, "invalid_field", Some("name")),
+            (
+                CustomerError::InvalidPhone { input: "1".into() },
+                422,
+                "invalid_phone",
+                Some("phone"),
+            ),
+            (
+                CustomerError::InvalidTaxId { input: "1".into() },
+                422,
+                "invalid_tax_id",
+                Some("tax_id"),
+            ),
+            (
+                CustomerError::InvalidCode { input: "1".into() },
+                422,
+                "invalid_code",
+                Some("code"),
+            ),
+            (CustomerError::Merged, 409, "merged", None),
+            (CustomerError::Archived, 409, "archived", None),
+            (
+                CustomerError::BalanceNotZero { balance: m },
+                409,
+                "balance_not_zero",
+                None,
+            ),
+            (
+                CustomerError::BalanceLimit { max: m },
+                422,
+                "balance_limit",
+                Some("amount"),
+            ),
+            (
+                CustomerError::InsufficientBalance { balance: m },
+                422,
+                "insufficient_balance",
+                Some("amount"),
+            ),
+            (CustomerError::AmountOverflow, 422, "amount_overflow", None),
+        ];
+        for (error, status, code, field) in cases {
+            let api = ApiError::from(error);
+            assert_eq!((api.status().as_u16(), api.code()), (status, code));
+            assert_eq!(
+                api.extensions.get("field").and_then(Value::as_str),
+                field,
+                "{code}"
+            );
+        }
+        let limit = ApiError::from(CustomerError::BalanceLimit { max: m });
+        assert_eq!(limit.extensions["max"], 700);
+        let short = ApiError::from(CustomerError::InsufficientBalance { balance: m });
+        assert_eq!(short.extensions["balance"], 700);
+    }
+
+    #[test]
+    fn customer_db_errors_map_to_status_code_and_members() {
+        use sultan_core::money::Money;
+        let id = uuid::Uuid::from_u128(9);
+        let cases = [
+            (CustomerDbError::NotFound("customer"), 404, "not_found"),
+            (
+                CustomerDbError::Invalid {
+                    field: "name",
+                    message: "x".into(),
+                },
+                422,
+                "invalid_field",
+            ),
+            (CustomerDbError::SameCustomer, 422, "invalid_field"),
+            (
+                CustomerDbError::InvalidReference("customer_group"),
+                422,
+                "invalid_reference",
+            ),
+            (
+                CustomerDbError::CodeTaken { code: "X".into() },
+                409,
+                "conflict",
+            ),
+            (
+                CustomerDbError::Duplicate {
+                    field: "rank",
+                    value: "1".into(),
+                },
+                409,
+                "conflict",
+            ),
+            (CustomerDbError::EntryConflict(id), 409, "conflict"),
+            (CustomerDbError::Archived, 409, "archived"),
+            (CustomerDbError::Merged, 409, "merged"),
+            (
+                CustomerDbError::BalanceNotZero {
+                    balance: Money::from_minor(5),
+                },
+                409,
+                "balance_not_zero",
+            ),
+            (
+                CustomerDbError::Db(DbError::Corrupt("secret".into())),
+                500,
+                "internal",
+            ),
+        ];
+        for (error, status, code) in cases {
+            let api = ApiError::from(error);
+            assert_eq!((api.status().as_u16(), api.code()), (status, code));
+        }
+        let field = |e| ApiError::from(e).extensions["field"].clone();
+        assert_eq!(field(CustomerDbError::SameCustomer), "from");
+        assert_eq!(
+            field(CustomerDbError::InvalidReference("customer_group")),
+            "group_id"
+        );
+        assert_eq!(
+            field(CustomerDbError::InvalidReference("membership_tier")),
+            "tier_id"
+        );
+
+        let taken = ApiError::from(CustomerDbError::PhoneTaken {
+            customer: id,
+            code: "K7QH29XM".into(),
+            phone: "+628123456789".into(),
+        });
+        assert_eq!(
+            (taken.status().as_u16(), taken.code()),
+            (409, "phone_taken")
+        );
+        assert_eq!(taken.extensions["customer_id"], id.to_string());
+        assert_eq!(taken.extensions["customer_code"], "K7QH-29XM");
+        assert_eq!(taken.extensions["masked_phone"], "0812****789");
+        // Values that are not a code or a phone are shown as stored / left blank.
+        let odd = ApiError::from(CustomerDbError::PhoneTaken {
+            customer: id,
+            code: "x".into(),
+            phone: "y".into(),
+        });
+        assert_eq!(odd.extensions["customer_code"], "x");
+        assert_eq!(odd.extensions["masked_phone"], "");
+    }
+
+    #[test]
     fn db_errors_hide_internals() {
         let cases = [
             (DbError::NotFound("role"), 404, "not_found"),
@@ -930,6 +1234,138 @@ mod tests {
             let api = ApiError::from(error);
             assert_eq!((api.status().as_u16(), api.code()), (status, code));
             assert!(!api.detail.contains("secret"));
+        }
+    }
+
+    #[test]
+    #[allow(clippy::too_many_lines)] // one row per error
+    fn pricing_errors_map_to_status_code_and_members() {
+        use sultan_core::ids::{UnitId, VariantId};
+        use sultan_core::money::Money;
+        use sultan_core::pricing::{PriceEntryId, PriceListId, PricingError as E};
+        let (entry, list) = (PriceEntryId::generate(), PriceListId::generate());
+        let cases: Vec<(ApiError, u16, &str, &str, Value)> = vec![
+            (
+                E::InvalidField {
+                    field: "min_qty",
+                    reason: "x",
+                }
+                .into(),
+                422,
+                "invalid_field",
+                "field",
+                "tiers.min_qty_thousandths".into(),
+            ),
+            (
+                E::InvalidField {
+                    field: "price",
+                    reason: "x",
+                }
+                .into(),
+                422,
+                "invalid_field",
+                "field",
+                "tiers.price".into(),
+            ),
+            (
+                E::InvalidField {
+                    field: "valid_to",
+                    reason: "x",
+                }
+                .into(),
+                422,
+                "invalid_field",
+                "field",
+                "valid_to".into(),
+            ),
+            (
+                E::InvalidRule { reason: "x" }.into(),
+                422,
+                "invalid_rule",
+                "field",
+                "rule".into(),
+            ),
+            (
+                E::PriceOverlap {
+                    variant: VariantId::generate(),
+                    unit: UnitId::generate(),
+                    other: entry,
+                }
+                .into(),
+                409,
+                "price_overlap",
+                "entry_id",
+                entry.to_string().into(),
+            ),
+            (
+                E::NoPrice {
+                    suggestion: Some(Money::from_minor(5)),
+                }
+                .into(),
+                422,
+                "no_price",
+                "suggestion",
+                5.into(),
+            ),
+            (
+                E::NoPrice { suggestion: None }.into(),
+                422,
+                "no_price",
+                "suggestion",
+                Value::Null,
+            ),
+            (E::Overflow.into(), 422, "amount_overflow", "x", Value::Null),
+            (
+                PricingDbError::NotFound("price_list").into(),
+                404,
+                "not_found",
+                "x",
+                Value::Null,
+            ),
+            (
+                PricingDbError::ListConflict { existing: list }.into(),
+                409,
+                "price_list_conflict",
+                "price_list_id",
+                list.to_string().into(),
+            ),
+            (
+                PricingDbError::InvalidReference("variant").into(),
+                422,
+                "invalid_reference",
+                "field",
+                "variant_id".into(),
+            ),
+            (
+                PricingDbError::Invalid {
+                    field: "name",
+                    message: "x",
+                }
+                .into(),
+                422,
+                "invalid_field",
+                "field",
+                "name".into(),
+            ),
+            (
+                PricingDbError::Rule(E::InvalidRule { reason: "x" }).into(),
+                422,
+                "invalid_rule",
+                "field",
+                "rule".into(),
+            ),
+            (
+                PricingDbError::Db(DbError::Corrupt("secret".into())).into(),
+                500,
+                "internal",
+                "x",
+                Value::Null,
+            ),
+        ];
+        for (api, status, code, member, value) in cases {
+            assert_eq!((api.status().as_u16(), api.code()), (status, code));
+            let got = api.extensions.get(member).cloned().unwrap_or(Value::Null);
+            assert_eq!(got, value, "{code}");
         }
     }
 }

@@ -34,8 +34,9 @@ pub enum Key {
     BackTab,
     /// F1–F12.
     F(u8),
-    /// Another printable ASCII character (letters, `-`, `.`, …; no space): what a barcode
-    /// scanner or a typed SKU sends besides digits.
+    /// Another printable character (letters, `-`, `.`, space, `é`, …): what a barcode scanner
+    /// or a typed SKU sends besides digits, and the text of the customer dialog's fields (spec
+    /// 2.5 M5). The barcode field keeps only printable ASCII without space.
     Char(char),
     /// Anything else.
     Other,
@@ -80,7 +81,9 @@ impl Key {
             c if (F1..F1 + 12).contains(&u32::from(c)) => {
                 Self::F(u8::try_from(u32::from(c) - F1 + 1).unwrap_or(0))
             }
-            c if c.is_ascii_graphic() => Self::Char(c),
+            c if c.is_ascii_graphic() || c == ' ' => Self::Char(c),
+            // Other key codes of Slint (Home, Insert, …) are in the private-use area.
+            c if !c.is_control() && !('\u{E000}'..='\u{F8FF}').contains(&c) => Self::Char(c),
             _ => Self::Other,
         }
     }
@@ -222,8 +225,10 @@ mod tests {
             ("A", false, true, Key::Char('A')),
             ("-", false, false, Key::Char('-')),
             ("a", true, false, Key::Other),
-            (" ", false, false, Key::Other),
-            ("é", false, false, Key::Other),
+            (" ", false, false, Key::Char(' ')),
+            ("é", false, false, Key::Char('é')),
+            ("\u{F729}", false, false, Key::Other),
+            ("\u{7f}", false, false, Key::Other),
             ("", false, false, Key::Other),
             ("12", false, false, Key::Other),
         ];

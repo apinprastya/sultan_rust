@@ -21,7 +21,7 @@ Everything on a shop computer is done in windows; only an HQ server needs the co
 
 2. The **Start screen** has three big tiles (keys or a tap):
    **F1 Cash register** (the lock screen: each cashier logs in with their PIN),
-   **F2 Back office** (catalog: log in with a username and password) and
+   **F2 Back office** (catalog and customers: log in with a username and password) and
    **F3 Settings**. The footer says what the computer is connected to, e.g.
    "Connected to 192.168.1.10:8080 · R2 Kasir 2 · JKT01 · Toko Jakarta"; F5 checks again.
 3. **F9** on the register's lock screen, or on the back office's login screen (after F12 log
@@ -106,7 +106,8 @@ button on screen:
 |---|---|
 | Lock | ←/→/↑/↓ or Tab pick a user · a digit or Enter opens the PIN pad · digits, Backspace, Enter log in · Esc closes the pad · F5 reloads the users · F9 back to the Start screen |
 | Open session | digits / Backspace type the opening cash (shown as Rupiah) · Enter opens · Esc locks. If another cashier's session is open here: Esc back to lock |
-| Session home | type or scan into the barcode field (digits, letters, `-`, `.`; Backspace) · Enter looks the code up · Esc clears the field and the item · F2 test a manager override · F10 close the session · F12 lock (the session stays open) |
+| Session home | type or scan into the barcode field (digits, letters, `-`, `.`; Backspace) · Enter looks the code up · Esc clears the field and the item · F2 test a manager override · F3 customer · F4 detach the attached customer (shown when one is attached) · F10 close the session · F12 lock (the session stays open; the attached customer is let go) |
+| Customer (F3) | **Find:** type or scan a phone number or member code (`k7qh-29xm` works too; a scan here is always a member code, never a product) · Enter looks it up · Tab switches to a name search and back (only with `customer.search`) · ↑/↓ pick a result, Enter or a click opens it · F6 new customer (`customer.create`) · Esc closes. **Customer:** Enter attaches · F7 pay the balance out (`customer.balance_payout`, balance above 0) · Esc back. **New customer:** type the name, Tab (or ↑/↓, a click) to the phone (optional) · Enter signs up · F8 shows the customer who already has the phone · Esc back. **Payout:** digits / Backspace type the amount · Enter, then Enter again to pay out · Esc back |
 | Blind close | ↑/↓ or Tab move between the total and the denominations · digits / Backspace · Enter, then Enter again to confirm · Esc back |
 | Close report | Enter: done (logs out to the lock screen) |
 | Manager override | ↑/↓ pick the manager · digits / Backspace PIN · Enter approve (the action is retried with the token) · Esc cancel |
@@ -115,12 +116,19 @@ The back-office window is keyboard-first too; shortcuts work while a text field 
 
 | Screen | Keys |
 |---|---|
-| Everywhere (after login) | F2 products · F3 categories · F4 brands · F12 log out |
+| Everywhere (after login) | F2 products · F3 categories · F4 brands · F6 customers · F12 log out |
 | Login | Enter in the username moves to the password · Enter logs in · F9 back to the Start screen |
 | Products | `/` or Ctrl+F search (typing filters after a short pause) · ↑/↓ move (past the last row loads more) · Enter open · Ctrl+N new product · Ctrl+Shift+D delete the highlighted product (never used only; asks first) · F5 refresh · Esc back from the search to the list |
 | Product form | Ctrl+S save · Ctrl+1 / Ctrl+2 / Ctrl+3 tabs General / Variants / Units & barcodes · Esc back (asks first when there are unsaved changes) · Ctrl+Shift+A archive / unarchive (asks first) |
 | Categories / Brands | ↑/↓ pick · Ctrl+S save · Ctrl+N add (a child of the picked category / a brand) · Ctrl+Shift+A archive / unarchive · Ctrl+Shift+D delete (never used only; asks first) · F5 refresh · Esc back to products |
-| Confirmation | Enter or Y yes · Esc or N no |
+| Customer screens | Ctrl+1 customer list · Ctrl+2 groups · Ctrl+3 tiers · Ctrl+4 possible duplicates · Ctrl+5 negative balances · Ctrl+6 balance settings · F5 refresh |
+| Customer list | `/` or Ctrl+F search name or company (needs `customer.search`) · ↑/↓ move (past the last row loads more) · Enter open · Ctrl+N new customer |
+| Customer form | Ctrl+S save · Esc back (asks first when there are unsaved changes) · Ctrl+Shift+A archive / unarchive (asks first; `customer.manage`) · Ctrl+Shift+E erase personal data (`customer.erase`; type the member code, then Enter) |
+| Groups / Tiers | ↑/↓ pick · Ctrl+S save · Ctrl+N add · Ctrl+Shift+A archive / unarchive · Esc back to the customer list |
+| Possible duplicates | ↑/↓ pick the customer to merge away (the one holding its phone is the one to keep; type another member code to change it) · Ctrl+M merge (asks first) · Enter open · Esc back |
+| Negative balances | ↑/↓ move · Enter open · Esc back |
+| Balance settings | Ctrl+S save · Esc back |
+| Confirmation | Enter or Y yes · Esc or N no (the erase dialog: Enter and Esc only) |
 
 Screenshots of every screen: `docs/screenshots/` (regenerate with
 `cargo run -p sultan-ui --example screenshots -- docs/screenshots 1366x768 en`).
@@ -173,13 +181,25 @@ Every setting is taken from, in order: **command-line flag > environment variabl
 - The server speaks plain HTTP (no TLS yet); keep it on the shop LAN.
 - The register window has no selling yet (spec 2.6): the session home looks up a scanned or
   typed barcode, scale label, SKU or PLU (`GET /catalog/lookup`) and shows the item, its unit,
-  quantity and how it matched, or why it cannot be sold here; there is no cart and no price yet
-  (spec 2.3), except the amount printed on a price scale label. The override test is still there. It needs a display (Slint picks Wayland, X11 or another backend; set
+  quantity and how it matched, or why it cannot be sold here; there is no cart and no price on
+  screen yet. The server already prices (spec 2.3, R3: the lookup's `unit_price` and
+  `POST /pricing/quote`); the register shows it with phase R5. The override test is still there. It needs a display (Slint picks Wayland, X11 or another backend; set
   `SLINT_BACKEND`, e.g. `winit-software`, to force one).
 - The register does not reconnect the events WebSocket after a network drop; it reconnects at
   the next login. The back office behaves the same.
+- Customers (spec 2.5) are in the API (`/customers`, `/customer-groups`, `/membership-tiers`,
+  `/settings/customer-balance`). The back office (F6) has the customer list and form, groups,
+  tiers, possible duplicates with merge, negative balances, erase and the balance settings; the
+  list's "archived" switch works without a search only (the name search never finds archived
+  customers). The register's customer step (F3) finds, signs up and attaches a customer and pays a
+  balance out; the attached customer is only shown on the session home (it joins a sale with 2.6),
+  is let go when the register locks, and does not follow later edits made elsewhere until it is
+  looked up again. No payout slip is printed yet. Purchase history
+  (`GET /customers/{id}/history`) is empty until sales exist (spec 2.6), so the customer balance
+  only changes by merges and cash payouts for now. On a branch node only sign-up works; a till's
+  profile edit forwarded to HQ (and `503 hq_unreachable`) comes with sync.
 - Back office: the product image is picked by typing the file path (no file dialog yet); prices
-  are not edited here (spec 2.3); categories, brands and products are archived, never deleted.
+  are not edited here yet (the pricing API of spec 2.3 exists, its screens come with R4); categories, brands and products are archived, never deleted.
 
 ## Development
 

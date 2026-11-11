@@ -22,12 +22,17 @@
 //! 5. **Brands** — add, rename, archive, delete (Ctrl+Shift+D, asking first; only without
 //!    products).
 //!
-//! F2 / F3 / F4 switch between products, categories and brands; F12 logs out.
+//! 6. **Customers** (F6, spec 2.5 phase M4) — the list, the customer form, groups, tiers,
+//!    possible duplicates with merge, negative balances and the balance settings; see
+//!    [`customers`].
+//!
+//! F2 / F3 / F4 / F6 switch between products, categories, brands and customers; F12 logs out.
 //!
 //! **Live refresh**: after login the glue watches `GET /events`; `catalog.changed` reloads the
 //! product list (or the taxonomy) and, for the product open in the form, fetches it: when it
 //! changed elsewhere the form shows a warning with "reload".
 
+pub mod customers;
 pub mod form;
 
 use std::collections::BTreeSet;
@@ -146,6 +151,20 @@ pub enum Screen {
     Categories,
     /// Brand list.
     Brands,
+    /// Customer list.
+    Customers,
+    /// Customer form.
+    CustomerForm,
+    /// Customer groups.
+    CustomerGroups,
+    /// Membership tiers.
+    CustomerTiers,
+    /// Possible duplicates (merge).
+    Duplicates,
+    /// Negative balances.
+    NegativeBalances,
+    /// Customer balance settings.
+    BalanceSettings,
 }
 
 impl Screen {
@@ -158,6 +177,13 @@ impl Screen {
             Self::Form => "form",
             Self::Categories => "categories",
             Self::Brands => "brands",
+            Self::Customers => "customers",
+            Self::CustomerForm => "customer-form",
+            Self::CustomerGroups => "customer-groups",
+            Self::CustomerTiers => "customer-tiers",
+            Self::Duplicates => "duplicates",
+            Self::NegativeBalances => "negative-balances",
+            Self::BalanceSettings => "balance-settings",
         }
     }
 }
@@ -171,6 +197,12 @@ pub enum Confirm {
     Archive,
     /// Delete [`Controller::deleting`] (a never-used product, category or brand; spec 2.2 §9).
     Delete(Deletable),
+    /// Archive (or unarchive) the open customer.
+    CustomerArchive,
+    /// Merge the duplicates screen's B into A (spec 2.5 §8).
+    Merge,
+    /// Erase the open customer's personal data (spec 2.5 §7); needs its code typed.
+    Erase,
 }
 
 /// What [`Confirm::Delete`] deletes.
@@ -603,6 +635,13 @@ pub enum Effect {
         /// Its ID.
         id: String,
     },
+    /// A customer call (spec 2.5, [`customers`]).
+    Customers {
+        /// Token.
+        token: String,
+        /// The call.
+        call: customers::Call,
+    },
     /// `logout`.
     Logout(String),
     /// `watch_events`; events come back as [`Msg::Event`] with `generation`.
@@ -729,6 +768,8 @@ pub enum Msg {
     Deleted(Deletable, Result<(), ClientError>),
     /// Result of [`Effect::Logout`].
     LoggedOut(Result<(), ClientError>),
+    /// Result of [`Effect::Customers`].
+    Customers(Box<customers::Reply>),
 }
 
 /// What [`Controller::update`] did.
@@ -801,6 +842,25 @@ pub fn notice_for(error: &ClientError) -> Notice {
             p.field().unwrap_or_default().to_owned(),
             Tone::Bad,
         ),
+        // Customers (spec 2.5 §13).
+        "archived" => Notice::bad("customer_archived"),
+        "merged" => Notice::bad("customer_merged"),
+        "phone_taken" => notice(
+            "phone_taken",
+            [p.customer_code(), p.masked_phone()]
+                .into_iter()
+                .flatten()
+                .collect::<Vec<_>>()
+                .join(" · "),
+            Tone::Bad,
+        ),
+        "balance_not_zero" => notice(
+            "balance_not_zero",
+            crate::amount::rupiah(p.balance().unwrap_or_default()),
+            Tone::Bad,
+        ),
+        "invalid_phone" => Notice::bad("invalid_phone"),
+        "invalid_tax_id" => Notice::bad("invalid_tax_id"),
         other => notice("error", other.to_owned(), Tone::Bad),
     }
 }
@@ -836,6 +896,8 @@ pub struct Controller {
     pub categories: CategoryEditor,
     /// The brand list.
     pub brands: BrandEditor,
+    /// The customer section.
+    pub customers: customers::CustomerState,
     /// A login is running.
     pub busy: bool,
     /// A field the view should focus (`search`, `name`, `category-name`, `brand-name`, or
@@ -929,6 +991,9 @@ impl Controller {
                 index,
             } => Step::effects(self.on_choose(&kind, row, &field, index)),
             Msg::Pick { kind, row, sub } => Step::effects(self.on_pick(&kind, row, sub)),
+            Msg::SearchDue(serial) if self.screen() == Screen::Customers => {
+                Step::effects(self.customer_search_due(serial))
+            }
             Msg::SearchDue(serial) => {
                 if serial == self.list.search_serial && self.session.is_some() {
                     Step::effects(self.reload_list())
@@ -945,6 +1010,18 @@ impl Controller {
     /// keys (↑/↓/Enter) on the list screens.
     fn on_capture(&mut self, p: Press) -> Step {
         if let Some(confirm) = self.confirm {
+            if confirm == Confirm::Erase {
+                // The dialog has a text field: only Enter and Esc are the dialog's.
+                return match p.key {
+                    PressKey::Enter if !p.ctrl => Step::handled(self.confirmed(confirm)),
+                    PressKey::Escape => {
+                        self.confirm = None;
+                        self.customers.erase_code.clear();
+                        Step::handled(Vec::new())
+                    }
+                    _ => Step::default(),
+                };
+            }
             return match p.key {
                 PressKey::Enter | PressKey::Char('y') if !p.ctrl => {
                     Step::handled(self.confirmed(confirm))
@@ -968,6 +1045,7 @@ impl Controller {
             (2, Screen::Products),
             (3, Screen::Categories),
             (4, Screen::Brands),
+            (6, Screen::Customers),
         ] {
             if p.f(n) {
                 return Step::handled(self.go(target));
@@ -981,6 +1059,7 @@ impl Controller {
             Screen::Form => self.form_capture(p),
             Screen::Categories | Screen::Brands => self.taxonomy_capture(p, screen),
             Screen::Login => Step::default(),
+            _ => self.customers_capture(p, screen),
         }
     }
 
@@ -1096,14 +1175,14 @@ impl Controller {
         Step::default()
     }
 
-    /// Keys no widget took: `/` focuses the search on the product list.
+    /// Keys no widget took: `/` focuses the search on the product and customer lists.
     fn on_key(&mut self, p: Press) -> Step {
-        if self.confirm.is_none()
-            && self.screen() == Screen::Products
-            && p.key == PressKey::Char('/')
-            && !p.ctrl
-        {
-            self.focus("search");
+        if self.confirm.is_none() && p.key == PressKey::Char('/') && !p.ctrl {
+            match self.screen() {
+                Screen::Products => self.focus("search"),
+                Screen::Customers => self.focus("customer-search"),
+                _ => return Step::default(),
+            }
             return Step::handled(Vec::new());
         }
         Step::default()
@@ -1111,10 +1190,16 @@ impl Controller {
 
     /// Goes to `target`, asking first when the form has unsaved changes.
     fn go(&mut self, target: Screen) -> Vec<Effect> {
-        if self.screen() == Screen::Form
-            && self.form.as_ref().is_some_and(|f| f.form.is_dirty())
-            && target != Screen::Form
-        {
+        let dirty = match self.screen() {
+            Screen::Form => self.form.as_ref().is_some_and(|f| f.form.is_dirty()),
+            Screen::CustomerForm => self
+                .customers
+                .form
+                .as_ref()
+                .is_some_and(customers::CustomerForm::is_dirty),
+            _ => false,
+        };
+        if dirty && target != self.screen() {
             self.confirm = Some(Confirm::Discard(target));
             return Vec::new();
         }
@@ -1126,6 +1211,9 @@ impl Controller {
         self.screen = Some(target);
         if from == Screen::Form && target != Screen::Form {
             self.form = None;
+        }
+        if from == Screen::CustomerForm && target != Screen::CustomerForm {
+            self.customers.form = None;
         }
         match target {
             Screen::Products => {
@@ -1146,7 +1234,8 @@ impl Controller {
                 self.focus("brand-name");
                 Vec::new()
             }
-            Screen::Login | Screen::Form => Vec::new(),
+            Screen::Login | Screen::Form | Screen::CustomerForm => Vec::new(),
+            _ => self.enter_customers(target, from),
         }
     }
 
@@ -1176,6 +1265,9 @@ impl Controller {
                     }]
                 })
                 .unwrap_or_default(),
+            Confirm::CustomerArchive | Confirm::Merge | Confirm::Erase => {
+                self.customer_confirmed(confirm)
+            }
         }
     }
 
@@ -1279,10 +1371,14 @@ impl Controller {
                 "confirm-no" => {
                     self.confirm = None;
                     self.deleting = None;
+                    self.customers.erase_code.clear();
                     Vec::new()
                 }
                 _ => Vec::new(),
             };
+        }
+        if let Some(effects) = self.customer_action(id) {
+            return effects;
         }
         match id {
             "login" => self.start_login(),
@@ -1695,6 +1791,7 @@ impl Controller {
                 self.brands.name = value;
                 return Vec::new();
             }
+            k if customers::EDIT_KINDS.contains(&k) => return self.customer_edit(k, field, value),
             _ => {}
         }
         let can = self.can_manage();
@@ -1793,6 +1890,9 @@ impl Controller {
             self.list.archived = on;
             return self.reload_list();
         }
+        if let Some(effects) = self.customer_toggle(kind, field, on) {
+            return effects;
+        }
         let can = self.can_manage();
         let branches: Vec<String> = self
             .reference
@@ -1836,6 +1936,9 @@ impl Controller {
 
     #[allow(clippy::too_many_lines)] // one arm per picker
     fn on_choose(&mut self, kind: &str, row: usize, field: &str, index: usize) -> Vec<Effect> {
+        if let Some(effects) = self.customer_choose(kind, field, index) {
+            return effects;
+        }
         match (kind, field) {
             ("list", "category") => {
                 self.list.category = self
@@ -1948,6 +2051,9 @@ impl Controller {
     }
 
     fn on_pick(&mut self, kind: &str, row: usize, sub: usize) -> Vec<Effect> {
+        if let Some(effects) = self.customer_pick(kind, row) {
+            return effects;
+        }
         match kind {
             "products" => {
                 if row < self.list.rows.len() {
@@ -2015,6 +2121,9 @@ impl Controller {
         if event.revokes_this_session() {
             self.logged_out(Some(Notice::bad("session_ended")));
             return Vec::new();
+        }
+        if event.kind == "customer.changed" {
+            return self.customer_event();
         }
         if event.kind != "catalog.changed" {
             return Vec::new();
@@ -2389,6 +2498,7 @@ impl Controller {
                 Vec::new()
             }
             Msg::Deleted(what, result) => self.deleted(what, &result),
+            Msg::Customers(reply) => self.customer_reply(*reply),
             _ => Vec::new(),
         }
     }

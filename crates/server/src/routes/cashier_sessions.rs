@@ -370,7 +370,7 @@ async fn expected_now(
     tx: &mut Tx,
     session: &CashierSession,
 ) -> Result<Money, ApiError> {
-    let movements = state.movements.movements(tx, session.id()).await?;
+    let movements = crate::movements::session_movements(state, tx, session.id()).await?;
     Ok(close_report(session.opening_cash(), Money::ZERO, &movements)?.expected_cash)
 }
 
@@ -755,7 +755,7 @@ pub async fn close(
         .await?
         .ok_or_else(|| ApiError::not_found("cashier session"))?;
     let before = to_json(&session_dto(&record, None));
-    let movements = state.movements.movements(&mut tx, id).await?;
+    let movements = crate::movements::session_movements(&state, &mut tx, id).await?;
     let report = record
         .session
         .close(caller.user.user.id, counted, &movements, state.now())?;
@@ -809,7 +809,7 @@ pub async fn force_close(
         .at_scope(BranchScope::Branch(record.branch))
         .require(Permission::SessionForceClose, None)?;
     let before = to_json(&session_dto(&record, None));
-    let movements = state.movements.movements(&mut tx, id).await?;
+    let movements = crate::movements::session_movements(&state, &mut tx, id).await?;
     let report = record
         .session
         .force_close(caller.user.id, counted, &movements, state.now())?;

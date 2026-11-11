@@ -161,6 +161,7 @@ mod tests {
             qty_thousandths: None,
             amount,
             branch_id: None,
+            unit_price: None,
         }
     }
 

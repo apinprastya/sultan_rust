@@ -27,7 +27,8 @@ pub enum Permission {
     SaleVoid,
     /// `sale.post_void`: void a completed sale.
     SalePostVoid,
-    /// `price.override`: manual price at the till.
+    /// `price.override`: manual price at the till, limited by [`Limit::MaxPct`]: how far below
+    /// the resolved price a user may go (spec 2.3 §6). Raising a price needs no limit.
     PriceOverride,
     /// `refund.with_receipt`: return by receipt lookup.
     RefundWithReceipt,
@@ -79,11 +80,14 @@ pub enum Permission {
     CustomerErase,
     /// `customer.balance_payout`: pay a customer balance out in cash at the till (spec 2.5 §11).
     CustomerBalancePayout,
+    /// `price.manage`: price lists, entries, tax rates and the pricing settings (HQ only,
+    /// spec 2.3 §9).
+    PriceManage,
 }
 
 impl Permission {
     /// Every permission in the catalog, in catalog order.
-    pub const ALL: [Self; 31] = [
+    pub const ALL: [Self; 32] = [
         Self::SaleCreate,
         Self::SaleDiscount,
         Self::SaleCartDiscount,
@@ -115,6 +119,7 @@ impl Permission {
         Self::CustomerManage,
         Self::CustomerErase,
         Self::CustomerBalancePayout,
+        Self::PriceManage,
     ];
 
     /// The stable string key, e.g. `"sale.discount"`.
@@ -152,6 +157,7 @@ impl Permission {
             Self::CustomerManage => "customer.manage",
             Self::CustomerErase => "customer.erase",
             Self::CustomerBalancePayout => "customer.balance_payout",
+            Self::PriceManage => "price.manage",
         }
     }
 
@@ -159,7 +165,9 @@ impl Permission {
     #[must_use]
     pub const fn limit_kind(self) -> Option<LimitKind> {
         match self {
-            Self::SaleDiscount | Self::SaleCartDiscount => Some(LimitKind::Pct),
+            Self::SaleDiscount | Self::SaleCartDiscount | Self::PriceOverride => {
+                Some(LimitKind::Pct)
+            }
             Self::RefundNoReceipt | Self::CashOut => Some(LimitKind::Amount),
             _ => None,
         }
@@ -357,6 +365,7 @@ mod tests {
             [
                 ("sale.discount", LimitKind::Pct),
                 ("sale.cart_discount", LimitKind::Pct),
+                ("price.override", LimitKind::Pct),
                 ("refund.no_receipt", LimitKind::Amount),
                 ("cash.out", LimitKind::Amount),
             ]
@@ -382,7 +391,7 @@ mod tests {
             Ok(Permission::CatalogViewArchived)
         );
         assert_eq!(Permission::CatalogManage.limit_kind(), None);
-        assert_eq!(Permission::ALL.len(), 31);
+        assert_eq!(Permission::ALL.len(), 32);
     }
 
     #[test]
@@ -401,7 +410,20 @@ mod tests {
             assert_eq!(p.limit_kind(), None, "{key}");
             assert!(!p.is_overridable(), "{key}");
         }
-        assert_eq!(Permission::ALL[25..].len(), customer.len());
+        assert_eq!(Permission::ALL[25..31].len(), customer.len());
+    }
+
+    #[test]
+    fn price_keys_and_limits() {
+        assert_eq!(Permission::PriceManage.as_str(), "price.manage");
+        assert_eq!(
+            "price.manage".parse::<Permission>(),
+            Ok(Permission::PriceManage)
+        );
+        assert_eq!(Permission::PriceManage.limit_kind(), None);
+        assert!(!Permission::PriceManage.is_overridable());
+        assert_eq!(Permission::PriceOverride.limit_kind(), Some(LimitKind::Pct));
+        assert!(Permission::PriceOverride.is_overridable());
     }
 
     #[test]
