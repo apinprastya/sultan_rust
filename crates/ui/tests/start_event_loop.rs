@@ -6,6 +6,7 @@
 use std::cell::Cell;
 use std::rc::Rc;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use slint::ComponentHandle;
@@ -15,12 +16,24 @@ use sultan_ui::start::{
 };
 use sultan_ui::{Runner, build_start};
 
-struct SlowServer;
+/// Answers only once the test opens `gate`, so "still waiting" can be asserted without racing a
+/// fixed delay (a busy machine used to let the check finish before the first assert).
+struct SlowServer {
+    gate: Arc<AtomicBool>,
+}
+
+/// Waits until `gate` is open.
+async fn wait_for(gate: Arc<AtomicBool>) {
+    while !gate.load(Ordering::SeqCst) {
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+}
 
 impl StartService for SlowServer {
     fn check(&self) -> StartFuture {
-        Box::pin(async {
-            tokio::time::sleep(Duration::from_millis(50)).await;
+        let gate = self.gate.clone();
+        Box::pin(async move {
+            wait_for(gate).await;
             Ok(None)
         })
     }
@@ -30,8 +43,9 @@ impl StartService for SlowServer {
     }
 
     fn set_lan(&self, on: bool) -> LanFuture {
+        let gate = self.gate.clone();
         Box::pin(async move {
-            tokio::time::sleep(Duration::from_millis(50)).await;
+            wait_for(gate).await;
             Ok(LanChanged {
                 lan: Lan {
                     on,
@@ -67,8 +81,9 @@ fn the_check_comes_back_through_the_event_loop() {
             ..Lan::default()
         }),
     };
+    let gate = Arc::new(AtomicBool::new(false));
     let start = build_start(
-        Arc::new(SlowServer),
+        Arc::new(SlowServer { gate: gate.clone() }),
         Runner::Spawn(runtime.handle().clone()),
         info,
     )
@@ -91,6 +106,8 @@ fn the_check_comes_back_through_the_event_loop() {
     start.ui.invoke_action("settings".into());
     press(Key::F7);
     assert!(start.ui.get_lan_busy());
+    // Both answers may come now.
+    gate.store(true, Ordering::SeqCst);
 
     let done = Rc::new(Cell::new(false));
     let deadline = Instant::now() + Duration::from_secs(10);

@@ -268,14 +268,13 @@ Where we are, so any session can pick up from here. Update this section at the e
     new `GET /registers/me` (device token) refreshes it for older pairings.
 
 **Open decisions (the user's call)**
-- Customer permissions are checked at the session's branch (spec 2.5 §18 item 16), while
-  `catalog.manage` / `price.manage` count from any role assignment. Proposed: make customers match.
+- None. 2026-11-12: customer permissions count from any role assignment, like catalog and pricing
+  (spec 2.5 §18 item 16).
 
 **Small to-dos**
 - Settings bottom bar at 1024 px: the one-line status summary is still cut off (the full text now
   wraps in the Connection card; the address row on a single app reads "This computer's address").
 - Back office: the bundle-component picker shows only the first search page (no "load more").
-- `sultan-ui` test `start_event_loop` is flaky under coverage instrumentation.
 - Customer, group, tier and price-list ids are plain `Uuid` in db/core; move them to typed ids in
   `core::ids`.
 - Back office: the Prices tab is not part of the product form's unsaved-changes check; archived

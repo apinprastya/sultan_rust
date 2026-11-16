@@ -171,7 +171,21 @@ fn problem(status: StatusCode, body: &[u8]) -> ClientError {
 impl Service for HttpService {
     fn permissions(&self, token: &str) -> crate::BoxFuture<Vec<String>> {
         let me = send::<Me>(self.request(Method::GET, "/auth/me", Some(token)));
-        Box::pin(async move { me.await.map(|me| me.permissions) })
+        Box::pin(async move {
+            me.await.map(|me| {
+                let mut keys = me.permissions;
+                for key in me
+                    .permissions_anywhere
+                    .into_iter()
+                    .chain(me.permissions_everywhere)
+                {
+                    if !keys.contains(&key) {
+                        keys.push(key);
+                    }
+                }
+                keys
+            })
+        })
     }
 
     fn lock_users(&self) -> crate::BoxFuture<Vec<LockUser>> {
