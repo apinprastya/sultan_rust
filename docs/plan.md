@@ -232,8 +232,16 @@ audit log viewer · light/dark theme · i18n ID/EN.
   merged at HQ · receipt shows name + masked phone · **customer balance for saved change**
   ("simpan kembalian"): grows from saved change, pays as a tender, limits Rp 5 000 per sale and
   Rp 100 000 per customer (settings), spendable offline, no expiry, erase needs balance 0.
+- **2026-11-16 2.6 Sales** (spec: `docs/spec/2.6-sales.md` §0, D1–D14): cart in register memory,
+  posted in one request and re-checked by the server, with a local crash copy · no selling while
+  the branch server is down (P1) · tender types are HQ data of a fixed kind; QRIS/card/e-wallet
+  recorded by hand · **no card surcharge** (Bank Indonesia forbids passing on the MDR) · line +
+  cart discounts now (cart discount split over lines) · a rescan adds to the line · sales write a
+  minimal stock ledger now · **post-void any time**, money out of the current session · refunds
+  only in cash or customer balance · exchange in one flow · tax-invoice switch · old Qt keys ·
+  every removed line is a void · return window 30 days · held carts never expire.
 
-## Status (updated 2026-11-11)
+## Status (updated 2026-11-16)
 
 Where we are, so any session can pick up from here. Update this section at the end of every phase.
 
@@ -260,6 +268,10 @@ Where we are, so any session can pick up from here. Update this section at the e
   `/catalog/lookup`, `price.changed`) · R4 back office (F7 Pricing: price lists, tax rates,
   settings; Prices tab on the product form with schedule) · R5 register (price on the scanned item,
   the attached customer's price through the quote).
+- **2.6 Sales** S1 `core::sale` (2026-11-16): cart + rescan rule, totals with the cart-discount
+  split, permission values, payment (tenders, cash rounding, change, saved change), post-void and
+  return refunds, exchange netting, stock movements, receipt text, session expected cash and
+  counters; sale/return numbers in `doc_number`; new balance entry kind `refund` (spec §19).
 - **UI only, except HQ** (§3, 2026-11-09):
   - Start screen on single-app and terminal machines: F1 Kasir, F2 Back office, F3 Settings.
   - Settings: language (F6), set up again (F8), and on a single app "Allow terminals to connect"
@@ -284,9 +296,11 @@ Where we are, so any session can pick up from here. Update this section at the e
 - Each sub-agent worktree builds its own `target/` (20–40 GB with coverage); clear finished ones.
 
 **Next**
-- **2.6 Sales (register)**: discuss the spec first (cart, split tenders incl. QRIS, hold/resume,
-  returns, voids, receipts), then build. It brings saving change and paying with the customer
-  balance, the manual price override flow, cash rounding, and purchase history.
+- **2.6 Sales (register)**: spec agreed 2026-11-16 (`docs/spec/2.6-sales.md`). S1 `core::sale`
+  done; next **S2 `db`** (tender types, sales, returns, held carts, stock ledger, number
+  allocation, permissions seed incl. `sale.reprint` / `tender.manage`, balance kind `refund` in
+  the `kind` check), then S3 `server` + client · S4 register sell · S5 register after the sale
+  (hold/resume, post-void, returns, reprint, history) · S6 back office.
 - Other P1 specs still to discuss: 2.4 is P2; 2.7 cash in/out + X/Z, 2.8 inventory, 2.9 money,
   2.10 reports, 2.11 hardware (ESC/POS + drawer), old-Sultan importer.
 

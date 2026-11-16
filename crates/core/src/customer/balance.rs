@@ -7,7 +7,8 @@
 //! session, document and time of an entry are stored by the database.
 //!
 //! In P1 the balance only grows from saved change ([`save_change`]) and shrinks when it pays
-//! ([`pay_with_balance`]) or is paid out before an erase ([`payout`], [`check_erase`]). It never
+//! ([`pay_with_balance`]) or is paid out before an erase ([`payout`], [`check_erase`]). Sales
+//! (2.6) also add `refund` entries when a return or post-void is refunded to the balance. It never
 //! expires. Offline branches may drive a balance negative; that is allowed and filled by the
 //! next saved change.
 
@@ -34,11 +35,14 @@ pub enum BalanceEntryKind {
     MergeOut,
     /// `merge_in` (+): B's balance arriving at A in a merge; − when that balance is negative.
     MergeIn,
+    /// `refund` (+): a return or post-void refunded to the balance instead of in cash
+    /// (spec 2.6 §7, §8, D11; clarification 2.6 §19).
+    Refund,
 }
 
 impl BalanceEntryKind {
     /// Every kind, in the order of the spec's table.
-    pub const ALL: [Self; 7] = [
+    pub const ALL: [Self; 8] = [
         Self::ChangeSaved,
         Self::Payment,
         Self::ChangeSavedReversed,
@@ -46,6 +50,7 @@ impl BalanceEntryKind {
         Self::Payout,
         Self::MergeOut,
         Self::MergeIn,
+        Self::Refund,
     ];
 
     /// The stored name, e.g. `change_saved`.
@@ -59,6 +64,7 @@ impl BalanceEntryKind {
             Self::Payout => "payout",
             Self::MergeOut => "merge_out",
             Self::MergeIn => "merge_in",
+            Self::Refund => "refund",
         }
     }
 
@@ -66,7 +72,7 @@ impl BalanceEntryKind {
     #[must_use]
     pub const fn sign(self) -> i64 {
         match self {
-            Self::ChangeSaved | Self::PaymentReversed | Self::MergeIn => 1,
+            Self::ChangeSaved | Self::PaymentReversed | Self::MergeIn | Self::Refund => 1,
             Self::Payment | Self::ChangeSavedReversed | Self::Payout | Self::MergeOut => -1,
         }
     }
@@ -465,6 +471,7 @@ mod tests {
             (K::Payout, "payout", -1, false, None),
             (K::MergeOut, "merge_out", -1, false, None),
             (K::MergeIn, "merge_in", 1, false, None),
+            (K::Refund, "refund", 1, true, None),
         ];
         assert_eq!(cases.len(), K::ALL.len());
         for (kind, name, sign, strict, reversal) in cases {
@@ -475,7 +482,7 @@ mod tests {
             assert_eq!(kind.strict_sign(), strict);
             assert_eq!(kind.reversal(), reversal);
         }
-        assert_eq!("refund".parse::<K>().unwrap_err().field(), Some("kind"));
+        assert_eq!("refunded".parse::<K>().unwrap_err().field(), Some("kind"));
     }
 
     #[test]
