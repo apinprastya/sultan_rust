@@ -7,6 +7,7 @@
 
 use axum::http::{Method, StatusCode};
 use serde_json::{Value, json};
+use sultan_core::access::BranchScope;
 
 use crate::common::{ANI_PIN, BUDI_PIN, Harness, Response, api_tests, new_id};
 use crate::sales::{
@@ -263,6 +264,38 @@ async fn exchange_nets_the_refund(h: &Harness) {
         r.body["exchange_sale"]["tenders"].as_array().unwrap().len(),
         1
     );
+    // A refund-only role may return, but not sell through an exchange.
+    let role = new_id();
+    let grants = json!({ "name": "Retur", "grants": [{ "permission": "refund.with_receipt" }] });
+    let r = h
+        .call(
+            &owner,
+            Method::PUT,
+            &format!("/api/v1/roles/{role}"),
+            Some(grants),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.body);
+    let retur = h
+        .add_user(
+            "retur",
+            role.parse().unwrap(),
+            BranchScope::Branch(h.jkt.id),
+        )
+        .await;
+    let retur = h.pin_token(&h.jkt_device, &retur, ANI_PIN).await;
+    let mut body = returned(&s, 1, &teh, 1);
+    body["exchange"] = json!({ "sale_id": new_id(), "sale": sale(vec![line(&teh, 1)], vec![]) });
+    let r = put_return(
+        h,
+        (retur.as_str(), h.jkt_device.as_str()),
+        &new_id(),
+        &body,
+        None,
+    )
+    .await;
+    r.assert_problem(403, "permission_denied");
+    assert_eq!(r.body["permission"], "sale.create");
 }
 
 /// Spec 2.6 §15 case 11.

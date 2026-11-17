@@ -23,7 +23,8 @@
 //!   - **Exchange (D12):** the refund pays the new sale first (an `exchange` tender); the customer
 //!     pays any difference with the sale's own tenders; what is left of the refund is paid back
 //!     as above. The new sale is rebuilt and checked like `PUT /sales/{id}` (its overrides use
-//!     the new sale's ID as `context_ref`). Publishes `sale.posted` for it.
+//!     the new sale's ID as `context_ref`), and it needs `sale.create`. Publishes `sale.posted`
+//!     for it.
 //!   - Lines are restocked, or written off with `write_off_reason` (D9).
 //! - `GET /returns/{id}`, `GET /returns?…`: as for sales ([`super::sales`]).
 
@@ -474,6 +475,10 @@ pub async fn put(
     }
     let method = refund_method(&body.refund)?;
     let access = Caller::load(&state.db, &caller.user).await?;
+    if body.exchange.is_some() {
+        // The exchange is a new sale: it needs what `PUT /sales/{id}` needs.
+        access.require(Permission::SaleCreate)?;
+    }
     let till = sale_post::till(&state, &caller).await?;
     let now = state.now();
     let sale_id: Option<SaleId> = parse_opt_id(body.sale_id.as_deref(), "sale_id")?;

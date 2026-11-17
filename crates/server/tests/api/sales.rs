@@ -30,6 +30,7 @@ api_tests!(
     line_discount_above_the_limit_needs_an_override,
     post_void_pays_back_and_reverses_stock,
     receipts_reprints_and_lookups,
+    price_labels_take_their_qty_from_the_store_price,
 );
 
 pub const CASH: &str = "00000000-0000-7000-8000-000000000301";
@@ -349,6 +350,78 @@ async fn sale_needs_an_open_session_and_answers_stale_carts(h: &Harness) {
     put_sale(h, at, "not-a-uuid", &fresh, None)
         .await
         .assert_problem(400, "invalid_body");
+}
+
+/// A price-embedded label line (spec 2.3 §5, 2.6 §19 items 1, 3 and 50).
+fn label(item: &Item, qty: i64, amount: i64) -> Value {
+    let mut l = line(item, 0);
+    l["qty_thousandths"] = qty.into();
+    l["scale_label"] = "price".into();
+    l["label_amount"] = amount.into();
+    l
+}
+
+/// The quantity of a price label is the amount ÷ the store price, never what the register says;
+/// a label without a store price posts with qty 0 and moves no stock.
+async fn price_labels_take_their_qty_from_the_store_price(h: &Harness) {
+    let owner = h.owner_token().await;
+    let teh = item(h, &owner, "TEH", 10_000).await;
+    let token = ani(h).await;
+    let at = (token.as_str(), h.jkt_device.as_str());
+    open(h, at, 0).await;
+    // The register must post 20 000 ÷ 10 000 = 2: no stock-free or arbitrary quantity.
+    for wrong in [0, 1_000, 5_000] {
+        let mut body = sale(vec![label(&teh, wrong, 20_000)], vec![tender(CASH, 20_000)]);
+        fresh_totals(h, at, &mut body).await;
+        let r = put_sale(h, at, &new_id(), &body, None).await;
+        r.assert_problem(422, "invalid_qty");
+        assert_eq!(r.body["line"], 0);
+    }
+    let s = sell(
+        h,
+        at,
+        sale(vec![label(&teh, 2_000, 20_000)], vec![tender(CASH, 20_000)]),
+    )
+    .await;
+    assert_eq!(s["total"], 20_000);
+    let l = &s["lines"][0];
+    assert_eq!(
+        (&l["qty_thousandths"], &l["unit_price"], &l["scale_label"]),
+        (&json!(2_000), &json!(10_000), &json!("price"))
+    );
+    assert_eq!(on_hand(h, &teh.variant).await, -2_000);
+
+    // No store price: qty 0, unit price 0, sold at the printed amount, no stock moved.
+    let (id, variant, pcs) = (new_id(), new_id(), new_id());
+    let body = json!({
+        "code": "LAUK", "name": "Lauk", "type": "stock", "tax_class_id": STANDARD,
+        "units": [{ "id": pcs, "name": "pcs", "kind": "integer", "factor_thousandths": 1000 }],
+        "base_unit_id": pcs,
+        "variants": [{ "id": variant }],
+    });
+    let r = put_product(h, &owner, &id, &body).await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.body);
+    let lauk = Item { variant, pcs };
+    let mut body = sale(vec![label(&lauk, 1_000, 7_500)], vec![tender(CASH, 7_500)]);
+    fresh_totals(h, at, &mut body).await;
+    put_sale(h, at, &new_id(), &body, None)
+        .await
+        .assert_problem(422, "invalid_qty");
+    let s = sell(
+        h,
+        at,
+        sale(vec![label(&lauk, 0, 7_500)], vec![tender(CASH, 7_500)]),
+    )
+    .await;
+    assert_eq!(s["total"], 7_500);
+    assert_eq!(
+        (
+            &s["lines"][0]["qty_thousandths"],
+            &s["lines"][0]["unit_price"]
+        ),
+        (&json!(0), &json!(0))
+    );
+    assert_eq!(on_hand(h, &lauk.variant).await, 0);
 }
 
 /// Spec 2.6 §15 case 10.

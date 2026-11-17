@@ -10,7 +10,10 @@
 //! - **Quote** ([`build_sale`]): every line is priced again with the server's lists for the
 //!   branch, the customer and today's branch-local date (2.3 `resolve_cart`), and the totals are
 //!   computed with `core::sale::compute_totals`. When they differ from the posted `totals` the
-//!   answer is `409 cart_stale` with the fresh quote (`quote.totals`, `quote.lines`).
+//!   answer is `409 cart_stale` with the fresh quote (`quote.totals`, `quote.lines`). A
+//!   price-embedded label is not quoted: its amount is final, and its quantity must be the
+//!   amount ÷ the store price (branch → default, no customer lists), or 0 without one
+//!   (`422 invalid_qty` otherwise), so the stock moved always matches the label.
 //! - **Permissions** ([`BuiltSale::actions`]): `price.override` per overridden line (% below the
 //!   resolved price), `sale.discount` per discounted line and `sale.cart_discount`, checked with
 //!   `X-Override` by [`crate::overrides::authorize_all`] (one token per approval, comma
@@ -27,14 +30,16 @@ use chrono::NaiveDate;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sultan_core::access::{Permission, Requested};
-use sultan_core::catalog::{ComponentSnapshot, ProductType, Qty, UnitKind};
+use sultan_core::catalog::{ComponentSnapshot, ProductType, Qty, UnitKind, qty_from_price};
 use sultan_core::customer::BalanceSettings;
 use sultan_core::ids::{
     BranchId, CashierSessionId, ProductId, RegisterId, SaleId, TaxClassId, UnitId, UserId,
     VariantId,
 };
 use sultan_core::money::Money;
-use sultan_core::pricing::{self as core_pricing, LineMode, PricedLine, PricingError, SaleItem};
+use sultan_core::pricing::{
+    self as core_pricing, LineMode, PricedLine, PricingError, ResolvedPrice, SaleItem,
+};
 use sultan_core::sale::{
     BalanceContext, CartTotals, Discount, MAX_LINES, Payment, PriceMode, SaleError, ScaleLabel,
     StockLine, TotalsLine, check_qty, compute_totals, discount_bp, sale_movements,
@@ -43,7 +48,7 @@ use sultan_core::tax::rate_on;
 use sultan_core::time::Timestamp;
 use sultan_db::catalog::{self, ProductRecord};
 use sultan_db::customers::CustomerRecord;
-use sultan_db::pricing::{self, PricingSettings};
+use sultan_db::pricing::{self, PriceTargets, PricingSettings};
 use sultan_db::sales::{self, NewSale, SaleLine, SaleTotals};
 use sultan_db::{TokenHash, cashier_sessions, customers};
 use utoipa::ToSchema;
@@ -517,6 +522,58 @@ fn scale_label(line: &SaleLineBody) -> Result<Option<ScaleLabel>, ApiError> {
     }
 }
 
+/// The store price of each price-embedded label line: branch → default, for one unit, without
+/// customer lists or tiers (spec 2.3 §5, item 3 of its clarifications); `None` for the other
+/// lines and for a label without a (positive) store price.
+async fn label_prices(
+    state: &AppState,
+    branch: BranchId,
+    ctx: &PriceContext,
+    items: &[Item],
+    labels: &[Option<ScaleLabel>],
+) -> Result<Vec<Option<ResolvedPrice>>, ApiError> {
+    let is_label = |l: &Option<ScaleLabel>| matches!(l, Some(ScaleLabel::Price { .. }));
+    let mut variants: Vec<VariantId> = items
+        .iter()
+        .zip(labels)
+        .filter(|(_, l)| is_label(l))
+        .map(|(item, _)| item.variant)
+        .collect();
+    if variants.is_empty() {
+        return Ok(vec![None; items.len()]);
+    }
+    variants.sort();
+    variants.dedup();
+    let targets = PriceTargets {
+        branch: Some(branch),
+        ..PriceTargets::default()
+    };
+    let lists = pricing::load_for_resolution(&state.db, &targets, &variants, ctx.date).await?;
+    let chain = lists.store_chain(ctx.date);
+    items
+        .iter()
+        .zip(labels)
+        .enumerate()
+        .map(|(i, (item, label))| {
+            if !is_label(label) {
+                return Ok(None);
+            }
+            let item = item.sale_item();
+            let price = core_pricing::resolve_unit_price(&chain, &item, item.factor)
+                .map_err(|e| line_error(i, e))?;
+            Ok(price.filter(|r| r.unit_price.minor() > 0))
+        })
+        .collect()
+}
+
+/// A price-embedded label's quantity: `amount ÷ store price`, 3 dp; 0 without a store price
+/// (spec 2.6 §19 items 1 and 50).
+fn label_qty(amount: Money, store: Option<ResolvedPrice>) -> Result<Qty, PricingError> {
+    store.map_or(Ok(Qty::ZERO), |r| {
+        qty_from_price(amount, r.unit_price).map_err(|_| PricingError::Overflow)
+    })
+}
+
 fn line_error(index: usize, error: PricingError) -> ApiError {
     ApiError::from(error).with("line", index)
 }
@@ -599,7 +656,8 @@ pub async fn build_sale(
     }
     let ctx = PriceContext::load(state, till.branch).await?;
 
-    // Lines, then the quote of every line that is not a price label without a quantity.
+    // Lines, then the quote of every line that is not a price-embedded label (its amount is
+    // final and its quantity comes from the store price: 2.3 §5).
     let mut labels = Vec::with_capacity(items.len());
     let mut quoted = Vec::new();
     let mut slots = Vec::with_capacity(items.len());
@@ -625,7 +683,7 @@ pub async fn build_sale(
             typed.map_or(LineMode::Listed, LineMode::Overridden)
         };
         labels.push(label);
-        if price_label && qty == Qty::ZERO {
+        if price_label {
             slots.push(None);
         } else {
             quoted.push(core_pricing::CartLine {
@@ -637,25 +695,31 @@ pub async fn build_sale(
         }
     }
     let priced = quote(state, till.branch, customer_id, &ctx, &quoted).await?;
+    let store = label_prices(state, till.branch, &ctx, &items, &labels).await?;
 
     let mut lines = Vec::with_capacity(items.len());
     let mut totals_lines = Vec::with_capacity(items.len());
     let mut unit_prices = Vec::with_capacity(items.len());
     for (i, ((item, line), label)) in items.iter().zip(&body.lines).zip(&labels).enumerate() {
         let qty = Qty::from_thousandths(line.qty_thousandths);
-        let result = slots[i].map(|s| priced[s].clone());
         let (unit_price, price_mode, price_list, gross) =
             if let Some(ScaleLabel::Price { amount }) = label {
-                let p = result.and_then(Result::ok);
+                let store = store[i];
+                if qty != label_qty(*amount, store).map_err(|e| line_error(i, e))? {
+                    return Err(ApiError::from(SaleError::InvalidQty {
+                        reason: "a price label's quantity is its amount ÷ the store price",
+                    })
+                    .with("line", i));
+                }
                 (
-                    p.map_or(Money::ZERO, |p| p.unit_price),
+                    store.map_or(Money::ZERO, |r| r.unit_price),
                     PriceMode::Listed,
-                    p.and_then(|p| p.resolved).map(|r| r.source.list),
+                    store.map(|r| r.source.list),
                     *amount,
                 )
             } else {
-                let p = result
-                    .unwrap_or(Err(PricingError::Overflow))
+                let p = slots[i]
+                    .map_or(Err(PricingError::Overflow), |s| priced[s].clone())
                     .map_err(|e| line_error(i, e))?;
                 let mode = if item.open_price {
                     PriceMode::OpenPrice
