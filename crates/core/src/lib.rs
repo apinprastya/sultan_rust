@@ -2,7 +2,8 @@
 //!
 //! This crate has no IO, no database and no async: every function takes the state it needs
 //! (including the current time) as arguments, so it can be unit-tested exhaustively.
-//! See `docs/plan.md` §1, `docs/spec/2.1-organization-access.md` and `docs/spec/2.2-catalog.md`.
+//! See `docs/plan.md` §1 and the specs in `docs/spec/` (2.1 access, 2.2 catalog, 2.3 pricing,
+//! 2.5 customers, 2.6 sales).
 
 pub mod access;
 pub mod cashier_session;
@@ -12,5 +13,6 @@ pub mod doc_number;
 pub mod ids;
 pub mod money;
 pub mod pricing;
+pub mod sale;
 pub mod tax;
 pub mod time;

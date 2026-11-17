@@ -380,6 +380,20 @@ impl State {
         }
     }
 
+    /// The balance of an active customer (sales, spec 2.6).
+    pub(super) fn balance_of(&self, id: &str) -> Option<i64> {
+        self.customers
+            .list
+            .iter()
+            .find(|c| c.id == id && !c.archived)
+            .map(|c| c.balance)
+    }
+
+    /// The saved-change limits (sales, spec 2.6).
+    pub(super) const fn balance_limits(&self) -> BalanceSettings {
+        self.customers.settings
+    }
+
     fn index(&self, id: &str) -> Option<usize> {
         self.customers.list.iter().position(|c| c.id == id)
     }
@@ -766,7 +780,7 @@ impl State {
         Ok(self.view(&erased))
     }
 
-    fn entry(&mut self, customer: &str, kind: &str, amount: i64) -> BalanceEntry {
+    pub(super) fn entry(&mut self, customer: &str, kind: &str, amount: i64) -> BalanceEntry {
         self.customers.serial += 1;
         let entry = BalanceEntry {
             id: format!("entry-{}", self.customers.serial),

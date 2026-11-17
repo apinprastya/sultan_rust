@@ -32,6 +32,12 @@
 //!   [`Lookup::unit_price`] is the store price of one unit; [`BackOffice`] reads and writes price
 //!   lists, entries, tax rates and the pricing settings. Types in [`pricing`].
 //!
+//! - Sales (phase S3, spec 2.6; types in [`sales`]): the register's calls are on [`Service`]
+//!   (tender types, posting a sale with the re-quote and `X-Override` tokens, receipts, post-void,
+//!   till voids, returns and exchanges, held carts, the customer's purchase history and recent
+//!   receipts, the session's sales); the back office's on [`BackOffice`] (tender type
+//!   management, returns). Several override tokens for one request go comma separated.
+//!
 //! Amounts are minor units (`i64`, Rupiah minor unit = 1, `docs/plan.md` §1); times are unix ms.
 
 pub mod catalog;
@@ -40,6 +46,7 @@ pub mod error;
 pub mod fake;
 pub mod http;
 pub mod pricing;
+pub mod sales;
 pub mod types;
 
 use std::future::Future;
@@ -61,6 +68,13 @@ pub use pricing::{
     EntryPage, LineError, LineTax, PriceEntry, PriceEntryBody, PriceList, PriceListBody, PriceRule,
     PriceSource, PriceTier, PricingSettings, ProductPrices, Quote, QuoteLine, QuoteRequest,
     QuoteTotals, QuotedLine, TaxRate,
+};
+pub use sales::{
+    CartVoid, CartVoidRequest, Discount, DocQuery, ExchangeRequest, HeldCart, HistoryItem,
+    HistoryPage, HoldRequest, Receipt, RefundTender, ReturnLine, ReturnLineRequest, ReturnPage,
+    ReturnRequest, ReturnSummary, Sale, SaleLine, SaleLineRequest, SalePage, SaleRequest,
+    SaleReturn, SaleSummary, SaleTender, SaleTotals, SaleVoid, TenderRequest, TenderType,
+    TenderTypeBody, VoidRequest, VoidedLine,
 };
 pub use types::{
     Branch, CashierSession, CloseReport, CloseRequest, Count, LockUser, Login, OverrideGrant,
@@ -176,6 +190,81 @@ pub trait Service: Send + Sync {
     /// register shows only what the user may do (spec 2.5 M5: name search, sign-up,
     /// balance payout). The server still checks every call.
     fn permissions(&self, token: &str) -> BoxFuture<Vec<String>>;
+    /// `GET /tender-types`: the active tender types in the register's order (spec 2.6 D4).
+    fn tender_types(&self, token: &str) -> BoxFuture<Vec<TenderType>>;
+    /// `PUT /sales/{id}`: posts a sale (spec 2.6 §5). `override_token` is the `X-Override`
+    /// header (several tokens comma separated). A replay of the same body answers the stored
+    /// sale. Errors: `409 no_open_session` / `cart_stale` (with the fresh `quote`) / `conflict`,
+    /// `403 needs_override` / `invalid_override`, `422` payment and cart rules.
+    fn post_sale(
+        &self,
+        token: &str,
+        id: &str,
+        body: &SaleRequest,
+        override_token: Option<&str>,
+    ) -> BoxFuture<Sale>;
+    /// `GET /sales/{id}`.
+    fn sale(&self, token: &str, id: &str) -> BoxFuture<Sale>;
+    /// `GET /sales/by-number/{number}`: the receipt lookup of a return.
+    fn sale_by_number(&self, token: &str, number: &str) -> BoxFuture<Sale>;
+    /// `GET /sales?…`: one page; a cashier lists their own session (`cashier_session_id`).
+    fn sales(&self, token: &str, query: &DocQuery) -> BoxFuture<SalePage>;
+    /// `GET /sales/{id}/receipt[?copy=true]`: the receipt text; a copy of another than the last
+    /// sale of the session needs `sale.reprint` (`override_token`).
+    fn receipt(
+        &self,
+        token: &str,
+        id: &str,
+        copy: bool,
+        override_token: Option<&str>,
+    ) -> BoxFuture<Receipt>;
+    /// `POST /sales/{id}/void` with `Idempotency-Key: key` (spec 2.6 §7).
+    fn void_sale(
+        &self,
+        token: &str,
+        id: &str,
+        body: &VoidRequest,
+        key: &str,
+        override_token: Option<&str>,
+    ) -> BoxFuture<Sale>;
+    /// `POST /cart-voids` with `Idempotency-Key: key`: a removed line or a cleared cart (§3).
+    fn cart_void(
+        &self,
+        token: &str,
+        body: &CartVoidRequest,
+        key: &str,
+        override_token: Option<&str>,
+    ) -> BoxFuture<CartVoid>;
+    /// `PUT /returns/{id}`: a return, optionally with an exchange sale (spec 2.6 §8).
+    fn post_return(
+        &self,
+        token: &str,
+        id: &str,
+        body: &ReturnRequest,
+        override_token: Option<&str>,
+    ) -> BoxFuture<SaleReturn>;
+    /// `PUT /held-carts/{id}`: holds the cart (spec 2.6 §4).
+    fn hold_cart(&self, token: &str, id: &str, body: &HoldRequest) -> BoxFuture<HeldCart>;
+    /// `GET /held-carts`: the branch's waiting carts, newest first.
+    fn held_carts(&self, token: &str) -> BoxFuture<Vec<HeldCart>>;
+    /// `POST /held-carts/{id}/take` with `Idempotency-Key: key`; `409 cart_taken`.
+    fn take_held_cart(&self, token: &str, id: &str, key: &str) -> BoxFuture<HeldCart>;
+    /// `DELETE /held-carts/{id}` (`sale.void`, overridable).
+    fn delete_held_cart(
+        &self,
+        token: &str,
+        id: &str,
+        override_token: Option<&str>,
+    ) -> BoxFuture<HeldCart>;
+    /// `GET /customers/{id}/history[?before=]`: sales (voided marked) and returns, newest first.
+    fn customer_history(
+        &self,
+        token: &str,
+        id: &str,
+        before: Option<&str>,
+    ) -> BoxFuture<HistoryPage>;
+    /// `GET /customers/{id}/recent-receipts`: the latest posted sales, to start a return.
+    fn recent_receipts(&self, token: &str, customer_id: &str) -> BoxFuture<Vec<SaleSummary>>;
 }
 
 /// What the back office needs from the server (phase C4, spec 2.2 §12). `token` is the password
@@ -395,4 +484,19 @@ pub trait BackOffice: Service {
         token: &str,
         body: &PricingSettings,
     ) -> BoxFuture<PricingSettings>;
+    /// `GET /tender-types?all=true`: every tender type, inactive and archived ones too.
+    fn all_tender_types(&self, token: &str) -> BoxFuture<Vec<TenderType>>;
+    /// `PUT /tender-types/{id}` (HQ, `tender.manage`).
+    fn put_tender_type(
+        &self,
+        token: &str,
+        id: &str,
+        body: &TenderTypeBody,
+    ) -> BoxFuture<TenderType>;
+    /// `DELETE /tender-types/{id}`: archive.
+    fn delete_tender_type(&self, token: &str, id: &str) -> BoxFuture<TenderType>;
+    /// `GET /returns?…`: one page (`report.sales`).
+    fn returns(&self, token: &str, query: &DocQuery) -> BoxFuture<ReturnPage>;
+    /// `GET /returns/{id}`.
+    fn sale_return(&self, token: &str, id: &str) -> BoxFuture<SaleReturn>;
 }

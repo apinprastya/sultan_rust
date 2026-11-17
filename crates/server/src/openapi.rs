@@ -126,7 +126,7 @@ impl Modify for SecuritySchemes {
 #[openapi(
     info(title = "Sultan POS API", description = "REST/JSON API of a Sultan POS node \
         (docs/plan.md §1, docs/spec/2.1-organization-access.md, docs/spec/2.2-catalog.md, \
-        docs/spec/2.3-pricing.md, docs/spec/2.5-customers.md). \
+        docs/spec/2.3-pricing.md, docs/spec/2.5-customers.md, docs/spec/2.6-sales.md). \
         Quantities and unit factors are integer thousandths (`*_thousandths`), money is integer \
         minor units, times are unix milliseconds."),
     paths(
@@ -205,6 +205,24 @@ impl Modify for SecuritySchemes {
         routes::customers::archive,
         routes::customers::unarchive,
         routes::customers::merge,
+        routes::customers::recent_receipts,
+        routes::tender_types::list,
+        routes::tender_types::put,
+        routes::tender_types::delete,
+        routes::sales::put,
+        routes::sales::get,
+        routes::sales::list,
+        routes::sales::by_number,
+        routes::sales::get_receipt,
+        routes::sales::void,
+        routes::sales::cart_void,
+        routes::returns::put,
+        routes::returns::get,
+        routes::returns::list,
+        routes::held_carts::put,
+        routes::held_carts::list,
+        routes::held_carts::take,
+        routes::held_carts::delete,
         routes::customers::erase,
         routes::customers::history,
         routes::customer_balance::get,

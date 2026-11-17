@@ -38,6 +38,11 @@ use crate::pricing::{
     EntryPage, PriceEntry, PriceEntryBody, PriceList, PriceListBody, PricingSettings,
     ProductPrices, Quote, QuoteRequest, TaxRate,
 };
+use crate::sales::{
+    CartVoid, CartVoidRequest, DocQuery, HeldCart, HistoryPage, HoldRequest, Receipt, ReturnPage,
+    ReturnRequest, Sale, SalePage, SaleRequest, SaleReturn, SaleSummary, TenderType,
+    TenderTypeBody, VoidRequest,
+};
 use crate::{
     BackOffice, Branch, CashierSession, ClientError, CloseReport, CloseRequest, EventSink,
     LockUser, Login, OverrideGrant, OverrideRequest, Problem, ProtectedAction, ProtectedResult,
@@ -421,6 +426,168 @@ impl Service for HttpService {
             .request(Method::POST, "/pricing/quote", token)
             .json(request);
         Box::pin(send(request))
+    }
+
+    fn tender_types(&self, token: &str) -> crate::BoxFuture<Vec<TenderType>> {
+        let token = (!token.is_empty()).then_some(token);
+        Box::pin(send(self.request(Method::GET, "/tender-types", token)))
+    }
+
+    fn post_sale(
+        &self,
+        token: &str,
+        id: &str,
+        body: &SaleRequest,
+        override_token: Option<&str>,
+    ) -> crate::BoxFuture<Sale> {
+        let request = self
+            .request(Method::PUT, &format!("/sales/{id}"), Some(token))
+            .json(body);
+        Box::pin(send(with_override(request, override_token)))
+    }
+
+    fn sale(&self, token: &str, id: &str) -> crate::BoxFuture<Sale> {
+        Box::pin(send(self.request(
+            Method::GET,
+            &format!("/sales/{id}"),
+            Some(token),
+        )))
+    }
+
+    fn sale_by_number(&self, token: &str, number: &str) -> crate::BoxFuture<Sale> {
+        Box::pin(send(self.request(
+            Method::GET,
+            &format!("/sales/by-number/{number}"),
+            Some(token),
+        )))
+    }
+
+    fn sales(&self, token: &str, query: &DocQuery) -> crate::BoxFuture<SalePage> {
+        Box::pin(send(
+            self.request(Method::GET, "/sales", Some(token))
+                .query(query),
+        ))
+    }
+
+    fn receipt(
+        &self,
+        token: &str,
+        id: &str,
+        copy: bool,
+        override_token: Option<&str>,
+    ) -> crate::BoxFuture<Receipt> {
+        let mut request = self.request(Method::GET, &format!("/sales/{id}/receipt"), Some(token));
+        if copy {
+            request = request.query(&[("copy", "true")]);
+        }
+        Box::pin(send(with_override(request, override_token)))
+    }
+
+    fn void_sale(
+        &self,
+        token: &str,
+        id: &str,
+        body: &VoidRequest,
+        key: &str,
+        override_token: Option<&str>,
+    ) -> crate::BoxFuture<Sale> {
+        let request = self
+            .request(Method::POST, &format!("/sales/{id}/void"), Some(token))
+            .header(IDEMPOTENCY_HEADER, key)
+            .json(body);
+        Box::pin(send(with_override(request, override_token)))
+    }
+
+    fn cart_void(
+        &self,
+        token: &str,
+        body: &CartVoidRequest,
+        key: &str,
+        override_token: Option<&str>,
+    ) -> crate::BoxFuture<CartVoid> {
+        let request = self
+            .request(Method::POST, "/cart-voids", Some(token))
+            .header(IDEMPOTENCY_HEADER, key)
+            .json(body);
+        Box::pin(send(with_override(request, override_token)))
+    }
+
+    fn post_return(
+        &self,
+        token: &str,
+        id: &str,
+        body: &ReturnRequest,
+        override_token: Option<&str>,
+    ) -> crate::BoxFuture<SaleReturn> {
+        let request = self
+            .request(Method::PUT, &format!("/returns/{id}"), Some(token))
+            .json(body);
+        Box::pin(send(with_override(request, override_token)))
+    }
+
+    fn hold_cart(&self, token: &str, id: &str, body: &HoldRequest) -> crate::BoxFuture<HeldCart> {
+        let request = self
+            .request(Method::PUT, &format!("/held-carts/{id}"), Some(token))
+            .json(body);
+        Box::pin(send(request))
+    }
+
+    fn held_carts(&self, token: &str) -> crate::BoxFuture<Vec<HeldCart>> {
+        Box::pin(send(self.request(Method::GET, "/held-carts", Some(token))))
+    }
+
+    fn take_held_cart(&self, token: &str, id: &str, key: &str) -> crate::BoxFuture<HeldCart> {
+        let request = self
+            .request(Method::POST, &format!("/held-carts/{id}/take"), Some(token))
+            .header(IDEMPOTENCY_HEADER, key);
+        Box::pin(send(request))
+    }
+
+    fn delete_held_cart(
+        &self,
+        token: &str,
+        id: &str,
+        override_token: Option<&str>,
+    ) -> crate::BoxFuture<HeldCart> {
+        let request = self.request(Method::DELETE, &format!("/held-carts/{id}"), Some(token));
+        Box::pin(send(with_override(request, override_token)))
+    }
+
+    fn customer_history(
+        &self,
+        token: &str,
+        id: &str,
+        before: Option<&str>,
+    ) -> crate::BoxFuture<HistoryPage> {
+        let mut request = self.request(
+            Method::GET,
+            &format!("/customers/{id}/history"),
+            Some(token),
+        );
+        if let Some(before) = before {
+            request = request.query(&[("before", before)]);
+        }
+        Box::pin(send(request))
+    }
+
+    fn recent_receipts(
+        &self,
+        token: &str,
+        customer_id: &str,
+    ) -> crate::BoxFuture<Vec<SaleSummary>> {
+        Box::pin(send(self.request(
+            Method::GET,
+            &format!("/customers/{customer_id}/recent-receipts"),
+            Some(token),
+        )))
+    }
+}
+
+/// Adds `X-Override` when a token (or several, comma separated) is given.
+fn with_override(request: RequestBuilder, override_token: Option<&str>) -> RequestBuilder {
+    match override_token {
+        Some(t) => request.header(OVERRIDE_HEADER, t),
+        None => request,
     }
 }
 
@@ -892,6 +1059,48 @@ impl BackOffice for HttpService {
             .request(Method::PUT, "/settings/pricing", Some(token))
             .json(body);
         Box::pin(send(request))
+    }
+
+    fn all_tender_types(&self, token: &str) -> crate::BoxFuture<Vec<TenderType>> {
+        Box::pin(send(
+            self.request(Method::GET, "/tender-types", Some(token))
+                .query(&[("all", "true")]),
+        ))
+    }
+
+    fn put_tender_type(
+        &self,
+        token: &str,
+        id: &str,
+        body: &TenderTypeBody,
+    ) -> crate::BoxFuture<TenderType> {
+        Box::pin(send(
+            self.request(Method::PUT, &format!("/tender-types/{id}"), Some(token))
+                .json(body),
+        ))
+    }
+
+    fn delete_tender_type(&self, token: &str, id: &str) -> crate::BoxFuture<TenderType> {
+        Box::pin(send(self.request(
+            Method::DELETE,
+            &format!("/tender-types/{id}"),
+            Some(token),
+        )))
+    }
+
+    fn returns(&self, token: &str, query: &DocQuery) -> crate::BoxFuture<ReturnPage> {
+        Box::pin(send(
+            self.request(Method::GET, "/returns", Some(token))
+                .query(query),
+        ))
+    }
+
+    fn sale_return(&self, token: &str, id: &str) -> crate::BoxFuture<SaleReturn> {
+        Box::pin(send(self.request(
+            Method::GET,
+            &format!("/returns/{id}"),
+            Some(token),
+        )))
     }
 }
 

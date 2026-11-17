@@ -17,3 +17,6 @@ mod idempotency;
 mod org;
 mod outbox_audit;
 mod pricing;
+mod sales;
+mod sales_fixtures;
+mod sales_returns;

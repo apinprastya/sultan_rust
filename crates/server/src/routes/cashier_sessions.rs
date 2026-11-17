@@ -60,6 +60,7 @@ use sultan_core::cashier_session::{
 };
 use sultan_core::ids::{BranchId, CashierSessionId, RegisterId, UserId};
 use sultan_core::money::Money;
+use sultan_core::sale::{CountAmount, SessionEvent, session_report};
 use sultan_core::time::Timestamp;
 use sultan_db::audit::{self, AuditEntry};
 use sultan_db::cashier_sessions::{
@@ -200,6 +201,171 @@ pub struct CloseReportDto {
     pub tenders: Vec<TenderDto>,
     /// The count per denomination, if entered (largest first).
     pub counts: Vec<CountDto>,
+    /// The sales figures (spec 2.6 §10), computed from the session's documents, which never
+    /// change after the close.
+    pub sales: SalesReportDto,
+}
+
+/// A count and an amount.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, ToSchema)]
+pub struct CountAmountDto {
+    /// How many.
+    pub count: u32,
+    /// The sum, minor units.
+    pub amount: i64,
+}
+
+impl From<CountAmount> for CountAmountDto {
+    fn from(c: CountAmount) -> Self {
+        Self {
+            count: c.count,
+            amount: c.amount.minor(),
+        }
+    }
+}
+
+/// Sales and refunds of one tender type in the sales figures.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
+pub struct SalesTenderDto {
+    /// The tender type (`null` for the exchange tender).
+    pub tender_type_id: Option<String>,
+    /// Its kind.
+    pub kind: String,
+    /// Sale tenders.
+    pub sales: CountAmountDto,
+    /// Refunds paid with it (returns and post-voids).
+    pub refunds: CountAmountDto,
+}
+
+/// The session's sales figures (spec 2.6 §10, `core::sale::session_report`).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, ToSchema)]
+pub struct SalesReportDto {
+    /// Σ cash received on sale tenders.
+    pub cash_received: i64,
+    /// Σ change handed back.
+    pub change_given: i64,
+    /// Σ cash paid out for returns and post-voids.
+    pub cash_refunds: i64,
+    /// Σ cash rounding of the documents (already inside the cash figures).
+    pub cash_rounding: i64,
+    /// Petty cash in.
+    pub cash_in: i64,
+    /// Petty cash out.
+    pub cash_out: i64,
+    /// Customer balance payouts.
+    pub payouts: i64,
+    /// `opening_cash + cash_received − change_given − cash_refunds + cash_in − cash_out −
+    /// payouts`.
+    pub expected_cash: i64,
+    /// Per tender type.
+    pub tenders: Vec<SalesTenderDto>,
+    /// Removed cart lines.
+    pub line_voids: CountAmountDto,
+    /// Cleared carts.
+    pub cart_voids: CountAmountDto,
+    /// Post-voids paid in this session.
+    pub post_voids: CountAmountDto,
+    /// Returns paid in this session.
+    pub returns: CountAmountDto,
+    /// Line discounts.
+    pub line_discounts: CountAmountDto,
+    /// Cart discounts.
+    pub cart_discounts: CountAmountDto,
+    /// Price overrides (how much they lowered the lines).
+    pub price_overrides: CountAmountDto,
+    /// Change saved to customer balances.
+    pub saved_change: i64,
+    /// Paid with customer balances.
+    pub balance_paid: i64,
+}
+
+/// The line and cart voids of `session` (audit entries of `POST /cart-voids`).
+async fn till_voids(
+    tx: &mut Tx,
+    session: CashierSessionId,
+    events: &mut Vec<SessionEvent>,
+) -> Result<(), ApiError> {
+    const PAGE: u32 = 500;
+    for (action, line) in [
+        (super::sales::LINE_VOID, true),
+        (super::sales::CART_VOID, false),
+    ] {
+        let mut before_id = None;
+        loop {
+            let filter = audit::AuditFilter {
+                action: Some(action.to_owned()),
+                target: Some(format!("cashier_session:{session}")),
+                before_id,
+                limit: PAGE,
+                ..audit::AuditFilter::default()
+            };
+            let page = audit::query(&mut *tx, &filter).await?;
+            for entry in &page {
+                let amount = Money::from_minor(
+                    entry
+                        .after
+                        .as_ref()
+                        .and_then(|a| a.get("amount"))
+                        .and_then(Value::as_i64)
+                        .unwrap_or_default(),
+                );
+                events.push(if line {
+                    SessionEvent::LineVoid(amount)
+                } else {
+                    SessionEvent::CartVoid(amount)
+                });
+            }
+            if page.len() < PAGE as usize {
+                break;
+            }
+            before_id = page.last().map(|e| e.id);
+        }
+    }
+    Ok(())
+}
+
+/// The sales figures of `record` (spec 2.6 §10): its documents, till voids and payouts.
+///
+/// # Errors
+/// The database error, or `422 amount_overflow`.
+pub async fn sales_report(tx: &mut Tx, record: &SessionRecord) -> Result<SalesReportDto, ApiError> {
+    let id = record.session.id();
+    let mut events = sultan_db::sales::session_events(&mut *tx, id).await?;
+    till_voids(tx, id, &mut events).await?;
+    let payouts = sultan_db::customers::session_payouts(&mut *tx, id).await?;
+    if payouts > Money::ZERO {
+        events.push(SessionEvent::Payout(payouts));
+    }
+    let r = session_report(record.session.opening_cash(), &events)?;
+    Ok(SalesReportDto {
+        cash_received: r.cash_received.minor(),
+        change_given: r.change_given.minor(),
+        cash_refunds: r.cash_refunds.minor(),
+        cash_rounding: r.cash_rounding.minor(),
+        cash_in: r.cash_in.minor(),
+        cash_out: r.cash_out.minor(),
+        payouts: r.payouts.minor(),
+        expected_cash: r.expected_cash.minor(),
+        tenders: r
+            .tenders
+            .iter()
+            .map(|(k, t)| SalesTenderDto {
+                tender_type_id: k.tender_type.map(|t| t.to_string()),
+                kind: k.kind.as_str().to_owned(),
+                sales: t.sales.into(),
+                refunds: t.refunds.into(),
+            })
+            .collect(),
+        line_voids: r.line_voids.into(),
+        cart_voids: r.cart_voids.into(),
+        post_voids: r.post_voids.into(),
+        returns: r.returns.into(),
+        line_discounts: r.line_discounts.into(),
+        cart_discounts: r.cart_discounts.into(),
+        price_overrides: r.price_overrides.into(),
+        saved_change: r.saved_change.minor(),
+        balance_paid: r.balance_paid.minor(),
+    })
 }
 
 /// `GET /cashier-sessions/{id}`: the session and, once closed, its stored close report.
@@ -274,8 +440,10 @@ fn report_dto(
     context: ReportContext,
     report: &CloseReport,
     counts: &[DenominationCount],
+    sales: SalesReportDto,
 ) -> CloseReportDto {
     CloseReportDto {
+        sales,
         session: session_dto(record, Some(report.expected_cash)),
         forced: matches!(
             record.session.status(),
@@ -609,7 +777,14 @@ pub async fn get(
             let context = cashier_sessions::report_context(&mut tx, id)
                 .await?
                 .ok_or_else(|| ApiError::not_found("cashier session"))?;
-            Some(report_dto(&record, context, &stored.report, &stored.counts))
+            let sales = sales_report(&mut tx, &record).await?;
+            Some(report_dto(
+                &record,
+                context,
+                &stored.report,
+                &stored.counts,
+                sales,
+            ))
         }
     };
     tx.commit().await?;
@@ -710,7 +885,8 @@ async fn finish_close(
     let context = cashier_sessions::report_context(&mut tx, session.id())
         .await?
         .ok_or_else(|| ApiError::not_found("cashier session"))?;
-    let dto = report_dto(record, context, report, counts);
+    let sales = sales_report(&mut tx, record).await?;
+    let dto = report_dto(record, context, report, counts, sales);
     let now = state.now();
     let entry = audit(who, now, action, record, Some(before), to_json(&dto));
     audit::append(&mut tx, &entry).await?;

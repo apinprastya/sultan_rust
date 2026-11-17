@@ -5,9 +5,11 @@
 use sqlx::Row as _;
 use sqlx::mysql::MySqlRow;
 use sqlx::sqlite::SqliteRow;
+use sultan_core::catalog::Qty;
 use sultan_core::ids::{
-    BarcodeId, BranchId, BrandId, CashierSessionId, CategoryId, CompanyId, LocationId, OptionId,
-    OptionValueId, ProductId, RegisterId, RoleId, TaxClassId, UnitId, UserId, VariantId,
+    BarcodeId, BranchId, BrandId, CashierSessionId, CategoryId, CompanyId, HeldCartId, LocationId,
+    OptionId, OptionValueId, ProductId, RegisterId, ReturnId, RoleId, SaleId, TaxClassId,
+    TenderTypeId, UnitId, UserId, VariantId,
 };
 use sultan_core::money::Money;
 use sultan_core::pricing::{PriceEntryId, PriceListId};
@@ -59,6 +61,7 @@ arg_from_id!(
     CashierSessionId,
     CategoryId,
     CompanyId,
+    HeldCartId,
     LocationId,
     OptionId,
     OptionValueId,
@@ -66,8 +69,11 @@ arg_from_id!(
     PriceListId,
     ProductId,
     RegisterId,
+    ReturnId,
     RoleId,
+    SaleId,
     TaxClassId,
+    TenderTypeId,
     UnitId,
     UserId,
     VariantId
@@ -121,6 +127,11 @@ impl From<Option<Timestamp>> for Arg {
 impl From<Money> for Arg {
     fn from(m: Money) -> Self {
         Self::I64(m.minor())
+    }
+}
+impl From<Qty> for Arg {
+    fn from(q: Qty) -> Self {
+        Self::I64(q.thousandths())
     }
 }
 impl From<&str> for Arg {
@@ -320,6 +331,11 @@ pub(crate) fn opt_ts(row: &dyn Row, col: &str) -> Result<Option<Timestamp>> {
 /// Reads a money column.
 pub(crate) fn money(row: &dyn Row, col: &str) -> Result<Money> {
     row.i64(col).map(Money::from_minor)
+}
+
+/// Reads a quantity column (thousandths).
+pub(crate) fn qty(row: &dyn Row, col: &str) -> Result<Qty> {
+    row.i64(col).map(Qty::from_thousandths)
 }
 
 /// Reads a 32-byte hash column.

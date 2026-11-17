@@ -74,6 +74,13 @@ impl Problem {
         self
     }
 
+    /// `cart_stale` (spec 2.6 §5): the totals of the server's fresh quote.
+    #[must_use]
+    pub fn quote_totals(&self) -> Option<crate::SaleTotals> {
+        let totals = self.extra.get("quote")?.get("totals")?;
+        serde_json::from_value(totals.clone()).ok()
+    }
+
     fn int(&self, key: &str) -> Option<i64> {
         self.extra.get(key).and_then(Value::as_i64)
     }

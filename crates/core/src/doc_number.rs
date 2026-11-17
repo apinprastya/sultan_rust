@@ -8,6 +8,9 @@
 //! - Cashier session numbers are `<BRANCH>-<REGISTER>-S-<YYMMDD>-<NN>` ([`session_number`]),
 //!   e.g. `JKT01-R2-S-261107-01`. `NN` is a per-register, per-local-day sequence starting at 1,
 //!   printed with at least two digits; the 100th session of a day is `-100`, never a failure.
+//! - Sale numbers are `<BRANCH>-<REGISTER>-<YYMMDD>-<NNNN>` ([`sale_number`]) and return numbers
+//!   `<BRANCH>-<REGISTER>-RT-<YYMMDD>-<NNNN>` ([`return_number`]), per register and local day,
+//!   at least four digits (spec 2.6 §1).
 //!
 //! Pure: the time zone and the instant are passed in. The tz database is compiled in
 //! (`chrono-tz`), so the result does not depend on the machine's zone files.
@@ -38,6 +41,24 @@ impl BranchTimeZone {
     #[must_use]
     pub fn name(self) -> &'static str {
         self.0.name()
+    }
+
+    /// The local date and time of instant `at` in this zone, clamped like [`LocalDay::of`].
+    #[must_use]
+    pub fn local_datetime(self, at: Timestamp) -> chrono::NaiveDateTime {
+        self.0
+            .timestamp_millis_opt(at.unix_millis())
+            .single()
+            .map_or_else(
+                || {
+                    if at.unix_millis() < 0 {
+                        chrono::NaiveDateTime::MIN
+                    } else {
+                        chrono::NaiveDateTime::MAX
+                    }
+                },
+                |dt| dt.naive_local(),
+            )
     }
 }
 
@@ -130,6 +151,21 @@ impl LocalDay {
 #[must_use]
 pub fn session_number(branch_code: &str, register_code: &str, day: LocalDay, seq: u32) -> String {
     format!("{branch_code}-{register_code}-S-{}-{seq:02}", day.yymmdd())
+}
+
+/// The number of the `seq`-th sale of `day` on a register (spec 2.6 §1):
+/// `JKT01-R2-261116-0001`. `seq` starts at 1 and is printed with at least four digits; the
+/// 10 000th sale of a day is `-10000`, never a failure.
+#[must_use]
+pub fn sale_number(branch_code: &str, register_code: &str, day: LocalDay, seq: u32) -> String {
+    format!("{branch_code}-{register_code}-{}-{seq:04}", day.yymmdd())
+}
+
+/// The number of the `seq`-th return of `day` on a register (spec 2.6 §1):
+/// `JKT01-R2-RT-261116-0001`, with the same sequence rules as [`sale_number`].
+#[must_use]
+pub fn return_number(branch_code: &str, register_code: &str, day: LocalDay, seq: u32) -> String {
+    format!("{branch_code}-{register_code}-RT-{}-{seq:04}", day.yymmdd())
 }
 
 #[cfg(test)]
@@ -230,5 +266,44 @@ mod tests {
         for (branch, register, seq, expected) in cases {
             assert_eq!(session_number(branch, register, day, seq), expected);
         }
+    }
+
+    /// Spec 2.6 §15 case 19: sale and return numbers across midnight in `Asia/Jakarta`.
+    #[test]
+    fn sale_and_return_numbers_across_midnight() {
+        // 2026-11-16T00:00:00Z.
+        const NOV16_UTC: i64 = NOV7_UTC + 9 * 24 * HOUR;
+        let jkt = tz("Asia/Jakarta");
+        let day = |at| LocalDay::of(Timestamp::from_unix_millis(at), jkt);
+        #[rustfmt::skip]
+        let cases = [
+            // 16:59:59.999Z = 23:59:59.999 WIB on the 16th.
+            (NOV16_UTC + 17 * HOUR - 1, 1, "JKT01-R2-261116-0001", "JKT01-R2-RT-261116-0001"),
+            // 17:00Z = 00:00 WIB on the 17th: a new day, the sequence restarts.
+            (NOV16_UTC + 17 * HOUR, 1, "JKT01-R2-261117-0001", "JKT01-R2-RT-261117-0001"),
+            (NOV16_UTC + 18 * HOUR, 42, "JKT01-R2-261117-0042", "JKT01-R2-RT-261117-0042"),
+            (NOV16_UTC + 18 * HOUR, 10_000, "JKT01-R2-261117-10000", "JKT01-R2-RT-261117-10000"),
+        ];
+        for (at, seq, sale, ret) in cases {
+            assert_eq!(sale_number("JKT01", "R2", day(at), seq), sale);
+            assert_eq!(return_number("JKT01", "R2", day(at), seq), ret);
+        }
+    }
+
+    #[test]
+    fn local_datetime_follows_the_zone() {
+        let jkt = tz("Asia/Jakarta");
+        let at = jkt.local_datetime(Timestamp::from_unix_millis(
+            NOV7_UTC + 17 * HOUR + 5 * 60_000,
+        ));
+        assert_eq!(at.to_string(), "2026-11-08 00:05:00");
+        assert_eq!(
+            jkt.local_datetime(Timestamp::from_unix_millis(i64::MAX)),
+            chrono::NaiveDateTime::MAX
+        );
+        assert_eq!(
+            jkt.local_datetime(Timestamp::from_unix_millis(i64::MIN)),
+            chrono::NaiveDateTime::MIN
+        );
     }
 }

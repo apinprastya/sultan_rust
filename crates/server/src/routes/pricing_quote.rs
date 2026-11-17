@@ -61,7 +61,7 @@ pub fn reader_branch(reader: &CatalogReader) -> Option<BranchId> {
 }
 
 /// Today in `branch`'s time zone (the default zone for an unknown branch or zone).
-async fn today_at(state: &AppState, branch: BranchId) -> Result<NaiveDate, ApiError> {
+pub(crate) async fn today_at(state: &AppState, branch: BranchId) -> Result<NaiveDate, ApiError> {
     let tz = org::get_branch(&state.db, branch)
         .await?
         .and_then(|b| b.timezone.parse::<BranchTimeZone>().ok())
@@ -80,7 +80,7 @@ fn ymd(value: u32) -> Option<NaiveDate> {
 
 /// The lists a sale at `branch` for `customer` uses. An unknown, archived, merged or erased
 /// customer is `422 invalid_reference` (`customer_id`).
-async fn price_targets(
+pub(crate) async fn price_targets(
     state: &AppState,
     branch: BranchId,
     customer: Option<Uuid>,

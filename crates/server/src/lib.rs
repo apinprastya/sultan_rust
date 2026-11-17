@@ -57,14 +57,14 @@ pub mod token;
 use axum::Router;
 use axum::http::Request;
 use axum::middleware::from_fn_with_state;
-use axum::routing::{get, post};
+use axum::routing::{get, post, put};
 use tower_http::trace::{DefaultOnRequest, DefaultOnResponse, TraceLayer};
 use tracing::Level;
 
 use routes::{
     audit, auth, branches, cashier_sessions, catalog, customer_balance, customer_groups, customers,
-    locations, overrides as override_routes, permissions, pricing, pricing_quote, product_images,
-    products, registers, roles, taxonomy, users,
+    held_carts, locations, overrides as override_routes, permissions, pricing, pricing_quote,
+    product_images, products, registers, returns, roles, sales, taxonomy, tender_types, users,
 };
 
 pub use error::ApiError;
@@ -97,6 +97,7 @@ pub fn routes(state: &AppState) -> Router<AppState> {
         .merge(catalog_actions())
         .merge(customer_actions())
         .merge(pricing_actions())
+        .merge(sales_actions())
         .route_layer(from_fn_with_state(state.clone(), idempotency::middleware));
     let api = Router::new()
         .route("/openapi.json", get(openapi::openapi_json))
@@ -151,6 +152,7 @@ pub fn routes(state: &AppState) -> Router<AppState> {
         .merge(catalog_routes())
         .merge(customer_routes())
         .merge(pricing_routes())
+        .merge(sales_routes())
         .merge(idempotent)
         .method_not_allowed_fallback(async || ApiError::method_not_allowed());
     Router::new()
@@ -290,6 +292,37 @@ fn pricing_routes() -> Router<AppState> {
 
 /// The span of one request: method and path only. The query string is left out because it is
 /// the one part of the URI a client could put a secret in; headers and bodies are never recorded.
+fn sales_actions() -> Router<AppState> {
+    Router::new()
+        .route("/sales/{id}/void", post(sales::void))
+        .route("/cart-voids", post(sales::cart_void))
+        .route("/held-carts/{id}/take", post(held_carts::take))
+}
+
+fn sales_routes() -> Router<AppState> {
+    Router::new()
+        .route("/tender-types", get(tender_types::list))
+        .route(
+            "/tender-types/{id}",
+            put(tender_types::put).delete(tender_types::delete),
+        )
+        .route("/sales", get(sales::list))
+        .route("/sales/{id}", get(sales::get).put(sales::put))
+        .route("/sales/by-number/{number}", get(sales::by_number))
+        .route("/sales/{id}/receipt", get(sales::get_receipt))
+        .route("/returns", get(returns::list))
+        .route("/returns/{id}", get(returns::get).put(returns::put))
+        .route("/held-carts", get(held_carts::list))
+        .route(
+            "/held-carts/{id}",
+            put(held_carts::put).delete(held_carts::delete),
+        )
+        .route(
+            "/customers/{id}/recent-receipts",
+            get(customers::recent_receipts),
+        )
+}
+
 fn request_span<B>(request: &Request<B>) -> tracing::Span {
     tracing::info_span!("request", method = %request.method(), path = %request.uri().path())
 }

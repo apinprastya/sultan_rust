@@ -184,7 +184,12 @@ Every setting is taken from, in order: **command-line flag > environment variabl
 - `--role branch` answers master-data writes with `403 read_only_replica`, but HQ↔branch sync is
   not implemented yet: a branch node serves its local database only.
 - The server speaks plain HTTP (no TLS yet); keep it on the shop LAN.
-- The register window has no selling yet (spec 2.6): the session home looks up a scanned or
+- Sales (spec 2.6) are in the API (phase S3): tender types, `PUT /sales/{id}` (re-quoted and
+  checked again at posting), receipts and reprints, post-voids, till voids (`POST /cart-voids`),
+  returns and exchanges, held carts, the purchase history and the close report's sales figures;
+  see `postman/README.md`. The return window `return_days` is fixed at 30 days (no setting yet),
+  the receipt width is chosen per request (`?width=32|42|48`) and printing waits for 2.11.
+- The register window has no selling yet (S4): the session home looks up a scanned or
   typed barcode, scale label, SKU or PLU (`GET /catalog/lookup`) and shows the item, its unit,
   quantity and how it matched, or why it cannot be sold here, with its price (spec 2.3, R5): the
   store price of the scanned unit (a box without its own price is the base price × its factor),
@@ -207,8 +212,8 @@ Every setting is taken from, in order: **command-line flag > environment variabl
   balance out; the attached customer is only shown on the session home (it joins a sale with 2.6),
   is let go when the register locks, and does not follow later edits made elsewhere until it is
   looked up again. No payout slip is printed yet. Purchase history
-  (`GET /customers/{id}/history`) is empty until sales exist (spec 2.6), so the customer balance
-  only changes by merges and cash payouts for now. On a branch node only sign-up works; a till's
+  (`GET /customers/{id}/history`) lists the customer's sales and returns (spec 2.6 S3); the
+  register shows it from S5. On a branch node only sign-up works; a till's
   profile edit forwarded to HQ (and `503 hq_unreachable`) comes with sync.
 - Back office: the product image is picked by typing the file path (no file dialog yet);
   categories, brands and products are archived, never deleted. Pricing (F7, spec 2.3 R4): archived

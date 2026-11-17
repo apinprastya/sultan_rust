@@ -1563,4 +1563,29 @@ impl BackOffice for FakeService {
     ) -> crate::BoxFuture<crate::BalanceSettings> {
         self.bo_put_balance_settings(token, body)
     }
+
+    fn all_tender_types(&self, token: &str) -> crate::BoxFuture<Vec<crate::TenderType>> {
+        self.tender_types_call(token, true)
+    }
+
+    fn put_tender_type(
+        &self,
+        token: &str,
+        id: &str,
+        body: &crate::TenderTypeBody,
+    ) -> crate::BoxFuture<crate::TenderType> {
+        self.put_tender_call(token, id, body)
+    }
+
+    fn delete_tender_type(&self, token: &str, id: &str) -> crate::BoxFuture<crate::TenderType> {
+        self.archive_tender_call(token, id)
+    }
+
+    fn returns(&self, token: &str, query: &crate::DocQuery) -> crate::BoxFuture<crate::ReturnPage> {
+        self.returns_call(token, query)
+    }
+
+    fn sale_return(&self, token: &str, id: &str) -> crate::BoxFuture<crate::SaleReturn> {
+        self.return_call(token, id)
+    }
 }

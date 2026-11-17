@@ -128,6 +128,22 @@ id_type!(
     /// A tax class of products (`Standard`, `Exempt`; rates in spec 2.3), spec 2.2 §2.
     TaxClassId
 );
+id_type!(
+    /// A tender type (HQ master data, e.g. "Debit BCA" of kind card), spec 2.6 §1.
+    TenderTypeId
+);
+id_type!(
+    /// A posted sale document, spec 2.6 §1.
+    SaleId
+);
+id_type!(
+    /// A posted return document, spec 2.6 §1.
+    ReturnId
+);
+id_type!(
+    /// A held cart on the branch server, spec 2.6 §4.
+    HeldCartId
+);
 
 #[cfg(test)]
 mod tests {

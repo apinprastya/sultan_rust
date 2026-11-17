@@ -2,11 +2,11 @@
 
 `sultan-api.postman_collection.json` tests the main flows of spec 2.1 (`docs/spec/2.1-organization-access.md`),
 of the catalog, spec 2.2 (`docs/spec/2.2-catalog.md`), of pricing, spec 2.3
-(`docs/spec/2.3-pricing.md`), and of customers, spec 2.5 (`docs/spec/2.5-customers.md`), against a
-running node. Requests and bodies follow the OpenAPI document served at
+(`docs/spec/2.3-pricing.md`), of customers, spec 2.5 (`docs/spec/2.5-customers.md`), and of sales,
+spec 2.6 (`docs/spec/2.6-sales.md`), against a running node. Requests and bodies follow the OpenAPI document served at
 `GET /api/v1/openapi.json` (import that URL into Postman to browse every endpoint).
 
-Flow (122 requests, each with test scripts). Spec 2.1 (requests 01–35):
+Flow (147 requests, each with test scripts). Spec 2.1 (requests 01–35):
 password login → OpenAPI document → create branch (`PUT`, client UUIDv7, time zone
 `Asia/Makassar`) → replay the same `PUT` (idempotent) → a time zone that is not IANA (`WIB`) is
 rejected (`invalid_field`) → create register → issue pairing code → pair (the answer names the branch: `branch_code`,
@@ -76,6 +76,23 @@ back to the default tier (9 000) → delete the entry. A quote **with** a custom
 group) is covered by the server tests (`crates/server/tests/api/pricing_quote.rs`); the
 pricing folder runs before customer price lists exist in the collection.
 
+**Sales (folder "Sales (spec 2.6)", requests 123–147, phase S3):** create a product and price it
+10 000 a pcs in the default list → the seeded tender types with the device token (Tunai, Kartu
+debit, QRIS, Saldo pelanggan) → the owner opens a cashier session at the register → a sale posted
+with stale totals is `409 cart_stale` and carries the fresh quote (`quote.totals`) → post the sale
+with those totals (`PUT /sales/{id}`, 2 pcs, cash 50 000, change 30 000) → the same `PUT` again
+answers the stored sale (`200`) → the receipt text → a reprint (`copy=true`, 42 columns: COPY,
+audited) → find the sale by its number → the session's sales → hold a cart → the branch's held
+carts → take it (`Idempotency-Key`) → taking it again is `409 cart_taken` → a removed cart line
+(`POST /cart-voids`) → return 1 pcs by receipt (refund 10 000 in cash, number `…-RT-…`) → the sale
+with a return cannot be voided (`409 has_returns`) → a second sale → post-void it
+(`Idempotency-Key`, 20 000 back in cash) → close the session: the report's `sales` block (cash
+received 100 000, change 60 000, refunds 30 000, one return, one post-void, one line void) and
+expected cash 10 000 → the stored report reads the same → the owner lists the branch's returns →
+create a tender type (`tender.manage`, HQ) → archive it. The owner holds every permission, so no
+override is asked for; overrides, exchanges, the customer balance and the other refusals are
+covered by the server's tests (`crates/server/tests/api/sales.rs`, `sales_returns.rs`).
+
 The upload reads `postman/fixtures/product-800x400.png`, so pass `--working-dir postman`.
 
 IDs and codes are generated fresh in the first request's test script, so the collection can be run
@@ -112,6 +129,9 @@ cargo run -p sultan-server --example dev_server -- 8080 &
 postman collection run postman/sultan-api.postman_collection.json --working-dir postman \
     --env-var baseUrl=http://127.0.0.1:8080/api/v1
 ```
+
+S3 ran the whole collection against `sultan serve` on a fresh SQLite database (147/147 requests
+passed).
 
 The run needs no Postman login; it only prints a note that results are not published to the cloud.
 

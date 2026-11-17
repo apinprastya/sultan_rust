@@ -46,8 +46,9 @@ const fn pct(percent: u16) -> Limit {
 /// delivered to existing installs by the migration `20261109000001_catalog.sql`; customer grants
 /// spec 2.5 §12, by `20261111000002_customers.sql`; pricing grants spec 2.3 §6, §9, by
 /// `20261111000003_pricing.sql`, which adds `price.manage` but keeps existing `price.override`
-/// grants as they are, so an older Manager keeps an unlimited one). Only Owner is reset by
-/// [`seed_defaults`]; the others are created once and are then editable.
+/// grants as they are, so an older Manager keeps an unlimited one; sales grants spec 2.6 §11, by
+/// `20261117000001_sales.sql`: `sale.reprint` for Manager, `tender.manage` for Owner only). Only
+/// Owner is reset by [`seed_defaults`]; the others are created once and are then editable.
 ///
 /// # Panics
 /// Never: every limit below is valid for its permission (checked by the unit tests).
@@ -99,6 +100,7 @@ pub fn default_roles() -> Vec<Role> {
                 (P::CustomerManage, None),
                 (P::CustomerBalancePayout, None),
                 (P::PriceManage, None),
+                (P::SaleReprint, None),
             ],
         ),
         role(

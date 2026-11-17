@@ -38,11 +38,13 @@ pub enum BalanceEntryKind {
     MergeOut,
     /// `merge_in`: the surviving customer receives it.
     MergeIn,
+    /// `refund` (+): a return or post-void refunded to the balance (spec 2.6 §19 item 10).
+    Refund,
 }
 
 impl BalanceEntryKind {
     /// Every kind.
-    pub const ALL: [Self; 7] = [
+    pub const ALL: [Self; 8] = [
         Self::ChangeSaved,
         Self::Payment,
         Self::ChangeSavedReversed,
@@ -50,6 +52,7 @@ impl BalanceEntryKind {
         Self::Payout,
         Self::MergeOut,
         Self::MergeIn,
+        Self::Refund,
     ];
 
     /// The stored key, e.g. `change_saved`.
@@ -63,6 +66,7 @@ impl BalanceEntryKind {
             Self::Payout => "payout",
             Self::MergeOut => "merge_out",
             Self::MergeIn => "merge_in",
+            Self::Refund => "refund",
         }
     }
 
@@ -78,7 +82,7 @@ impl BalanceEntryKind {
     #[must_use]
     pub const fn positive(self) -> Option<bool> {
         match self {
-            Self::ChangeSaved | Self::PaymentReversed => Some(true),
+            Self::ChangeSaved | Self::PaymentReversed | Self::Refund => Some(true),
             Self::Payment | Self::ChangeSavedReversed => Some(false),
             Self::Payout | Self::MergeOut | Self::MergeIn => None,
         }
@@ -436,5 +440,6 @@ mod tests {
         assert_eq!(BalanceEntryKind::ChangeSaved.positive(), Some(true));
         assert_eq!(BalanceEntryKind::Payment.positive(), Some(false));
         assert_eq!(BalanceEntryKind::MergeOut.positive(), None);
+        assert_eq!(BalanceEntryKind::Refund.positive(), Some(true));
     }
 }

@@ -37,6 +37,10 @@
 //!   `variant_ids` (the variants an entry write touched, or `null` when any price may have
 //!   changed). Every socket (spec 2.3 §9): registers re-price open carts and refresh the shown
 //!   item.
+//! - `sale.posted`: `sale_id`, `number`, `register_id`, `cashier_session_id`, `total`, `paid`;
+//!   `sale.voided`: `sale_id`, `number`. Callers who may see the branch (spec 2.6 §11).
+//! - `cart.held` / `cart.taken`: `held_cart_id`, `register_id`. Callers who may see the branch:
+//!   registers refresh the resume list (spec 2.6 §4; `cart.taken` also when a cart is dropped).
 //! - `events.lagged`: `missed`. A socket that fell behind; refetch everything.
 //!
 //! Before each delivery the socket's own login session is checked again; once it is revoked,

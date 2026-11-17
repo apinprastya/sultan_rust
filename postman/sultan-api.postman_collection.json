@@ -1,7 +1,7 @@
 {
   "info": {
-    "name": "Sultan POS API (2.1 Organization & access, 2.2 Catalog, 2.5 Customers)",
-    "description": "Main flows of /api/v1, matching GET /api/v1/openapi.json (docs/plan.md §1, docs/spec/2.1-organization-access.md, docs/spec/2.2-catalog.md, docs/spec/2.5-customers.md). Run against the dev server: see postman/README.md.",
+    "name": "Sultan POS API (2.1 Organization & access, 2.2 Catalog, 2.3 Pricing, 2.5 Customers, 2.6 Sales)",
+    "description": "Main flows of /api/v1, matching GET /api/v1/openapi.json (docs/plan.md §1, docs/spec/2.1-organization-access.md, docs/spec/2.2-catalog.md, docs/spec/2.5-customers.md, docs/spec/2.6-sales.md). Run against the dev server: see postman/README.md.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "item": [
@@ -6004,6 +6004,1259 @@
                 "00000000-0000-7000-8000-000000000201",
                 "entries",
                 "{{prEntry}}"
+              ]
+            },
+            "description": ""
+          }
+        }
+      ]
+    },
+    {
+      "name": "Sales (spec 2.6)",
+      "item": [
+        {
+          "name": "123 Create a product to sell",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Fresh client-generated IDs for the sales flow (spec 2.6).",
+                  "function uuidv7() {",
+                  "    const hex = (n) => Array.from({ length: n }, () => Math.floor(Math.random() * 16).toString(16)).join('');",
+                  "    const ts = Date.now().toString(16).padStart(12, '0');",
+                  "    const variant = (8 + Math.floor(Math.random() * 4)).toString(16);",
+                  "    return `${ts.slice(0, 8)}-${ts.slice(8, 12)}-7${hex(3)}-${variant}${hex(3)}-${hex(12)}`;",
+                  "}",
+                  "[\"slProduct\", \"slPcs\", \"slVariant\", \"slEntry\", \"slSale\", \"slSale2\", \"slReturn\", \"slCart\", \"slCartId\", \"slOpenKey\", \"slTakeKey\", \"slVoidLineKey\", \"slVoidKey\", \"slCloseKey\", \"slTender\", \"slStale\"].forEach((k) => pm.collectionVariables.set(k, uuidv7()));",
+                  "pm.collectionVariables.set('slCode', 'KOPI' + String(Date.now()).slice(-6));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201', () => pm.response.to.have.status(201));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/products/{{slProduct}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "products",
+                "{{slProduct}}"
+              ]
+            },
+            "description": "Kopi Sachet, pcs (spec 2.2). Generates the IDs of the sales flow.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"code\": \"{{slCode}}\",\n  \"name\": \"Kopi Sachet\",\n  \"type\": \"stock\",\n  \"tax_class_id\": \"00000000-0000-7000-8000-000000000101\",\n  \"units\": [{ \"id\": \"{{slPcs}}\", \"name\": \"pcs\", \"kind\": \"integer\", \"factor_thousandths\": 1000 }],\n  \"base_unit_id\": \"{{slPcs}}\",\n  \"variants\": [{ \"id\": \"{{slVariant}}\" }]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "124 Price it: 10 000 a pcs",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201', () => pm.response.to.have.status(201));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/price-lists/00000000-0000-7000-8000-000000000201/entries/{{slEntry}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "price-lists",
+                "00000000-0000-7000-8000-000000000201",
+                "entries",
+                "{{slEntry}}"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"variant_id\": \"{{slVariant}}\",\n  \"unit_id\": \"{{slPcs}}\",\n  \"tiers\": [{ \"min_qty_thousandths\": 1000, \"price\": 10000 }]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "125 Tender types (device token)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 with the seeded tender types', () => {",
+                  "    pm.response.to.have.status(200);",
+                  "    const names = pm.response.json().map((t) => t.name);",
+                  "    pm.expect(names.slice(0, 4)).to.eql(['Tunai', 'Kartu debit', 'QRIS', 'Saldo pelanggan']);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Register-Token",
+                "value": "{{deviceToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/tender-types",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "tender-types"
+              ]
+            },
+            "description": "Active tender types in the register's order (spec 2.6 D4, §19 item 20)."
+          }
+        },
+        {
+          "name": "126 Owner opens a cashier session",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201', () => {",
+                  "    pm.response.to.have.status(201);",
+                  "    pm.collectionVariables.set('slSessionId', pm.response.json().id);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerPinToken}}"
+              },
+              {
+                "key": "X-Register-Token",
+                "value": "{{deviceToken}}"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{slOpenKey}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/cashier-sessions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "cashier-sessions"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{ \"opening_cash\": 0 }",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "127 Stale totals: the fresh quote comes back",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('409 cart_stale with the quote', () => {",
+                  "    pm.response.to.have.status(409);",
+                  "    const p = pm.response.json();",
+                  "    pm.expect(p.code).to.eql('cart_stale');",
+                  "    pm.expect(p.quote.totals.total).to.eql(20000);",
+                  "    pm.collectionVariables.set('slTotals', JSON.stringify(p.quote.totals));",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerPinToken}}"
+              },
+              {
+                "key": "X-Register-Token",
+                "value": "{{deviceToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/sales/{{slStale}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "sales",
+                "{{slStale}}"
+              ]
+            },
+            "description": "The server prices the cart again (spec 2.6 §5, §15 case 9).",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"lines\": [{ \"variant_id\": \"{{slVariant}}\", \"unit_id\": \"{{slPcs}}\", \"qty_thousandths\": 2000 }],\n  \"tenders\": [{ \"tender_type_id\": \"00000000-0000-7000-8000-000000000301\", \"amount\": 50000 }],\n  \"totals\": { \"subtotal\": 0, \"line_discount\": 0, \"cart_discount\": 0, \"tax\": 0, \"total\": 0 }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "128 Post the sale (PUT, client UUIDv7)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 posted', () => {",
+                  "    pm.response.to.have.status(201);",
+                  "    const s = pm.response.json();",
+                  "    pm.expect([s.status, s.total, s.change_given]).to.eql(['posted', 20000, 30000]);",
+                  "    pm.expect(s.number).to.match(/^[A-Z0-9]+-[A-Z0-9]+-\\d{6}-\\d{4}$/);",
+                  "    pm.collectionVariables.set('slNumber', s.number);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerPinToken}}"
+              },
+              {
+                "key": "X-Register-Token",
+                "value": "{{deviceToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/sales/{{slSale}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "sales",
+                "{{slSale}}"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"lines\": [{ \"variant_id\": \"{{slVariant}}\", \"unit_id\": \"{{slPcs}}\", \"qty_thousandths\": 2000 }],\n  \"tenders\": [{ \"tender_type_id\": \"00000000-0000-7000-8000-000000000301\", \"amount\": 50000 }],\n  \"totals\": {{slTotals}}\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "129 Replay the same PUT",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200, the stored sale', () => {",
+                  "    pm.response.to.have.status(200);",
+                  "    pm.expect(pm.response.json().number).to.eql(pm.collectionVariables.get('slNumber'));",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerPinToken}}"
+              },
+              {
+                "key": "X-Register-Token",
+                "value": "{{deviceToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/sales/{{slSale}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "sales",
+                "{{slSale}}"
+              ]
+            },
+            "description": "Spec 2.6 §15 case 10.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"lines\": [{ \"variant_id\": \"{{slVariant}}\", \"unit_id\": \"{{slPcs}}\", \"qty_thousandths\": 2000 }],\n  \"tenders\": [{ \"tender_type_id\": \"00000000-0000-7000-8000-000000000301\", \"amount\": 50000 }],\n  \"totals\": {{slTotals}}\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "130 Receipt",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 with the number and the total', () => {",
+                  "    pm.response.to.have.status(200);",
+                  "    const r = pm.response.json();",
+                  "    pm.expect(r.text).to.include(pm.collectionVariables.get('slNumber'));",
+                  "    pm.expect(r.text).to.include('TOTAL');",
+                  "    pm.expect(r.copy).to.eql(false);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerPinToken}}"
+              },
+              {
+                "key": "X-Register-Token",
+                "value": "{{deviceToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/sales/{{slSale}}/receipt",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "sales",
+                "{{slSale}}",
+                "receipt"
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "131 Reprint the last receipt (COPY, audited)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 COPY', () => {",
+                  "    pm.response.to.have.status(200);",
+                  "    pm.expect(pm.response.json().text).to.include('COPY');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerPinToken}}"
+              },
+              {
+                "key": "X-Register-Token",
+                "value": "{{deviceToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/sales/{{slSale}}/receipt?copy=true&width=42",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "sales",
+                "{{slSale}}",
+                "receipt"
+              ],
+              "query": [
+                {
+                  "key": "copy",
+                  "value": "true"
+                },
+                {
+                  "key": "width",
+                  "value": "42"
+                }
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "132 Find the sale by its number",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200', () => {",
+                  "    pm.response.to.have.status(200);",
+                  "    pm.expect(pm.response.json().id).to.eql(pm.collectionVariables.get('slSale'));",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerPinToken}}"
+              },
+              {
+                "key": "X-Register-Token",
+                "value": "{{deviceToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/sales/by-number/{{slNumber}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "sales",
+                "by-number",
+                "{{slNumber}}"
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "133 The session's sales",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 with one sale', () => {",
+                  "    pm.response.to.have.status(200);",
+                  "    pm.expect(pm.response.json().items.length).to.eql(1);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerPinToken}}"
+              },
+              {
+                "key": "X-Register-Token",
+                "value": "{{deviceToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/sales?cashier_session_id={{slSessionId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "sales"
+              ],
+              "query": [
+                {
+                  "key": "cashier_session_id",
+                  "value": "{{slSessionId}}"
+                }
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "134 Hold a cart",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201', () => pm.response.to.have.status(201));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerPinToken}}"
+              },
+              {
+                "key": "X-Register-Token",
+                "value": "{{deviceToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/held-carts/{{slCart}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "held-carts",
+                "{{slCart}}"
+              ]
+            },
+            "description": "Spec 2.6 §4: event `cart.held`.",
+            "body": {
+              "mode": "raw",
+              "raw": "{ \"note\": \"meja 3\", \"payload\": { \"lines\": [] }, \"item_count\": 1, \"total\": 10000 }",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "135 Held carts of the branch",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 with the cart', () => {",
+                  "    pm.response.to.have.status(200);",
+                  "    pm.expect(pm.response.json().map((c) => c.id)).to.include(pm.collectionVariables.get('slCart'));",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerPinToken}}"
+              },
+              {
+                "key": "X-Register-Token",
+                "value": "{{deviceToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/held-carts",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "held-carts"
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "136 Take the held cart (Idempotency-Key)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200', () => {",
+                  "    pm.response.to.have.status(200);",
+                  "    pm.expect(pm.response.json().taken_by).to.be.a('string');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerPinToken}}"
+              },
+              {
+                "key": "X-Register-Token",
+                "value": "{{deviceToken}}"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{slTakeKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/held-carts/{{slCart}}/take",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "held-carts",
+                "{{slCart}}",
+                "take"
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "137 Taking it again: cart_taken",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('409 cart_taken', () => {",
+                  "    pm.response.to.have.status(409);",
+                  "    pm.expect(pm.response.json().code).to.eql('cart_taken');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerPinToken}}"
+              },
+              {
+                "key": "X-Register-Token",
+                "value": "{{deviceToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/held-carts/{{slCart}}/take",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "held-carts",
+                "{{slCart}}",
+                "take"
+              ]
+            },
+            "description": "Spec 2.6 §15 case 11."
+          }
+        },
+        {
+          "name": "138 A removed cart line (till void)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201', () => {",
+                  "    pm.response.to.have.status(201);",
+                  "    pm.expect(pm.response.json().amount).to.eql(10000);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerPinToken}}"
+              },
+              {
+                "key": "X-Register-Token",
+                "value": "{{deviceToken}}"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{slVoidLineKey}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/cart-voids",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "cart-voids"
+              ]
+            },
+            "description": "Line voids happen before posting (D1); the close report counts them.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"kind\": \"line\",\n  \"cart_id\": \"{{slCartId}}\",\n  \"reason\": \"wrong_item\",\n  \"lines\": [{ \"variant_id\": \"{{slVariant}}\", \"name\": \"Kopi Sachet\", \"qty_thousandths\": 1000, \"amount\": 10000 }]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "139 Return 1 pcs by receipt",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 refund 10 000 in cash', () => {",
+                  "    pm.response.to.have.status(201);",
+                  "    const r = pm.response.json();",
+                  "    pm.expect([r.refund, r.tenders[0].kind]).to.eql([10000, 'cash']);",
+                  "    pm.expect(r.number).to.include('-RT-');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerPinToken}}"
+              },
+              {
+                "key": "X-Register-Token",
+                "value": "{{deviceToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/returns/{{slReturn}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "returns",
+                "{{slReturn}}"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"sale_id\": \"{{slSale}}\",\n  \"refund\": \"cash\",\n  \"lines\": [{ \"sale_line_no\": 1, \"variant_id\": \"{{slVariant}}\", \"unit_id\": \"{{slPcs}}\", \"qty_thousandths\": 1000 }]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "140 A sale with a return cannot be voided",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('409 has_returns', () => {",
+                  "    pm.response.to.have.status(409);",
+                  "    pm.expect(pm.response.json().code).to.eql('has_returns');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerPinToken}}"
+              },
+              {
+                "key": "X-Register-Token",
+                "value": "{{deviceToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/sales/{{slSale}}/void",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "sales",
+                "{{slSale}}",
+                "void"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{ \"reason\": \"wrong_item\", \"refund\": \"cash\" }",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "141 A second sale",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201', () => pm.response.to.have.status(201));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerPinToken}}"
+              },
+              {
+                "key": "X-Register-Token",
+                "value": "{{deviceToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/sales/{{slSale2}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "sales",
+                "{{slSale2}}"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"lines\": [{ \"variant_id\": \"{{slVariant}}\", \"unit_id\": \"{{slPcs}}\", \"qty_thousandths\": 2000 }],\n  \"tenders\": [{ \"tender_type_id\": \"00000000-0000-7000-8000-000000000301\", \"amount\": 50000 }],\n  \"totals\": {{slTotals}}\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "142 Post-void it (Idempotency-Key)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 voided, 20 000 back in cash', () => {",
+                  "    pm.response.to.have.status(200);",
+                  "    const s = pm.response.json();",
+                  "    pm.expect([s.status, s.void.cash]).to.eql(['voided', 20000]);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerPinToken}}"
+              },
+              {
+                "key": "X-Register-Token",
+                "value": "{{deviceToken}}"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{slVoidKey}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/sales/{{slSale2}}/void",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "sales",
+                "{{slSale2}}",
+                "void"
+              ]
+            },
+            "description": "Spec 2.6 §7: the cash comes out of the current session.",
+            "body": {
+              "mode": "raw",
+              "raw": "{ \"reason\": \"customer_changed_mind\", \"refund\": \"cash\" }",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "143 Close the session: the sales figures",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 with the sales block', () => {",
+                  "    pm.response.to.have.status(200);",
+                  "    const r = pm.response.json();",
+                  "    pm.expect([r.expected_cash, r.over_short]).to.eql([10000, 0]);",
+                  "    const s = r.sales;",
+                  "    pm.expect([s.cash_received, s.change_given, s.cash_refunds]).to.eql([100000, 60000, 30000]);",
+                  "    pm.expect([s.returns.count, s.post_voids.count, s.line_voids.count]).to.eql([1, 1, 1]);",
+                  "    pm.collectionVariables.set('slReport', JSON.stringify(r));",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerPinToken}}"
+              },
+              {
+                "key": "X-Register-Token",
+                "value": "{{deviceToken}}"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{slCloseKey}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/cashier-sessions/{{slSessionId}}/close",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "cashier-sessions",
+                "{{slSessionId}}",
+                "close"
+              ]
+            },
+            "description": "Spec 2.6 §10: expected cash = opening + cash received − change − refunds.",
+            "body": {
+              "mode": "raw",
+              "raw": "{ \"counted_cash\": 10000 }",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "144 The stored report reads the same",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200, same report', () => {",
+                  "    pm.response.to.have.status(200);",
+                  "    pm.expect(pm.response.json().close_report).to.eql(JSON.parse(pm.collectionVariables.get('slReport')));",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/cashier-sessions/{{slSessionId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "cashier-sessions",
+                "{{slSessionId}}"
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "145 Returns of the branch (owner)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 with the return', () => {",
+                  "    pm.response.to.have.status(200);",
+                  "    pm.expect(pm.response.json().items.map((r) => r.id)).to.include(pm.collectionVariables.get('slReturn'));",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/returns?branch_id={{branchId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "returns"
+              ],
+              "query": [
+                {
+                  "key": "branch_id",
+                  "value": "{{branchId}}"
+                }
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "146 Create a tender type (HQ, tender.manage)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201', () => {",
+                  "    pm.response.to.have.status(201);",
+                  "    pm.expect(pm.response.json().kind).to.eql('card');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/tender-types/{{slTender}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "tender-types",
+                "{{slTender}}"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{ \"name\": \"Debit BCA\", \"kind\": \"card\", \"needs_reference\": true, \"sort\": 9 }",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "147 Archive the tender type",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 archived', () => {",
+                  "    pm.response.to.have.status(200);",
+                  "    pm.expect(pm.response.json().archived).to.eql(true);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/tender-types/{{slTender}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "tender-types",
+                "{{slTender}}"
               ]
             },
             "description": ""
