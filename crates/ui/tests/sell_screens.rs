@@ -480,6 +480,12 @@ fn void_cart_and_close_session() {
     assert!(!t.buttons().contains(&"Ctrl+F10 close_session".to_owned()));
     t.press(&["Control", "F10"]);
     assert_eq!(t.app.ui.get_screen(), "home");
+    // One button for both keys, in the bar; the action grid does not repeat it.
+    assert_eq!(t.chips(), ["Ctrl+N / Ctrl+Del void_cart"]);
+    assert!(!t.buttons().iter().any(|b| b.ends_with("void_cart")));
+    t.click("Void cart");
+    assert_eq!(t.sell().modal_title, "reason_cart");
+    t.press(&["Esc"]);
     // Ctrl+N asks for a reason, then a manager (`sale.void`); Esc cancels.
     t.press(&["Control", "n"]);
     assert_eq!(t.sell().modal_title, "reason_cart");
@@ -588,7 +594,8 @@ fn split_payment_and_receipt() {
         .iter()
         .map(Into::into)
         .collect();
-    assert!(receipt.contains(&"TOTAL 25000".to_owned()), "{receipt:?}");
+    let total = "TOTAL                     25.000".to_owned(); // `core::sale::build_receipt`
+    assert!(receipt.contains(&total), "{receipt:?}");
     assert!(t.fake.calls_of("receipt")[0].ends_with("lang=en"));
     let (body, sale) = &t.fake.posted_sales()[0];
     let tenders: Vec<(&str, i64, Option<&str>)> = body
@@ -853,10 +860,10 @@ fn every_key_and_button() {
             "F2 search",
             "F3 customer",
             "F5 drawer",
+            "F6 receipts",
             "F7 price_check",
-            "F6 receipts_soon",
-            "F10 returns_soon",
-            "F11 hold_soon",
+            "F10 returns",
+            "Shift+F11 resume",
             "F12 lock",
             "Ctrl+F10 close_session"
         ]
@@ -892,13 +899,16 @@ fn every_key_and_button() {
     assert_eq!(t.sell().modal, "");
     assert_eq!(t.rows().len(), 1);
     assert_eq!(t.fake.calls_of("product_search").len(), 2);
-    // F5, F6, F10, F11.
+    // F5 asks the server (a cashier needs a manager: `drawer.open`); F6, F10, F11 and
+    // Shift+F11 are tested in `after_screens.rs`.
     t.press(&["F5"]);
+    t.budi_approves();
     assert_eq!(t.note(), "drawer_opened");
-    for key in ["F6", "F10", "F11"] {
-        t.press(&[key]);
-        assert_eq!(t.note(), "coming_soon");
-    }
+    assert!(t.buttons().contains(&"F11 hold".to_owned()));
+    assert!(
+        !t.buttons().contains(&"F10 returns".to_owned()),
+        "a return needs an empty cart"
+    );
     // F7: price check shows the item without adding it.
     t.press(&["F7"]);
     assert!(t.sell().check);
@@ -980,7 +990,12 @@ fn tax_invoice_and_name_search() {
         .iter()
         .map(Into::into)
         .collect();
-    assert!(receipt.contains(&"TOTAL 5000".to_owned()), "{receipt:?}");
+    for line in [
+        "TOTAL                      5.000",
+        "Kembali                        0",
+    ] {
+        assert!(receipt.contains(&line.to_owned()), "{receipt:?}");
+    }
     t.press(&["Enter"]);
     // Shift+F3: name search, for those who may search (Ani may not: the plain dialog).
     t.press(&["Shift", "F3"]);

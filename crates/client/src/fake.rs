@@ -603,7 +603,10 @@ impl Service for FakeService {
         if let Err(e) = s.verify(&approver, &body.approver_pin) {
             return ready(Err(e));
         }
-        if body.value.unwrap_or(0) > approver.discount_limit {
+        // The approver's limit is a percentage (basis points); Rupiah limits such as
+        // `refund.no_receipt` are unlimited for a manager here.
+        let percentage = !body.action.starts_with("refund.");
+        if percentage && body.value.unwrap_or(0) > approver.discount_limit {
             return ready(Err(Problem::new(403, "override_limit_exceeded", "limit")
                 .with("permission", body.action.clone())
                 .with("limit", approver.discount_limit)
@@ -860,9 +863,9 @@ impl Service for FakeService {
         &self,
         token: &str,
         id: &str,
-        _before: Option<&str>,
+        before: Option<&str>,
     ) -> crate::BoxFuture<crate::HistoryPage> {
-        self.history_call(token, id)
+        self.history_call(token, id, before)
     }
 
     fn recent_receipts(
@@ -871,6 +874,16 @@ impl Service for FakeService {
         customer_id: &str,
     ) -> crate::BoxFuture<Vec<crate::SaleSummary>> {
         self.recent_call(token, customer_id)
+    }
+
+    fn open_drawer(
+        &self,
+        token: &str,
+        body: &crate::DrawerRequest,
+        key: &str,
+        override_token: Option<&str>,
+    ) -> crate::BoxFuture<crate::DrawerOpen> {
+        self.drawer_call(token, body, key, override_token)
     }
 }
 

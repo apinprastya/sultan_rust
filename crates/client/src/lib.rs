@@ -37,6 +37,7 @@
 //!   till voids, returns and exchanges, held carts, the customer's purchase history and recent
 //!   receipts, the session's sales); the back office's on [`BackOffice`] (tender type
 //!   management, returns). Several override tokens for one request go comma separated.
+//!   [`Service::open_drawer`] records an audited drawer open (F5, phase S5).
 //!
 //! Amounts are minor units (`i64`, Rupiah minor unit = 1, `docs/plan.md` §1); times are unix ms.
 
@@ -70,11 +71,11 @@ pub use pricing::{
     QuoteTotals, QuotedLine, TaxRate,
 };
 pub use sales::{
-    CartVoid, CartVoidRequest, Discount, DocQuery, ExchangeRequest, HeldCart, HistoryItem,
-    HistoryPage, HoldRequest, Receipt, RefundTender, ReturnLine, ReturnLineRequest, ReturnPage,
-    ReturnRequest, ReturnSummary, Sale, SaleLine, SaleLineRequest, SalePage, SaleRequest,
-    SaleReturn, SaleSummary, SaleTender, SaleTotals, SaleVoid, TenderRequest, TenderType,
-    TenderTypeBody, VoidRequest, VoidedLine,
+    CartVoid, CartVoidRequest, Discount, DocQuery, DrawerOpen, DrawerRequest, ExchangeRequest,
+    HeldCart, HistoryItem, HistoryPage, HoldRequest, Receipt, RefundTender, ReturnLine,
+    ReturnLineRequest, ReturnPage, ReturnRequest, ReturnSummary, Sale, SaleLine, SaleLineRequest,
+    SalePage, SaleRequest, SaleReturn, SaleSummary, SaleTender, SaleTotals, SaleVoid,
+    TenderRequest, TenderType, TenderTypeBody, VoidRequest, VoidedLine,
 };
 pub use types::{
     Branch, CashierSession, CloseReport, CloseRequest, Count, LockUser, Login, OverrideGrant,
@@ -271,6 +272,15 @@ pub trait Service: Send + Sync {
     ) -> BoxFuture<HistoryPage>;
     /// `GET /customers/{id}/recent-receipts`: the latest posted sales, to start a return.
     fn recent_receipts(&self, token: &str, customer_id: &str) -> BoxFuture<Vec<SaleSummary>>;
+    /// `POST /drawer/open` with `Idempotency-Key: key` (`drawer.open`, overridable with the
+    /// cashier session as `context_ref`; spec 2.6 §13 F5, phase S5).
+    fn open_drawer(
+        &self,
+        token: &str,
+        body: &DrawerRequest,
+        key: &str,
+        override_token: Option<&str>,
+    ) -> BoxFuture<DrawerOpen>;
 }
 
 /// What the back office needs from the server (phase C4, spec 2.2 §12). `token` is the password

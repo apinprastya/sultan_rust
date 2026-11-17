@@ -311,6 +311,17 @@ fn magic_ok(bytes: &[u8]) -> bool {
 }
 
 impl State {
+    /// The receipt name (product + variant) and the unit's name of a sold line (sales, spec
+    /// 2.6), or `None` when the catalog does not know them.
+    pub(super) fn line_names(&self, variant: &str, unit: &str) -> Option<(String, String)> {
+        self.catalog.products.values().find_map(|s| {
+            let p = &s.product;
+            let v = p.variants.iter().find(|x| x.id == variant)?;
+            let u = p.units.iter().find(|x| x.id == unit)?;
+            Some((variant_name(p, v), u.name.clone()))
+        })
+    }
+
     pub(super) fn bo_user(&self, token: &str) -> Result<BackOfficeUser, ClientError> {
         self.catalog
             .tokens

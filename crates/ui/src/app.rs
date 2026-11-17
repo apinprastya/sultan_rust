@@ -25,6 +25,7 @@ use slint::{ComponentHandle, Model, ModelRc, SharedString, VecModel};
 use sultan_client::{CloseReport, Customer, CustomerQuery, EventSink, Lookup, Service};
 use tokio::runtime::Handle;
 
+use crate::after::{Call as AfterCall, Reply as AfterReply, ReturnStep};
 use crate::amount::{rupiah, signed_rupiah};
 use crate::controller::{Controller, Effect, Msg, Notice, Screen, TILE_COLUMNS, Tone, value_text};
 use crate::count::{CountForm, DENOMINATIONS, is_coin};
@@ -120,6 +121,9 @@ struct Models {
     pay_rows: Rc<VecModel<SellRow>>,
     tender_rows: Rc<VecModel<SellRow>>,
     receipt_lines: Rc<VecModel<SharedString>>,
+    /// A sell dialog's chips in two rows when there are more than four.
+    dialog_chips: Rc<VecModel<Chip>>,
+    dialog_chips_b: Rc<VecModel<Chip>>,
 }
 
 /// Replaces the rows of `model` if they changed.
@@ -244,6 +248,121 @@ fn customer_call(
     }
 }
 
+/// Starts a call of [`crate::after`]; `lang` is the window language for receipts.
+#[allow(clippy::too_many_lines)] // one arm per service call
+fn after_call(
+    service: &dyn Service,
+    token: &str,
+    call: AfterCall,
+    lang: &str,
+) -> Pin<Box<dyn Future<Output = AfterReply> + Send>> {
+    macro_rules! reply {
+        ($future:expr, $reply:path) => {{
+            let future = $future;
+            Box::pin(async move { $reply(future.await) })
+        }};
+    }
+    match call {
+        AfterCall::Hold {
+            id,
+            customer_id,
+            note,
+            payload,
+            item_count,
+            total,
+        } => {
+            let body = sultan_client::HoldRequest {
+                customer_id,
+                note,
+                payload: serde_json::from_str(&payload).unwrap_or_default(),
+                item_count,
+                total,
+            };
+            reply!(service.hold_cart(token, &id, &body), AfterReply::Held)
+        }
+        AfterCall::HeldCarts => reply!(service.held_carts(token), AfterReply::HeldCarts),
+        AfterCall::Take { id, key } => {
+            reply!(service.take_held_cart(token, &id, &key), AfterReply::Taken)
+        }
+        AfterCall::DropHeld { id, override_token } => reply!(
+            service.delete_held_cart(token, &id, override_token.as_deref()),
+            AfterReply::Dropped
+        ),
+        AfterCall::SessionSales(session) => {
+            let query = sultan_client::DocQuery {
+                cashier_session_id: Some(session),
+                limit: Some(50),
+                ..sultan_client::DocQuery::default()
+            };
+            reply!(service.sales(token, &query), AfterReply::Sales)
+        }
+        AfterCall::SaleByNumber(number) => {
+            reply!(service.sale_by_number(token, &number), AfterReply::Sale)
+        }
+        AfterCall::Sale(id) => reply!(service.sale(token, &id), AfterReply::Sale),
+        AfterCall::Receipt {
+            id,
+            copy,
+            override_token,
+        } => reply!(
+            service.receipt(token, &id, copy, lang, override_token.as_deref()),
+            AfterReply::Receipt
+        ),
+        AfterCall::Void {
+            id,
+            body,
+            key,
+            override_token,
+        } => reply!(
+            service.void_sale(token, &id, &body, &key, override_token.as_deref()),
+            AfterReply::Voided
+        ),
+        AfterCall::Return {
+            id,
+            body,
+            override_token,
+        } => reply!(
+            service.post_return(token, &id, &body, override_token.as_deref()),
+            AfterReply::Returned
+        ),
+        AfterCall::Exchange {
+            id,
+            body,
+            override_token,
+        } => reply!(
+            service.post_return(token, &id, &body, override_token.as_deref()),
+            AfterReply::Exchanged
+        ),
+        AfterCall::Recent(customer) => {
+            reply!(
+                service.recent_receipts(token, &customer),
+                AfterReply::Recent
+            )
+        }
+        AfterCall::History {
+            customer_id,
+            before,
+        } => reply!(
+            service.customer_history(token, &customer_id, before.as_deref()),
+            AfterReply::History
+        ),
+        AfterCall::Lookup(code) => reply!(service.lookup(token, &code), AfterReply::Looked),
+        AfterCall::Quote(request) => reply!(service.quote(token, &request), AfterReply::Quoted),
+        AfterCall::Drawer {
+            key,
+            override_token,
+        } => reply!(
+            service.open_drawer(
+                token,
+                &sultan_client::DrawerRequest::default(),
+                &key,
+                override_token.as_deref()
+            ),
+            AfterReply::Drawer
+        ),
+    }
+}
+
 /// Starts the service call of `effect`. Calls happen now (the fake does its work here); the
 /// returned future only waits for the answer.
 #[allow(clippy::too_many_lines)] // one arm per service call
@@ -358,7 +477,8 @@ fn start(service: &dyn Service, effect: Effect) -> Option<MsgFuture> {
         | Effect::Receipt { .. }
         | Effect::SaveCart(_)
         | Effect::DeleteCart
-        | Effect::LoadCart { .. } => None,
+        | Effect::LoadCart { .. }
+        | Effect::After { .. } => None,
     }
 }
 
@@ -432,6 +552,18 @@ impl State {
                 continue;
             }
             let effect = match effect {
+                Effect::After {
+                    token,
+                    call,
+                    generation,
+                } => {
+                    let lang = receipt_language(&self.options);
+                    let future = after_call(self.service.as_ref(), &token, call, &lang);
+                    let future: MsgFuture =
+                        Box::pin(async move { Msg::After(generation, Box::new(future.await)) });
+                    self.spawn_or_block(future);
+                    continue;
+                }
                 Effect::Receipt {
                     token,
                     id,
@@ -499,11 +631,24 @@ impl State {
     }
 }
 
+/// One chip per shortcut; keys of the same action and label share one chip
+/// (`Ctrl+N / Ctrl+Del`).
 fn chips(shortcuts: &[crate::controller::Shortcut]) -> Vec<Chip> {
-    shortcuts
-        .iter()
-        .map(|s| Chip {
-            keys: s.key.label().into(),
+    let mut out: Vec<(crate::controller::Shortcut, String)> = Vec::new();
+    for s in shortcuts {
+        if let Some((_, keys)) = out
+            .iter_mut()
+            .find(|(o, _)| o.action == s.action && o.label == s.label)
+        {
+            keys.push_str(" / ");
+            keys.push_str(&s.key.label());
+        } else {
+            out.push((*s, s.key.label()));
+        }
+    }
+    out.into_iter()
+        .map(|(s, keys)| Chip {
+            keys: keys.into(),
             label: s.label.into(),
             id: s.action.id().into(),
         })
@@ -810,6 +955,10 @@ fn render_sell(
         ..SellView::default()
     };
     let mut list = Vec::new();
+    let mut receipt: Vec<SharedString> = Vec::new();
+    if let Some(r) = &sell.exchange {
+        view.exchange = rupiah(r.refund()).into();
+    }
     if let Some(modal) = &sell.modal {
         let (kind, title) = match modal {
             Modal::Entry(e) => {
@@ -893,14 +1042,22 @@ fn render_sell(
                             ("U", "unit"),
                             ("P", "price"),
                             ("D", "discount"),
-                            ("Ctrl+N · Ctrl+Del", "void_cart"),
+                            ("Ctrl+N / Ctrl+Del", "void_cart"),
                             ("F8", "save_change"),
+                            ("F11", "hold"),
+                            ("F10", "returns"),
+                            ("F6 → R", "reprint"),
+                            ("F6 → V", "post_void"),
+                            ("F6 → T", "start_return"),
+                            ("F10 → F9", "exchange"),
+                            ("F3 → F9", "history"),
                         ]
                         .map(|(k, l)| sell_row(k, l)),
                     )
                     .collect();
                 ("help", "help")
             }
+            other => after_view(other, c, &mut view, &mut list, &mut receipt),
         };
         view.modal = kind.into();
         view.modal_title = title.into();
@@ -980,7 +1137,6 @@ fn render_sell(
     }
     sync(&models.pay_rows, paid);
     sync(&models.tender_rows, tenders);
-    let mut receipt = Vec::new();
     if let Some(done) = &sell.done {
         let s = &done.sale.summary;
         view.done = true;
@@ -988,10 +1144,251 @@ fn render_sell(
         view.done_change = rupiah(s.change_given).into();
         view.done_total = rupiah(s.paid).into();
         view.done_drawer = done.drawer;
+        view.done_refund = if done.refund > 0 {
+            rupiah(done.refund).into()
+        } else {
+            SharedString::new()
+        };
         receipt = done.receipt.iter().map(|l| l.as_str().into()).collect();
     }
     sync(&models.receipt_lines, receipt);
     ui.set_sell(view);
+}
+
+/// The S5 dialogs ([`crate::after`]): kind and title codes, the rows, the typed field, the
+/// receipt beside the list and the large amount.
+#[allow(clippy::too_many_lines)] // one block per dialog
+fn after_view(
+    modal: &Modal,
+    c: &Controller,
+    view: &mut SellView,
+    list: &mut Vec<SellRow>,
+    receipt: &mut Vec<SharedString>,
+) -> (&'static str, &'static str) {
+    let branch = c.branch.as_ref();
+    let branch_code = |id: &str| -> String {
+        match branch {
+            Some(b) if b.id == id => b.code.clone(),
+            _ => id.chars().take(8).collect(),
+        }
+    };
+    let refund_code = |balance: bool| if balance { "balance" } else { "cash" };
+    match modal {
+        Modal::Note(n) => {
+            view.modal_field = true;
+            view.modal_value = n.text.as_str().into();
+            view.modal_placeholder = "note".into();
+            ("note", "hold_note")
+        }
+        Modal::Held(l) => {
+            view.modal_cursor = index(l.cursor);
+            *list = l
+                .rows
+                .iter()
+                .map(|r| {
+                    let mut detail = format!("{} item · {}", r.items, rupiah(r.total));
+                    if !r.customer.is_empty() {
+                        detail = format!("{} · {detail}", r.customer);
+                    }
+                    if !r.note.is_empty() {
+                        detail = format!("{detail} · {}", r.note);
+                    }
+                    sell_row(
+                        format!("{} · {} · {}", r.register, r.cashier, time_of_day(r.at)),
+                        detail,
+                    )
+                })
+                .collect();
+            ("list", "held")
+        }
+        Modal::Docs(d) => {
+            view.modal_cursor = index(d.cursor);
+            if let Some((_, name)) = &d.history {
+                view.modal_name = name.as_str().into();
+            } else {
+                view.modal_field = true;
+                view.modal_value = d.number.as_str().into();
+                view.modal_placeholder = "receipt_number".into();
+            }
+            *list = d
+                .rows
+                .iter()
+                .map(|doc| {
+                    let mut detail = format!("{} · {}", date_time(doc.at), rupiah(doc.total));
+                    if doc.voided {
+                        detail.push_str(" · VOID");
+                    }
+                    if d.history.is_some() {
+                        detail = format!("{detail} · {}", branch_code(&doc.branch));
+                    } else if doc.customer {
+                        detail.push_str(" · ♦");
+                    }
+                    let label = if doc.kind == "return" {
+                        format!("↩ {}", doc.number)
+                    } else {
+                        doc.number.clone()
+                    };
+                    sell_row(label, detail)
+                })
+                .collect();
+            (
+                "list",
+                if d.history.is_some() {
+                    "history"
+                } else {
+                    "receipts"
+                },
+            )
+        }
+        Modal::Receipt(p) => {
+            view.modal_receipt = true;
+            *receipt = p.lines.iter().map(|l| l.as_str().into()).collect();
+            if let Some(sale) = &p.sale {
+                let s = &sale.summary;
+                let mut name = format!("{} · {}", s.number, rupiah(s.paid));
+                if s.status == "voided" {
+                    name.push_str(" · VOID");
+                }
+                view.modal_name = name.into();
+            }
+            if let Some((cash, balance)) = p.refund {
+                view.modal_big = rupiah(cash).into();
+                view.modal_big_label = "cash_back".into();
+                if balance > 0 {
+                    view.modal_refund = "balance".into();
+                    view.modal_hint = rupiah(balance).into();
+                }
+            }
+            ("slip", "receipt")
+        }
+        Modal::PostVoid(v) => {
+            view.modal_cursor = index(v.cursor);
+            view.modal_text = v.text.as_str().into();
+            view.modal_name = format!(
+                "{} · {}",
+                v.sale.summary.number,
+                rupiah(v.sale.summary.paid)
+            )
+            .into();
+            view.modal_refund = refund_code(v.balance).into();
+            *list = VOID_REASONS.iter().map(|k| sell_row(*k, "")).collect();
+            ("reason", "post_void")
+        }
+        Modal::Return(r) => {
+            view.modal_cursor = index(r.cursor);
+            if let Some(sale) = &r.sale {
+                view.modal_name = sale.summary.number.as_str().into();
+            }
+            if let Some((_, reason)) = &r.write_off {
+                view.modal_field = true;
+                view.modal_value = reason.as_str().into();
+                view.modal_placeholder = "write_off".into();
+                if let Some(l) = r.lines.get(r.cursor) {
+                    view.modal_name = l.name.as_str().into();
+                }
+                return ("list", "write_off");
+            }
+            match r.step {
+                ReturnStep::Find => {
+                    view.modal_field = true;
+                    view.modal_value = r.text.as_str().into();
+                    view.modal_placeholder = "receipt_number".into();
+                    *list = r
+                        .recent
+                        .iter()
+                        .map(|s| {
+                            sell_row(
+                                s.number.as_str(),
+                                format!("{} · {}", date_time(s.posted_at), rupiah(s.paid)),
+                            )
+                        })
+                        .collect();
+                    ("list", "return_find")
+                }
+                ReturnStep::Lines => {
+                    if r.no_receipt {
+                        view.modal_field = true;
+                        view.modal_value = r.text.as_str().into();
+                        view.modal_placeholder = "item_code".into();
+                    }
+                    *list = r
+                        .lines
+                        .iter()
+                        .map(|l| {
+                            let mut detail = if r.no_receipt {
+                                format!("{} {}", qty_text(l.qty), l.unit)
+                            } else {
+                                format!("{} / {}", qty_text(l.qty), qty_text(l.left))
+                            };
+                            detail = format!("{detail} · {}", rupiah(l.refund));
+                            if let Some(w) = &l.write_off {
+                                detail = format!("{detail} · ✎ {w}");
+                            }
+                            sell_row(l.name.as_str(), detail)
+                        })
+                        .collect();
+                    view.modal_big = rupiah(r.refund()).into();
+                    view.modal_big_label = "refund_total".into();
+                    if r.refund_customer().is_some() {
+                        view.modal_refund = refund_code(r.balance).into();
+                    }
+                    (
+                        "list",
+                        if r.no_receipt {
+                            "return_no_receipt"
+                        } else {
+                            "return_lines"
+                        },
+                    )
+                }
+                ReturnStep::Done => {
+                    let posted = r.result.as_deref();
+                    let cash: i64 = posted
+                        .map(|p| {
+                            p.tenders
+                                .iter()
+                                .filter(|t| t.kind == "cash")
+                                .map(|t| t.amount)
+                                .sum()
+                        })
+                        .unwrap_or_default();
+                    let balance: i64 = posted
+                        .map(|p| {
+                            p.tenders
+                                .iter()
+                                .filter(|t| t.kind == "customer_balance")
+                                .map(|t| t.amount)
+                                .sum()
+                        })
+                        .unwrap_or_default();
+                    if let Some(p) = posted {
+                        view.modal_name =
+                            format!("{} · {}", p.summary.number, rupiah(p.summary.refund)).into();
+                    }
+                    view.modal_big = rupiah(cash).into();
+                    view.modal_big_label = "cash_back".into();
+                    if balance > 0 {
+                        view.modal_refund = "balance".into();
+                        view.modal_hint = rupiah(balance).into();
+                    }
+                    *list = r
+                        .lines
+                        .iter()
+                        .filter(|l| l.qty > 0)
+                        .map(|l| {
+                            let mut detail = format!("{} · {}", qty_text(l.qty), rupiah(l.refund));
+                            if let Some(w) = &l.write_off {
+                                detail = format!("{detail} · ✎ {w}");
+                            }
+                            sell_row(l.name.as_str(), detail)
+                        })
+                        .collect();
+                    ("slip", "return_done")
+                }
+            }
+        }
+        _ => ("", ""),
+    }
 }
 
 /// A name-search result: the name and `K7QH-29XM · 0812****789 · Toko Siti · Gold`.
@@ -1109,7 +1506,16 @@ fn render(ui: &MainWindow, c: &Controller, now: i64, models: &Models, options: &
         .into_iter()
         .filter(|s| !idle || (!buttons.contains(s) && !matches!(s.key, Key::Enter | Key::Escape)))
         .collect();
-    sync(&models.chips, chips(&bar));
+    let bar_chips = chips(&bar);
+    let (top, bottom) = if bar_chips.len() > 4 {
+        let half = bar_chips.len().div_ceil(2);
+        (bar_chips[..half].to_vec(), bar_chips[half..].to_vec())
+    } else {
+        (bar_chips.clone(), Vec::new())
+    };
+    sync(&models.dialog_chips, top);
+    sync(&models.dialog_chips_b, bottom);
+    sync(&models.chips, bar_chips);
     let half = buttons.len().div_ceil(2);
     sync(&models.actions, chips(&buttons[..half]));
     sync(&models.actions_b, chips(&buttons[half..]));
@@ -1289,6 +1695,9 @@ fn connect(ui: &MainWindow, state: &Rc<State>) {
                 "row" => Msg::PickRow(i),
                 "customer" => Msg::PickCustomer(i),
                 "field" => Msg::PickField(i),
+                "line" => Msg::PickSell("line", i),
+                "item" => Msg::PickSell("item", i),
+                "tender" => Msg::PickSell("tender", i),
                 _ => return,
             };
             s.dispatch(msg);
@@ -1336,6 +1745,8 @@ pub fn build_app(
         pay_rows: Rc::default(),
         tender_rows: Rc::default(),
         receipt_lines: Rc::default(),
+        dialog_chips: Rc::default(),
+        dialog_chips_b: Rc::default(),
     };
     ui.set_users(ModelRc::from(models.users.clone()));
     ui.set_managers(ModelRc::from(models.managers.clone()));
@@ -1351,6 +1762,8 @@ pub fn build_app(
     ui.set_pay_rows(ModelRc::from(models.pay_rows.clone()));
     ui.set_tender_rows(ModelRc::from(models.tender_rows.clone()));
     ui.set_receipt_lines(ModelRc::from(models.receipt_lines.clone()));
+    ui.set_dialog_chips(ModelRc::from(models.dialog_chips.clone()));
+    ui.set_dialog_chips_b(ModelRc::from(models.dialog_chips_b.clone()));
     ui.set_columns(index(TILE_COLUMNS));
 
     let wake: Wake = match &runner {
@@ -1364,6 +1777,9 @@ pub fn build_app(
     };
     let (mut controller, effects) = Controller::new();
     controller.start = options.start;
+    controller
+        .register_label
+        .clone_from(&options.register_label);
     let state = Rc::new(State {
         watchers: Watchers::default(),
         ui: ui.as_weak(),

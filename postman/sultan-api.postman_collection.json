@@ -2210,6 +2210,12 @@
                   "    pm.expect(r.matched_code).to.eql(pm.collectionVariables.get('catEan2'));",
                   "    pm.expect(r.plu).to.eql(null);",
                   "    pm.expect(r.branch_id).to.eql(pm.collectionVariables.get('branchId'));",
+                  "    // The product's active sellable units (spec 2.6 §19 item 53): pcs and box(24).",
+                  "    pm.expect(r.units).to.be.an('array').with.lengthOf(2);",
+                  "    const pcs = r.units.find(u => u.id === pm.collectionVariables.get('catPcsId'));",
+                  "    pm.expect(pcs).to.include({ name: 'pcs', factor_thousandths: 1000 });",
+                  "    pm.expect(r.units.map(u => u.factor_thousandths)).to.include(24000);",
+                  "    r.units.forEach(u => pm.expect(u).to.have.all.keys('id', 'name', 'kind', 'factor_thousandths'));",
                   "});"
                 ]
               }
@@ -6435,6 +6441,59 @@
           }
         },
         {
+          "name": "130a Receipt in Indonesian (?lang=id)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 with Indonesian labels', () => {",
+                  "    pm.response.to.have.status(200);",
+                  "    const r = pm.response.json();",
+                  "    pm.expect(r.text).to.include(pm.collectionVariables.get('slNumber'));",
+                  "    pm.expect(r.text).to.include('Petugas');",
+                  "    pm.expect(r.text).to.include('Kembali');",
+                  "    pm.expect(r.text).not.to.include('Cashier');",
+                  "    pm.expect(r.copy).to.eql(false);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerPinToken}}"
+              },
+              {
+                "key": "X-Register-Token",
+                "value": "{{deviceToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/sales/{{slSale}}/receipt?lang=id",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "sales",
+                "{{slSale}}",
+                "receipt"
+              ],
+              "query": [
+                {
+                  "key": "lang",
+                  "value": "id"
+                }
+              ]
+            },
+            "description": "Spec 2.6 §9 / §19 item 52: `lang=id` prints the Indonesian labels (`core::sale::Label`)."
+          }
+        },
+        {
           "name": "131 Reprint the last receipt (COPY, audited)",
           "event": [
             {
@@ -6802,6 +6861,67 @@
             "body": {
               "mode": "raw",
               "raw": "{\n  \"kind\": \"line\",\n  \"cart_id\": \"{{slCartId}}\",\n  \"reason\": \"wrong_item\",\n  \"lines\": [{ \"variant_id\": \"{{slVariant}}\", \"name\": \"Kopi Sachet\", \"qty_thousandths\": 1000, \"amount\": 10000 }]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "138a Open the drawer (drawer.open, audited)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201: recorded on the open session', () => {",
+                  "    pm.response.to.have.status(201);",
+                  "    const b = pm.response.json();",
+                  "    pm.expect(b.cashier_session_id).to.be.a('string');",
+                  "    pm.expect(b.reason).to.eql('change for a customer');",
+                  "    pm.expect(b.approved_by).to.eql(null);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerPinToken}}"
+              },
+              {
+                "key": "X-Register-Token",
+                "value": "{{deviceToken}}"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{$guid}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/drawer/open",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "drawer",
+                "open"
+              ]
+            },
+            "description": "F5 at the register (spec 2.6 §13): needs an open session of the caller on this register and `drawer.open` (a cashier presents a manager's `X-Override` for the session ID). Audited as `drawer.open`; the real drawer kick comes with 2.11.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reason\": \"  change for a customer \"\n}",
               "options": {
                 "raw": {
                   "language": "json"

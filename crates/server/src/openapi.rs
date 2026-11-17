@@ -216,6 +216,7 @@ impl Modify for SecuritySchemes {
         routes::sales::get_receipt,
         routes::sales::void,
         routes::sales::cart_void,
+        routes::drawer::open,
         routes::returns::put,
         routes::returns::get,
         routes::returns::list,

@@ -31,6 +31,7 @@ pub mod catalog;
 pub mod customer_balance;
 pub mod customer_groups;
 pub mod customers;
+pub mod drawer;
 pub mod held_carts;
 pub mod locations;
 pub mod overrides;

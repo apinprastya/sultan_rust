@@ -215,7 +215,7 @@ fn lookup_by_phone_and_by_code() {
     assert_eq!((d.group.as_str(), d.attached), ("", false));
     assert_eq!(
         t.chips(),
-        ["Enter attach", "Esc back"],
+        ["Enter attach", "F9 history", "Esc back"],
         "no payout for a cashier"
     );
     assert_eq!(t.fake.calls_of("customer_by_phone"), ["0812-3456-789"]);
@@ -308,7 +308,7 @@ fn name_search_is_for_managers_only() {
     assert_eq!(d.line, "Toko Siti · 0812*****432 · Silver");
     assert_eq!(
         t.chips(),
-        ["Enter attach", "Esc back"],
+        ["Enter attach", "F9 history", "Esc back"],
         "a balance of 0: nothing to pay out"
     );
     // Back to phone or code.
@@ -425,7 +425,10 @@ fn payout_checks_the_balance_and_pays_out() {
     let t = till("en", 1);
     t.press("F3");
     t.find("K7QH-29XM");
-    assert_eq!(t.chips(), ["Enter attach", "F7 pay_out", "Esc back"]);
+    assert_eq!(
+        t.chips(),
+        ["Enter attach", "F7 pay_out", "F9 history", "Esc back"]
+    );
     t.press("Enter");
     t.press("F3");
     t.click("Pay out");
@@ -458,7 +461,11 @@ fn payout_checks_the_balance_and_pays_out() {
     let d = t.dialog();
     assert_eq!((d.page.as_str(), d.balance.as_str()), ("shown", "Rp 0"));
     assert_eq!(t.message(), "Paid out Rp 2.200 in cash.");
-    assert_eq!(t.chips(), ["Enter attach", "Esc back"], "nothing left");
+    assert_eq!(
+        t.chips(),
+        ["Enter attach", "F9 history", "Esc back"],
+        "nothing left"
+    );
     // The attached customer follows.
     assert_eq!(t.home().customer_balance, "Rp 0");
     let calls = t.fake.calls_of("balance_payout");

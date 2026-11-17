@@ -522,6 +522,20 @@ impl Service for HttpService {
         Box::pin(send(with_override(request, override_token)))
     }
 
+    fn open_drawer(
+        &self,
+        token: &str,
+        body: &crate::DrawerRequest,
+        key: &str,
+        override_token: Option<&str>,
+    ) -> crate::BoxFuture<crate::DrawerOpen> {
+        let request = self
+            .request(Method::POST, "/drawer/open", Some(token))
+            .header(IDEMPOTENCY_HEADER, key)
+            .json(body);
+        Box::pin(send(with_override(request, override_token)))
+    }
+
     fn post_return(
         &self,
         token: &str,

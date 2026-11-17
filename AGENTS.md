@@ -37,7 +37,7 @@ make test         # cargo test --workspace (SQLite in memory)
 make cov          # cargo llvm-cov --workspace --fail-under-lines 80
 make test-mysql   # the whole suite again on a throwaway mysql:8.4 container (needs Docker)
 cargo test -p sultan-db                     # a single crate
-cargo run -p sultan-ui --example screenshots -- docs/screenshots 1366x768 en
+TZ=Asia/Jakarta cargo run -p sultan-ui --example screenshots -- docs/screenshots 1366x768 en
 ```
 
 `make check` must pass before you call a change done. If the change touches SQL, also run

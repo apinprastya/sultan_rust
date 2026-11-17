@@ -241,7 +241,7 @@ audit log viewer · light/dark theme · i18n ID/EN.
   only in cash or customer balance · exchange in one flow · tax-invoice switch · old Qt keys ·
   every removed line is a void · return window 30 days · held carts never expire.
 
-## Status (updated 2026-11-17)
+## Status (updated 2026-11-18)
 
 Where we are, so any session can pick up from here. Update this section at the end of every phase.
 
@@ -300,6 +300,20 @@ Where we are, so any session can pick up from here. Update this section at the e
   `register.cart` (atomic, `0600`, same cashier session only); the §13 keys (F1, F2, F3,
   Shift/Ctrl+F3, F4, F5 (logged only), F7, F8, F9, F12, Ctrl+F10; F6/F10/F11 "coming"). Lookups
   carry the product's sellable `units` (server + client). Readings in spec §19 (from S4).
+  Polish (2026-11-18): the fake builds its receipt with `core::sale::build_receipt`, the preview
+  is monospace, one void-cart button for Ctrl+N / Ctrl+Del, Ctrl+T in spec §13.
+- **2.6 Sales** S5 register: after the sale (2026-11-18, `crates/ui/src/after.rs`): F11 hold with
+  a note / Shift+F11 resume list of the branch (take, `cart_taken`, Del drop with `sale.void`
+  override, reload on `cart.held` / `cart.taken`, re-quoted under a new cart ID); F6 last
+  receipts (session sales, typed or scanned number, receipt in the window language, R reprint
+  with `sale.reprint` override for older sales, V post-void with reason and cash / balance
+  refund, T return); F10 return by receipt (recent receipts of the attached customer, `+`/`−`/`*`,
+  write-off with reason, `return_window` override) or without receipt (scanned, quoted,
+  `refund.no_receipt` override), refund to cash or the sale's customer's balance, F9 exchange (the
+  refund is the new cart's first tender; one `PUT /returns/{id}` with the sale); F3 → F9 purchase
+  history (paged, VOID marked); F5 calls the new audited `POST /drawer/open` (`drawer.open`,
+  overridable with the session ID; server, utoipa, client, fake, API tests, Postman). Readings in
+  spec §19 (from S5).
 - **UI only, except HQ** (§3, 2026-11-09):
   - Start screen on single-app and terminal machines: F1 Kasir, F2 Back office, F3 Settings.
   - Settings: language (F6), set up again (F8), and on a single app "Allow terminals to connect"
@@ -326,17 +340,19 @@ Where we are, so any session can pick up from here. Update this section at the e
   posting (only archived products are refused).
 - Pricing: deleting a price entry or changing a tax rate is still always allowed, even when a
   posted sale used it (2.3 R2 limitation; sales now exist).
-- Register (S4): F5 only logs the drawer (no audited `drawer.open` endpoint yet); saved change is
-  checked against `max_saved_per_sale` / `max_balance` only at posting (the register cannot read
-  the balance settings); the fake's receipt text is minimal (names are variant IDs).
+- Register (S4): saved change is checked against `max_saved_per_sale` / `max_balance` only at
+  posting (the register cannot read the balance settings).
+- Register (S5): no return receipt endpoint (the till shows a slip built from the posted return);
+  the receipts, history and held-cart lists show what the API carries (no customer names in
+  `GET /sales` / history, the branch code only for this branch); returned quantities move by whole
+  units (`*` returns all of a weighed line); the fake's no-receipt refund needs a manager for any
+  amount for a cashier, and its close report demo counts are not the server's.
 - Each sub-agent worktree builds its own `target/` (20–40 GB with coverage); clear finished ones.
 
 **Next**
 - **2.6 Sales (register)**: spec agreed 2026-11-16 (`docs/spec/2.6-sales.md`). S1 `core::sale`,
-  S2 `db`, S3 `server` + client and S4 register: sell done; next **S5 register after the sale**
-  (F11 hold / Shift+F11 resume, F6 last receipts with reprint and post-void, F10 returns +
-  exchanges, the customer's purchase history; also `drawer.open` as an audited server call) · S6
-  back office (tender types, sales and returns lists, purchase history tab).
+  S2 `db`, S3 `server` + client, S4 register: sell and S5 register: after the sale done; next
+  **S6 back office** (tender types, sales and returns lists + detail, purchase history tab).
 - Other P1 specs still to discuss: 2.4 is P2; 2.7 cash in/out + X/Z, 2.8 inventory, 2.9 money,
   2.10 reports, 2.11 hardware (ESC/POS + drawer), old-Sultan importer.
 

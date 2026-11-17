@@ -52,7 +52,7 @@ msgid "Card"
 msgstr "Kartu"
 
 msgid "Cart discount"
-msgstr "Diskon keranjang"
+msgstr "Diskon total"
 
 msgid "Cash"
 msgstr "Tunai"
@@ -2253,8 +2253,8 @@ msgstr "Bantuan"
 msgid "Search product"
 msgstr "Cari produk"
 
-msgid "Customer by name"
-msgstr "Pelanggan per nama"
+msgid "Name search"
+msgstr "Cari nama"
 
 msgid "Tax invoice"
 msgstr "Faktur pajak"
@@ -2591,3 +2591,177 @@ msgstr "Retur"
 
 msgid "Hold"
 msgstr "Tahan"
+
+msgid "Exchange credit"
+msgstr "Kredit tukar"
+
+msgid "Refund to the customer balance"
+msgstr "Uang kembali ke saldo pelanggan"
+
+msgid "Refund in cash"
+msgstr "Uang kembali tunai"
+
+msgid "Refund method"
+msgstr "Cara pengembalian"
+
+msgid "Pay back {} in cash"
+msgstr "Kembalikan {} tunai"
+
+msgid "Cash to pay back"
+msgstr "Uang tunai yang dikembalikan"
+
+msgid "Drawer opened."
+msgstr "Laci dibuka."
+
+msgid "The cart is on hold. Shift+F11 resumes it."
+msgstr "Keranjang ditahan. Shift+F11 untuk melanjutkan."
+
+msgid "Hold the current cart first (type a note or press Enter)."
+msgstr "Tahan keranjang ini dulu (ketik catatan atau tekan Enter)."
+
+msgid "Another register took this cart already. The list is up to date."
+msgstr "Keranjang ini sudah diambil kasir lain. Daftar sudah diperbarui."
+
+msgid "The held cart was deleted."
+msgstr "Keranjang yang ditahan sudah dihapus."
+
+msgid "Cart resumed ({} lines). Prices were checked again."
+msgstr "Keranjang dilanjutkan ({} baris). Harga sudah dicek ulang."
+
+msgid "This held cart cannot be read."
+msgstr "Keranjang yang ditahan ini tidak bisa dibaca."
+
+msgid "Copy of {} printed."
+msgstr "Salinan {} dicetak."
+
+msgid "Sale {} voided."
+msgstr "Penjualan {} dibatalkan."
+
+msgid "This sale has returns, so it cannot be voided. Return the rest instead."
+msgstr "Penjualan ini sudah ada returnya, jadi tidak bisa dibatalkan. Retur sisanya saja."
+
+msgid "More than what can still be returned."
+msgstr "Melebihi jumlah yang masih bisa diretur."
+
+msgid "The sale is older than the return window. A manager must approve."
+msgstr "Penjualan ini melewati batas waktu retur. Perlu persetujuan manajer."
+
+msgid "This sale is voided or was changed meanwhile."
+msgstr "Penjualan ini sudah dibatalkan atau berubah sementara itu."
+
+msgid "No sale with this receipt number."
+msgstr "Tidak ada penjualan dengan nomor struk ini."
+
+msgid "This sale is not from this branch (or cannot be returned here)."
+msgstr "Penjualan ini bukan dari cabang ini (atau tidak bisa diretur di sini)."
+
+msgid "A return has no receipt to show."
+msgstr "Retur tidak punya struk untuk ditampilkan."
+
+msgid "Exchange: credit {}. Scan the new items, then pay."
+msgstr "Tukar barang: kredit {}. Pindai barang baru, lalu bayar."
+
+msgid "The exchange was cancelled."
+msgstr "Tukar barang dibatalkan."
+
+msgid "Return"
+msgstr "Retur"
+
+msgid "Resume"
+msgstr "Lanjutkan"
+
+msgid "Cancel exchange"
+msgstr "Batal tukar"
+
+msgid "Show receipt"
+msgstr "Lihat struk"
+
+msgid "More"
+msgstr "Lagi"
+
+msgid "Reprint"
+msgstr "Cetak ulang"
+
+msgid "Void sale"
+msgstr "Batalkan penjualan"
+
+msgid "Cash / balance"
+msgstr "Tunai / saldo"
+
+msgid "No receipt"
+msgstr "Tanpa struk"
+
+msgid "Refund"
+msgstr "Kembalikan uang"
+
+msgid "Exchange"
+msgstr "Tukar"
+
+msgid "All / none"
+msgstr "Semua / tidak"
+
+msgid "Write off"
+msgstr "Hapus buku"
+
+msgid "History"
+msgstr "Riwayat"
+
+msgid "Void a paid sale"
+msgstr "Batalkan penjualan yang sudah dibayar"
+
+msgid "Reprint a receipt"
+msgstr "Cetak ulang struk"
+
+msgid "Return after the return window"
+msgstr "Retur melewati batas waktu"
+
+msgid "Open the drawer"
+msgstr "Buka laci"
+
+msgid "Hold the cart: note (optional)"
+msgstr "Tahan keranjang: catatan (opsional)"
+
+msgid "Held carts"
+msgstr "Keranjang ditahan"
+
+msgid "Last receipts"
+msgstr "Struk terakhir"
+
+msgid "Purchase history"
+msgstr "Riwayat pembelian"
+
+msgid "Void the sale: why?"
+msgstr "Batalkan penjualan: kenapa?"
+
+msgid "Return: which sale?"
+msgstr "Retur: penjualan yang mana?"
+
+msgid "Return: pick the items"
+msgstr "Retur: pilih barangnya"
+
+msgid "Return without receipt"
+msgstr "Retur tanpa struk"
+
+msgid "Return posted"
+msgstr "Retur tercatat"
+
+msgid "Write off: why?"
+msgstr "Hapus buku: kenapa?"
+
+msgid "REFUND"
+msgstr "UANG KEMBALI"
+
+msgid "CASH TO PAY BACK"
+msgstr "TUNAI DIKEMBALIKAN"
+
+msgid "Type or scan a receipt number"
+msgstr "Ketik atau pindai nomor struk"
+
+msgid "Scan or type the returned item"
+msgstr "Pindai atau ketik barang yang diretur"
+
+msgid "A note for the held cart"
+msgstr "Catatan untuk keranjang yang ditahan"
+
+msgid "Why is it written off?"
+msgstr "Kenapa dihapus buku?"

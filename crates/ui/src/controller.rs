@@ -330,8 +330,6 @@ pub enum Action {
     PayCash,
     /// F5: open the drawer.
     Drawer,
-    /// F6, F10, F11: not yet (S5).
-    Soon,
     /// F7: price check on / off.
     PriceCheck,
     /// F8: save change (payment panel).
@@ -364,10 +362,40 @@ pub enum Action {
     TaxInvoice,
     /// `%` in a discount: percent ↔ Rupiah.
     Percent,
+    /// F11: hold the cart.
+    Hold,
+    /// Shift+F11: the resume list.
+    Resume,
+    /// F6: the last receipts.
+    Receipts,
+    /// F10: return / exchange (or cancel the exchange).
+    Return,
+    /// Del in the resume list: drop the held cart.
+    DeleteHeld,
+    /// F8: the next history page.
+    MorePage,
+    /// R on a receipt: reprint (COPY).
+    Reprint,
+    /// V on a receipt: post-void.
+    PostVoid,
+    /// T on a receipt: return it.
+    StartReturn,
+    /// Cash or the customer balance.
+    RefundMethod,
+    /// F2 in the return: without a receipt.
+    NoReceipt,
+    /// `*` on a returned line: all or nothing.
+    All,
+    /// Del on a returned line: write off (with a reason).
+    WriteOff,
+    /// F9 in the return: exchange.
+    Exchange,
+    /// F9 in the customer dialog: purchase history.
+    History,
 }
 
 impl Action {
-    const ALL: [Self; 35] = [
+    const ALL: [Self; 49] = [
         Self::Confirm,
         Self::Back,
         Self::Retry,
@@ -386,7 +414,6 @@ impl Action {
         Self::NameSearch,
         Self::PayCash,
         Self::Drawer,
-        Self::Soon,
         Self::PriceCheck,
         Self::SaveChange,
         Self::PayOther,
@@ -403,6 +430,21 @@ impl Action {
         Self::VoidCart,
         Self::TaxInvoice,
         Self::Percent,
+        Self::Hold,
+        Self::Resume,
+        Self::Receipts,
+        Self::Return,
+        Self::DeleteHeld,
+        Self::MorePage,
+        Self::Reprint,
+        Self::PostVoid,
+        Self::StartReturn,
+        Self::RefundMethod,
+        Self::NoReceipt,
+        Self::All,
+        Self::WriteOff,
+        Self::Exchange,
+        Self::History,
     ];
 
     /// The ID used by the UI.
@@ -427,7 +469,6 @@ impl Action {
             Self::NameSearch => "name-search",
             Self::PayCash => "pay-cash",
             Self::Drawer => "drawer",
-            Self::Soon => "soon",
             Self::PriceCheck => "price-check",
             Self::SaveChange => "save-change",
             Self::PayOther => "pay-other",
@@ -444,6 +485,21 @@ impl Action {
             Self::VoidCart => "void-cart",
             Self::TaxInvoice => "tax-invoice",
             Self::Percent => "percent",
+            Self::Hold => "hold",
+            Self::Resume => "resume",
+            Self::Receipts => "receipts",
+            Self::Return => "return",
+            Self::DeleteHeld => "delete-held",
+            Self::MorePage => "more-page",
+            Self::Reprint => "reprint",
+            Self::PostVoid => "post-void",
+            Self::StartReturn => "start-return",
+            Self::RefundMethod => "refund-method",
+            Self::NoReceipt => "no-receipt",
+            Self::All => "return-all",
+            Self::WriteOff => "write-off",
+            Self::Exchange => "exchange",
+            Self::History => "history",
         }
     }
 
@@ -748,6 +804,15 @@ pub enum Effect {
         /// The login generation.
         generation: u64,
     },
+    /// A call of [`crate::after`]; the answer comes back as [`Msg::After`].
+    After {
+        /// Session token.
+        token: String,
+        /// The call.
+        call: crate::after::Call,
+        /// The login generation.
+        generation: u64,
+    },
 }
 
 /// Input for [`Controller::update`].
@@ -809,6 +874,8 @@ pub enum Msg {
     ReceiptText(u64, Result<Receipt, ClientError>),
     /// Result of [`Effect::LoadCart`]: the file's contents.
     CartFile(u64, Option<String>),
+    /// Result of [`Effect::After`] of the login `generation`.
+    After(u64, Box<crate::after::Reply>),
 }
 
 /// What [`Controller::update`] did.
@@ -867,6 +934,8 @@ pub struct Controller {
     pub dialog: Option<Dialog>,
     /// The logged-in user's customer permissions.
     pub perms: Perms,
+    /// The register's name (stored with a held cart for the resume list).
+    pub register_label: String,
 }
 
 impl Controller {
@@ -892,6 +961,7 @@ impl Controller {
             customer: None,
             dialog: None,
             perms: Perms::default(),
+            register_label: String::new(),
         };
         (controller, vec![Effect::LoadUsers])
     }
@@ -1164,7 +1234,8 @@ impl Controller {
             | Action::NewCustomer
             | Action::PayOut
             | Action::ShowTaken
-            | Action::NextField => Vec::new(),
+            | Action::NextField
+            | Action::History => Vec::new(),
             other => self.sell_action(other),
         }
     }
@@ -1184,6 +1255,10 @@ impl Controller {
                     call,
                     generation: self.generation,
                 }]
+            }
+            Outcome::History(customer) => {
+                self.dialog = None;
+                self.open_history(&customer)
             }
             Outcome::Attach(customer) => {
                 let line = crate::customer::receipt_line(&customer);
@@ -1414,7 +1489,9 @@ impl Controller {
                     self.login = None;
                     return self.logout(Some(Notice::bad("session_ended")));
                 }
-                self.catalog_event(&event)
+                let mut effects = self.held_event(&event.kind);
+                effects.extend(self.catalog_event(&event));
+                effects
             }
             Msg::Looked(generation, seq, result) => self.looked(generation, seq, result),
             Msg::Quoted(generation, seq, result) => self.quoted(generation, seq, result),
@@ -1426,6 +1503,7 @@ impl Controller {
             Msg::Posted(generation, result) => self.posted(generation, *result),
             Msg::ReceiptText(generation, result) => self.receipt_loaded(generation, result),
             Msg::CartFile(generation, contents) => self.cart_file(generation, contents.as_deref()),
+            Msg::After(generation, reply) => self.after_reply(generation, *reply),
             // Logout and branch failures change nothing on screen.
             _ => Vec::new(),
         }

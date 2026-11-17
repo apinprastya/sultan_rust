@@ -18,6 +18,9 @@
 //!   `cart_stale` closes the panel with the new total and quotes the cart again.
 //! - **After posting:** the change due in large digits and the receipt text, then (Enter) a new
 //!   empty cart.
+//! - **After the sale** (phase S5): F5 drawer, F6 last receipts, F10 return / exchange, F11 hold
+//!   and Shift+F11 resume are in [`crate::after`]; an exchange pays its new cart with the
+//!   refund first ([`Pay::with_exchange`]) and posts it with the return.
 //! - **Crash copy** (D2): every change writes the cart ([`crate::sell::Saved`]); the login of the
 //!   same cashier session restores it, another session's copy is ignored; posting and a cart void
 //!   delete it.
@@ -183,6 +186,18 @@ pub enum Modal {
     Search(Search),
     /// The key list (F1).
     Help,
+    /// The hold note (F11).
+    Note(crate::after::HoldNote),
+    /// The resume list (Shift+F11).
+    Held(crate::after::HeldList),
+    /// The last receipts (F6) or a customer's purchase history.
+    Docs(crate::after::Docs),
+    /// A receipt on screen (reprint, post-void, return).
+    Receipt(Box<crate::after::Preview>),
+    /// The post-void (§7).
+    PostVoid(Box<crate::after::PostVoid>),
+    /// A return or exchange (F10).
+    Return(Box<crate::after::Return>),
 }
 
 /// The posted sale, shown until Enter.
@@ -194,6 +209,8 @@ pub struct Done {
     pub receipt: Vec<String>,
     /// A tender opened the drawer.
     pub drawer: bool,
+    /// An exchange: the rest of the refund paid back in cash.
+    pub refund: i64,
 }
 
 /// A void waiting for the server.
@@ -228,6 +245,10 @@ pub struct Sell {
     pub qty_next: Option<(u64, Qty)>,
     /// A void waiting for its answer.
     pub voiding: Option<VoidCall>,
+    /// A call of [`crate::after`] an override would retry.
+    pub waiting: Option<crate::after::Waiting>,
+    /// An exchange in progress: the return whose refund pays this cart (D12).
+    pub exchange: Option<Box<crate::after::Return>>,
 }
 
 /// What an approved override retries.
@@ -237,6 +258,8 @@ pub enum Retry {
     Void,
     /// The sale.
     Sale,
+    /// The waiting call of [`crate::after`].
+    After,
 }
 
 /// The message for a cart or payment rule (`core::sale::SaleError`).
@@ -311,13 +334,22 @@ impl Controller {
             keys.push(s(Key::F(9), Action::PayOther, "pay_other"));
             keys.push(s(Key::CtrlUp, Action::Lines, "to_lines"));
             keys.push(s(Key::Ctrl('d'), Action::CartDiscount, "cart_discount"));
-            keys.push(s(Key::Ctrl('n'), Action::VoidCart, "void_cart"));
         }
         keys.push(s(Key::F(5), Action::Drawer, "drawer"));
+        keys.push(s(Key::F(6), Action::Receipts, "receipts"));
         keys.push(s(Key::F(7), Action::PriceCheck, "price_check"));
-        keys.push(s(Key::F(6), Action::Soon, "receipts_soon"));
-        keys.push(s(Key::F(10), Action::Soon, "returns_soon"));
-        keys.push(s(Key::F(11), Action::Soon, "hold_soon"));
+        let exchange = self.sell().is_some_and(|s| s.exchange.is_some());
+        if exchange {
+            keys.push(s(Key::F(10), Action::Return, "cancel_exchange"));
+        } else if empty {
+            keys.push(s(Key::F(10), Action::Return, "returns"));
+        }
+        if !empty && !exchange {
+            keys.push(s(Key::F(11), Action::Hold, "hold"));
+        }
+        if !exchange {
+            keys.push(s(Key::ShiftF(11), Action::Resume, "resume"));
+        }
         keys.push(s(Key::F(12), Action::Lock, "lock"));
         if empty {
             keys.push(s(Key::CtrlF(10), Action::CloseSession, "close_session"));
@@ -336,6 +368,9 @@ impl Controller {
         };
         if state.done.is_some() {
             return vec![s(Key::Enter, Confirm, "new_sale")];
+        }
+        if let Some(keys) = self.after_shortcuts() {
+            return keys;
         }
         if let Some(pay) = &state.pay {
             return match pay.step {
@@ -395,6 +430,7 @@ impl Controller {
                     s(Key::Escape, Back, "close"),
                 ],
                 Modal::Help => vec![s(Key::Escape, Back, "close"), s(Key::F(1), Back, "close")],
+                _ => Vec::new(),
             };
         }
         if state.focus.is_some() {
@@ -422,7 +458,8 @@ impl Controller {
         if state.cart.lines.is_empty() {
             return keys;
         }
-        // Aliases without a button of their own.
+        // The cart void is one button in the bar for both keys (the window merges them).
+        keys.push(s(Key::Ctrl('n'), Action::VoidCart, "void_cart"));
         keys.push(s(Key::CtrlDelete, Action::VoidCart, "void_cart"));
         keys
     }
@@ -430,6 +467,11 @@ impl Controller {
     /// Typing on the state screen. Returns whether the key was used.
     #[allow(clippy::too_many_lines)] // one block per dialog and panel
     pub(crate) fn sell_edit(&mut self, key: Key) -> bool {
+        if self.sell().is_some_and(|s| s.done.is_none())
+            && let Some(used) = self.after_edit(key)
+        {
+            return used;
+        }
         let Some(h) = home(&mut self.screen) else {
             return false;
         };
@@ -560,7 +602,7 @@ impl Controller {
                     }
                     _ => false,
                 },
-                Modal::Help => false,
+                _ => false,
             };
         }
         if let Some(cursor) = &mut state.focus {
@@ -592,9 +634,10 @@ impl Controller {
     pub(crate) fn sell_key(&self, key: Key) -> Key {
         match key {
             Key::Char(c)
-                if self
-                    .sell()
-                    .is_some_and(|s| s.focus.is_some() && s.modal.is_none()) =>
+                if self.sell().is_some_and(|s| {
+                    (s.focus.is_some() && s.modal.is_none())
+                        || matches!(s.modal, Some(Modal::Receipt(_)))
+                }) =>
             {
                 Key::Char(c.to_ascii_lowercase())
             }
@@ -605,6 +648,10 @@ impl Controller {
     /// A click on a row: a cart line, or an item of the open list.
     pub(crate) fn pick_sell(&mut self, kind: &str, index: usize) {
         if self.busy {
+            return;
+        }
+        if kind == "item" && self.in_after() {
+            self.after_pick(index);
             return;
         }
         let Some(state) = self.sell_mut() else {
@@ -631,6 +678,10 @@ impl Controller {
     pub(crate) fn sell_action(&mut self, action: Action) -> Vec<Effect> {
         let in_modal = self.sell().is_some_and(|s| s.modal.is_some());
         let in_pay = self.sell().is_some_and(|s| s.pay.is_some());
+        let in_done = self.sell().is_some_and(|s| s.done.is_some());
+        if self.in_after() && !in_done {
+            return self.after_action(action);
+        }
         match action {
             Action::Confirm if self.sell().is_some_and(|s| s.done.is_some()) => {
                 if let Some(s) = self.sell_mut() {
@@ -673,14 +724,8 @@ impl Controller {
                 }
                 Vec::new()
             }
-            Action::Drawer => {
-                // A log entry only until 2.11 (no drawer kick, no server audit yet).
-                self.set_notice(Notice::new("drawer_opened", "", Tone::Neutral));
-                Vec::new()
-            }
-            Action::Soon => {
-                self.set_notice(Notice::new("coming_soon", "", Tone::Neutral));
-                Vec::new()
+            Action::Drawer | Action::Hold | Action::Resume | Action::Receipts | Action::Return => {
+                self.after_action(action)
             }
             Action::Lines => {
                 if let Some(s) = self.sell_mut() {
@@ -1018,6 +1063,12 @@ impl Controller {
                 h.sell.modal = None;
                 Vec::new()
             }
+            Modal::Note(_)
+            | Modal::Held(_)
+            | Modal::Docs(_)
+            | Modal::Receipt(_)
+            | Modal::PostVoid(_)
+            | Modal::Return(_) => Vec::new(),
             Modal::Entry(e) => {
                 let result: Result<usize, SaleError> = match &e.kind {
                     EntryKind::Qty(i) => match e.qty() {
@@ -1276,6 +1327,7 @@ impl Controller {
                 }
                 self.post()
             }
+            Some(Retry::After) => self.after_retry(token),
             None => {
                 self.busy = false;
                 Vec::new()
@@ -1294,6 +1346,7 @@ impl Controller {
                         pay.posting = false;
                     }
                 }
+                Some(Retry::After) => s.waiting = None,
                 None => {}
             }
         }
@@ -1324,7 +1377,10 @@ impl Controller {
                     return Vec::new();
                 }
             };
-            match Pay::new(total, h.sell.cart.settings.rounding, types, balance) {
+            let credit = h.sell.exchange.as_ref().map_or(0, |r| r.refund());
+            match Pay::new(total, h.sell.cart.settings.rounding, types, balance)
+                .and_then(|p| p.with_exchange(credit))
+            {
                 Ok(pay) => h.sell.pay = Some(pay),
                 Err(e) => {
                     h.notice = Some(sale_notice(&e));
@@ -1430,6 +1486,22 @@ impl Controller {
         pay.posting = true;
         let override_token = Some(pay.tokens.join(",")).filter(|t| !t.is_empty());
         self.busy = true;
+        if let Some(r) = &h.sell.exchange {
+            let mut request = r.request();
+            request.exchange = Some(sultan_client::ExchangeRequest {
+                sale_id: h.sell.cart.id.clone(),
+                sale: body,
+            });
+            return vec![Effect::After {
+                token,
+                call: crate::after::Call::Exchange {
+                    id: r.id.clone(),
+                    body: Box::new(request),
+                    override_token,
+                },
+                generation,
+            }];
+        }
         vec![Effect::PostSale {
             token,
             id: h.sell.cart.id.clone(),
@@ -1445,6 +1517,16 @@ impl Controller {
         generation: u64,
         result: Result<Sale, ClientError>,
     ) -> Vec<Effect> {
+        self.posted_with(generation, result, 0)
+    }
+
+    /// The answer of a posting; `refund` is the cash an exchange pays back besides.
+    pub(crate) fn posted_with(
+        &mut self,
+        generation: u64,
+        result: Result<Sale, ClientError>,
+        refund: i64,
+    ) -> Vec<Effect> {
         if generation != self.generation || self.login.is_none() {
             return Vec::new();
         }
@@ -1458,13 +1540,14 @@ impl Controller {
                 let Some(h) = home(&mut self.screen) else {
                     return Vec::new();
                 };
-                let drawer = h.sell.pay.as_ref().is_some_and(Pay::opens_drawer);
+                let drawer = h.sell.pay.as_ref().is_some_and(Pay::opens_drawer) || refund > 0;
                 let id = sale.summary.id.clone();
                 h.sell = Sell {
                     done: Some(Done {
                         sale: Box::new(sale),
                         receipt: Vec::new(),
                         drawer,
+                        refund,
                     }),
                     ..Sell::default()
                 };
@@ -1479,7 +1562,9 @@ impl Controller {
                 ]
             }
             Err(e) if ends_login(&e) => self.fail(&e),
-            Err(e) if e.code() == Some("needs_override") => self.sale_needs_override(&e),
+            Err(e) if matches!(e.code(), Some("needs_override" | "return_window")) => {
+                self.sale_needs_override(&e)
+            }
             Err(e) if e.code() == Some("cart_stale") => {
                 self.approval = None;
                 self.retry = None;
@@ -1528,6 +1613,23 @@ impl Controller {
         let Some(state) = self.sell() else {
             return Vec::new();
         };
+        if permission.starts_with("refund.")
+            && let Some(r) = &state.exchange
+        {
+            // The return's own checks (window, no-receipt limit) take the return's ID (§19 item 36).
+            let value = (permission == "refund.no_receipt").then(|| r.refund());
+            let id = r.id.clone();
+            self.ask_approval(
+                ProtectedAction {
+                    action: permission,
+                    value,
+                    context_ref: id,
+                },
+                limit,
+                Retry::Sale,
+            );
+            return Vec::new();
+        }
         let id = state.cart.id.clone();
         let approved = state
             .pay

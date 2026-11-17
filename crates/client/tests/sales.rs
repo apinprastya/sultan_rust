@@ -286,6 +286,11 @@ async fn flow(
         .await
         .unwrap();
     assert!(receipt.copy);
+    // Built by `core::sale::build_receipt`: Indonesian labels, the product's name, 32 columns.
+    for want in ["SALINAN", "TOTAL", "Teh"] {
+        assert!(receipt.text.contains(want), "{want}: {}", receipt.text);
+    }
+    assert!(receipt.lines.iter().all(|l| l.chars().count() <= 32));
     // A till void of a line.
     let void_line = CartVoidRequest {
         kind: "line".to_owned(),
@@ -307,6 +312,32 @@ async fn flow(
         (v.amount, v.cashier_session_id.as_str()),
         (price, session.id.as_str())
     );
+    // F5: a cashier opens the drawer with a manager's approval for the session.
+    let drawer = sultan_client::DrawerRequest {
+        reason: Some(" change ".to_owned()),
+    };
+    assert_eq!(
+        code_of(
+            register
+                .open_drawer(cashier, &drawer, &new_id(), None)
+                .await
+        ),
+        (403, "needs_override".to_owned())
+    );
+    let t = register
+        .request_override(cashier, &grant("drawer.open", &session.id, None))
+        .await
+        .unwrap()
+        .token;
+    let opened = register
+        .open_drawer(cashier, &drawer, &new_id(), Some(&t))
+        .await
+        .unwrap();
+    assert_eq!(
+        (opened.cashier_session_id.as_str(), opened.reason.as_deref()),
+        (session.id.as_str(), Some("change"))
+    );
+    assert_eq!(opened.approved_by.as_deref(), Some(approver));
     // Return 1 of the 2 by receipt, then exchange the other for 1 new.
     let ret = |qty: i64| ReturnRequest {
         sale_id: Some(id.clone()),
@@ -593,7 +624,13 @@ async fn flow_fake(
     // History of a seeded customer.
     let mut body = sale(variant, unit, 1, TENDER_CASH, 5_000);
     body.customer_id = Some(customer.to_owned());
-    post(register, cashier, body).await;
+    let with_customer = post(register, cashier, body).await;
+    let receipt = register
+        .receipt(cashier, &with_customer.summary.id, false, "en", None)
+        .await
+        .unwrap();
+    assert!(receipt.text.contains("Cashier"), "{}", receipt.text);
+    assert_eq!(receipt.barcode, with_customer.summary.number);
     let history = register
         .customer_history(cashier, customer, None)
         .await

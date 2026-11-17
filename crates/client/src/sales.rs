@@ -15,6 +15,8 @@ pub const SALE_CREATE: &str = "sale.create";
 pub const SALE_POST_VOID: &str = "sale.post_void";
 /// `sale.reprint`: reprint any receipt but the last of the session (overridable).
 pub const SALE_REPRINT: &str = "sale.reprint";
+/// `drawer.open`: open the drawer without a sale (overridable).
+pub const DRAWER_OPEN: &str = "drawer.open";
 /// `tender.manage`: tender types (HQ back office).
 pub const TENDER_MANAGE: &str = "tender.manage";
 
@@ -653,4 +655,26 @@ pub struct HistoryPage {
     pub items: Vec<HistoryItem>,
     /// The next page's `before`.
     pub next_before_id: Option<String>,
+}
+
+/// Body of `POST /drawer/open` (`drawer.open`, spec 2.6 §13 F5).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DrawerRequest {
+    /// Why (optional, at most 200 characters).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
+/// The answer of `POST /drawer/open`.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct DrawerOpen {
+    /// The cashier session it is recorded on (the override's `context_ref`).
+    pub cashier_session_id: String,
+    /// The reason.
+    pub reason: Option<String>,
+    /// The approving manager.
+    pub approved_by: Option<String>,
+    /// When (unix ms).
+    pub opened_at: i64,
 }

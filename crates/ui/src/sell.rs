@@ -713,6 +713,8 @@ pub struct Pay {
     /// A post is running.
     pub posting: bool,
     rounding: CashRounding,
+    /// The exchange credit applied first (D12).
+    pub exchange: i64,
 }
 
 /// The longest reference, in characters (`core` refuses more).
@@ -748,7 +750,23 @@ impl Pay {
             approved: Vec::new(),
             posting: false,
             rounding,
+            exchange: 0,
         })
+    }
+
+    /// Applies an exchange's refund first: at most the total (`core::sale::net_exchange`).
+    ///
+    /// # Errors
+    /// `invalid_field` for a negative credit.
+    pub fn with_exchange(mut self, credit: i64) -> Result<Self, SaleError> {
+        let net = sultan_core::sale::net_exchange(Money::from_minor(credit), self.payment.total())?;
+        self.exchange = net.exchange_tender.minor();
+        if self.exchange > 0 {
+            self.payment
+                .add_exchange(Money::from_minor(self.exchange))?;
+        }
+        self.after_tender();
+        Ok(self)
     }
 
     fn core(&self, index: usize) -> Option<CoreTender> {
@@ -909,6 +927,13 @@ impl Pay {
         if let Ok(fresh) = Payment::new(payment.total(), self.rounding) {
             payment = fresh;
         }
+        if self.exchange > 0 {
+            let _ = payment.add_exchange(Money::from_minor(self.exchange));
+        }
+        if keep.is_empty() && self.exchange > 0 && tenders.len() == 1 {
+            // Only the exchange credit is left: it is not taken back.
+            return false;
+        }
         for t in keep {
             let Some(index) = t
                 .tender_type
@@ -981,13 +1006,17 @@ impl Pay {
             .collect()
     }
 
-    /// The tenders for the panel: name, amount, reference.
+    /// The tenders for the panel: name, amount, reference (an exchange credit is named
+    /// `exchange`, which the window translates).
     #[must_use]
     pub fn rows(&self) -> Vec<(String, i64, String)> {
         self.payment
             .tenders()
             .iter()
             .filter_map(|t| {
+                if t.tender_type.is_none() {
+                    return Some(("exchange".to_owned(), t.amount.minor(), String::new()));
+                }
                 let index = self.ids.iter().position(|x| Some(*x) == t.tender_type)?;
                 Some((
                     self.types[index].name.clone(),

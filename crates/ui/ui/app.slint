@@ -172,6 +172,16 @@ export struct SellView {
     modal-pct: bool,
     modal-cursor: int,
     modal-text: string,
+    // Phase S5 dialogs (`crates/ui/src/after.rs`): a typed field and its placeholder code, the
+    // receipt beside the list, a large amount with its label code, the refund method code
+    // (`cash` / `balance`, "" = none) and the exchange credit on the home screen.
+    modal-field: bool,
+    modal-placeholder: string,
+    modal-receipt: bool,
+    modal-big: string,
+    modal-big-label: string,
+    modal-refund: string,
+    exchange: string,
     // Payment panel: step cash, pick, amount, reference, ready, save.
     pay-open: bool,
     pay-step: string,
@@ -193,6 +203,8 @@ export struct SellView {
     done-change: string,
     done-total: string,
     done-drawer: bool,
+    // An exchange: what is paid back in cash besides.
+    done-refund: string,
 }
 
 export struct DenomRow {
@@ -601,8 +613,11 @@ component ScanBox inherits Rectangle {
             max-width: 200px;
         }
         VerticalLayout {
+            // The buttons keep their width; the placeholder is cut instead.
+            horizontal-stretch: 0;
             alignment: center;
             KeyChip {
+                compact: true;
                 keys: "Enter";
                 label: Strings.chip(root.check ? "look_up" : "add_item");
                 clicked => {
@@ -611,8 +626,11 @@ component ScanBox inherits Rectangle {
             }
         }
         VerticalLayout {
+            // The buttons keep their width; the placeholder is cut instead.
+            horizontal-stretch: 0;
             alignment: center;
             KeyChip {
+                compact: true;
                 keys: "Esc";
                 label: Strings.chip("clear");
                 clicked => {
@@ -1117,6 +1135,10 @@ component TotalsPanel inherits Card {
             label: @tr("Tax");
             value: root.view.tax;
         }
+        if root.view.exchange != "": TotalLine {
+            label: @tr("Exchange credit");
+            value: root.view.exchange;
+        }
         Rectangle {
             height: 1px;
             background: Theme.border;
@@ -1223,6 +1245,7 @@ component HomePage inherits Rectangle {
                     width: 177px;
                     spacing: 6px;
                     for c in root.chips: KeyChip {
+                        compact: true;
                         keys: c.keys;
                         label: Strings.chip(c.label);
                         clicked => {
@@ -1234,6 +1257,7 @@ component HomePage inherits Rectangle {
                     width: 177px;
                     spacing: 6px;
                     for c in root.chips-b: KeyChip {
+                        compact: true;
                         keys: c.keys;
                         label: Strings.chip(c.label);
                         clicked => {
@@ -1255,110 +1279,171 @@ component SellDialog inherits Rectangle {
     in property <SellView> view;
     in property <[SellRow]> rows;
     in property <[Chip]> chips;
+    in property <[Chip]> chips-b;
+    in property <[string]> receipt;
     callback pick(int);
     callback action(string);
     background: #000000a0;
     TouchArea { }
     Card {
-        width: 620px;
-        height: root.view.modal == "entry" ? 300px : 560px;
+        width: root.view.modal-receipt ? min(root.width - 32px, 980px) : root.chips-b.length > 0 ? min(root.width - 32px, 900px) : 620px;
+        height: root.view.modal == "entry" || root.view.modal == "note" ? 300px : min(root.height - 32px, 640px);
         accessible-role: groupbox;
         accessible-label: Strings.sell-title(root.view.modal-title);
-        VerticalLayout {
+        HorizontalLayout {
             padding: 24px;
-            spacing: 12px;
-            Title {
-                text: Strings.sell-title(root.view.modal-title);
-            }
-            if root.view.modal-name != "": Subtitle {
-                text: root.view.modal-name;
-                overflow: elide;
-            }
-            if root.view.modal == "entry" || root.view.modal == "search" || (root.view.modal == "reason" && root.view.modal-cursor == 3): Rectangle {
-                height: 60px;
-                border-radius: 10px;
-                border-width: 2px;
-                border-color: Theme.accent;
-                background: Theme.raised;
-                accessible-role: text-input;
-                accessible-label: Strings.sell-title(root.view.modal-title);
-                accessible-value: root.view.modal == "reason" ? root.view.modal-text : root.view.modal-value;
-                HorizontalLayout {
-                    padding-left: 14px;
-                    padding-right: 14px;
-                    spacing: 8px;
-                    Text {
-                        horizontal-stretch: 1;
-                        text: root.view.modal == "reason" ? (root.view.modal-text != "" ? root.view.modal-text : @tr("Type the reason")) : root.view.modal-value;
-                        color: Theme.text;
-                        font-size: 24px;
-                        font-weight: 600;
-                        vertical-alignment: center;
-                    }
-                    if root.view.modal == "entry" && (root.view.modal-title == "line_discount" || root.view.modal-title == "cart_discount"): Text {
-                        text: root.view.modal-pct ? "%" : "Rp";
-                        color: Theme.accent;
-                        font-size: 22px;
-                        font-weight: 700;
-                        vertical-alignment: center;
-                    }
+            spacing: 20px;
+            VerticalLayout {
+                horizontal-stretch: 1;
+                spacing: 12px;
+                Title {
+                    text: Strings.sell-title(root.view.modal-title);
+                    overflow: elide;
                 }
-            }
-            if root.view.modal-hint != "": Text {
-                text: root.view.modal-hint;
-                color: Theme.muted;
-                font-size: 13px;
-                wrap: word-wrap;
-            }
-            if root.view.modal != "entry": ListView {
-                vertical-stretch: 1;
-                for r[i] in root.rows: Rectangle {
-                    height: 40px;
-                    border-radius: 8px;
-                    background: i == root.view.modal-cursor && root.view.modal != "help" ? Theme.accent-soft : transparent;
-                    accessible-role: list-item;
-                    accessible-label: root.view.modal == "reason" ? Strings.void-reason(r.label) : r.label;
-                    accessible-action-default => { root.pick(i); }
-                    TouchArea {
-                        clicked => {
-                            root.pick(i);
-                        }
-                    }
+                if root.view.modal-name != "": Subtitle {
+                    text: root.view.modal-name;
+                    overflow: elide;
+                }
+                if root.view.modal-field || root.view.modal == "entry" || root.view.modal == "search" || (root.view.modal == "reason" && root.view.modal-cursor == 3): Rectangle {
+                    height: 60px;
+                    border-radius: 10px;
+                    border-width: 2px;
+                    border-color: Theme.accent;
+                    background: Theme.raised;
+                    accessible-role: text-input;
+                    accessible-label: Strings.sell-title(root.view.modal-title);
+                    accessible-value: root.view.modal == "reason" ? root.view.modal-text : root.view.modal-value;
                     HorizontalLayout {
-                        padding-left: 12px;
-                        padding-right: 12px;
-                        spacing: 12px;
+                        padding-left: 14px;
+                        padding-right: 14px;
+                        spacing: 8px;
                         Text {
-                            width: root.view.modal == "help" ? 130px : 360px;
-                            text: root.view.modal == "reason" ? Strings.void-reason(r.label) : r.label;
-                            color: root.view.modal == "help" ? Theme.accent : Theme.text;
-                            font-size: 15px;
+                            horizontal-stretch: 1;
+                            text: root.view.modal == "reason" ? (root.view.modal-text != "" ? root.view.modal-text : @tr("Type the reason")) : (root.view.modal-value != "" ? root.view.modal-value : Strings.placeholder(root.view.modal-placeholder));
+                            color: root.view.modal-value == "" && root.view.modal != "reason" ? Theme.muted : Theme.text;
+                            font-size: 24px;
                             font-weight: 600;
                             vertical-alignment: center;
                             overflow: elide;
                         }
-                        Text {
-                            horizontal-stretch: 1;
-                            text: root.view.modal == "help" ? Strings.chip(r.detail) : r.detail;
-                            color: root.view.modal == "help" ? Theme.text : Theme.muted;
-                            font-size: 14px;
+                        if root.view.modal == "entry" && (root.view.modal-title == "line_discount" || root.view.modal-title == "cart_discount"): Text {
+                            text: root.view.modal-pct ? "%" : "Rp";
+                            color: Theme.accent;
+                            font-size: 22px;
+                            font-weight: 700;
                             vertical-alignment: center;
-                            overflow: elide;
+                        }
+                    }
+                }
+                if root.view.modal-hint != "": Text {
+                    text: root.view.modal-hint;
+                    color: Theme.muted;
+                    font-size: 13px;
+                    wrap: word-wrap;
+                }
+                if root.view.modal-refund != "": Text {
+                    text: root.view.modal-refund == "balance" ? @tr("Refund to the customer balance") : @tr("Refund in cash");
+                    accessible-role: text;
+                    accessible-label: @tr("Refund method");
+                    color: Theme.accent;
+                    font-size: 15px;
+                    font-weight: 700;
+                }
+                if root.view.modal != "entry" && root.view.modal != "note": ListView {
+                    vertical-stretch: 1;
+                    for r[i] in root.rows: Rectangle {
+                        height: 40px;
+                        border-radius: 8px;
+                        background: i == root.view.modal-cursor && root.view.modal != "help" && root.view.modal != "slip" ? Theme.accent-soft : transparent;
+                        accessible-role: list-item;
+                        accessible-label: root.view.modal == "reason" ? Strings.void-reason(r.label) : r.label;
+                        accessible-value: r.detail;
+                        accessible-action-default => { root.pick(i); }
+                        TouchArea {
+                            clicked => {
+                                root.pick(i);
+                            }
+                        }
+                        HorizontalLayout {
+                            padding-left: 12px;
+                            padding-right: 12px;
+                            spacing: 12px;
+                            Text {
+                                width: root.view.modal == "help" ? 130px : root.view.modal-receipt ? 200px : 260px;
+                                text: root.view.modal == "reason" ? Strings.void-reason(r.label) : r.label;
+                                color: root.view.modal == "help" ? Theme.accent : Theme.text;
+                                font-size: 15px;
+                                font-weight: 600;
+                                vertical-alignment: center;
+                                overflow: elide;
+                            }
+                            Text {
+                                horizontal-stretch: 1;
+                                text: root.view.modal == "help" ? Strings.chip(r.detail) : r.detail;
+                                color: root.view.modal == "help" ? Theme.text : Theme.muted;
+                                font-size: 14px;
+                                vertical-alignment: center;
+                                overflow: elide;
+                            }
+                        }
+                    }
+                }
+                if root.view.modal-big != "": VerticalLayout {
+                    spacing: 2px;
+                    Text {
+                        text: Strings.sell-title(root.view.modal-big-label);
+                        color: Theme.muted;
+                        font-size: 13px;
+                        font-weight: 700;
+                    }
+                    Text {
+                        text: root.view.modal-big;
+                        accessible-role: text;
+                        accessible-label: Strings.sell-title(root.view.modal-big-label);
+                        color: Theme.success;
+                        font-size: 44px;
+                        font-weight: 800;
+                    }
+                }
+                if root.view.modal == "entry" || root.view.modal == "note": Rectangle {
+                    vertical-stretch: 1;
+                }
+                HorizontalLayout {
+                    spacing: 8px;
+                    alignment: end;
+                    for c in root.chips: KeyChip {
+                        keys: c.keys;
+                        label: Strings.chip(c.label);
+                        clicked => {
+                            root.action(c.id);
+                        }
+                    }
+                }
+                if root.chips-b.length > 0: HorizontalLayout {
+                    spacing: 8px;
+                    alignment: end;
+                    for c in root.chips-b: KeyChip {
+                        keys: c.keys;
+                        label: Strings.chip(c.label);
+                        clicked => {
+                            root.action(c.id);
                         }
                     }
                 }
             }
-            if root.view.modal == "entry": Rectangle {
-                vertical-stretch: 1;
-            }
-            HorizontalLayout {
-                spacing: 10px;
-                alignment: end;
-                for c in root.chips: KeyChip {
-                    keys: c.keys;
-                    label: Strings.chip(c.label);
-                    clicked => {
-                        root.action(c.id);
+            if root.view.modal-receipt: Rectangle {
+                width: 340px;
+                background: #fbfaf6;
+                border-radius: 6px;
+                accessible-role: text;
+                accessible-label: @tr("Receipt");
+                ListView {
+                    for l in root.receipt: Text {
+                        x: 12px;
+                        text: l;
+                        color: #222222;
+                        font-family: Theme.mono;
+                        font-size: 13px;
                     }
                 }
             }
@@ -1416,7 +1501,7 @@ component PayPanel inherits Rectangle {
                 value: root.view.pay-total;
             }
             for t in root.paid: PayLine {
-                label: t.label;
+                label: t.label == "exchange" ? @tr("Exchange credit") : t.label;
                 value: t.detail;
             }
             if root.view.pay-rounding != "": PayLine {
@@ -1551,6 +1636,7 @@ component DonePanel inherits Rectangle {
                 spacing: 12px;
                 Title {
                     text: @tr("Sale {} posted", root.view.done-number);
+                    wrap: word-wrap;
                 }
                 Text {
                     text: @tr("CHANGE DUE");
@@ -1568,6 +1654,15 @@ component DonePanel inherits Rectangle {
                 }
                 Subtitle {
                     text: @tr("Total paid {}", root.view.done-total);
+                }
+                if root.view.done-refund != "": Text {
+                    text: @tr("Pay back {} in cash", root.view.done-refund);
+                    accessible-role: text;
+                    accessible-label: @tr("Cash to pay back");
+                    color: Theme.success;
+                    font-size: 28px;
+                    font-weight: 800;
+                    wrap: word-wrap;
                 }
                 if root.view.done-drawer: Subtitle {
                     text: @tr("The drawer opens.");
@@ -1595,7 +1690,7 @@ component DonePanel inherits Rectangle {
                         x: 12px;
                         text: l;
                         color: #222222;
-                        font-family: "monospace";
+                        font-family: Theme.mono;
                         font-size: 13px;
                     }
                 }
@@ -2391,6 +2486,9 @@ export component MainWindow inherits Window {
     in property <[SellRow]> pay-rows;
     in property <[SellRow]> tender-rows;
     in property <[string]> receipt-lines;
+    // A sell dialog's chips, in two rows when there are more than four.
+    in property <[Chip]> dialog-chips;
+    in property <[Chip]> dialog-chips-b;
     out property <bool> has-focus: keys.has-focus;
 
     // A key (Slint key text and modifiers); true = handled.
@@ -2522,7 +2620,9 @@ export component MainWindow inherits Window {
             height: 100%;
             view: root.sell;
             rows: root.sell-rows;
-            chips: root.chips;
+            chips: root.dialog-chips;
+            chips-b: root.dialog-chips-b;
+            receipt: root.receipt-lines;
             pick(i) => {
                 root.pick("item", i);
             }

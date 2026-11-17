@@ -19,6 +19,10 @@ export global Theme {
     out property <color> danger: #f87171;
     out property <color> danger-soft: #f8717124;
     out property <color> scrim: #000000b0;
+    // A fixed-width font for the receipt preview (Slint looks fonts up by name, so the generic
+    // "monospace" does not resolve): one that ships with each desktop OS.
+    out property <string> mono: Platform.os == OperatingSystemType.windows ? "Consolas"
+        : Platform.os == OperatingSystemType.macos ? "Menlo" : "DejaVu Sans Mono";
 
     // -1 bad, 0 neutral, 1 good
     public pure function tone-color(tone: int) -> color {
@@ -223,12 +227,6 @@ export global Strings {
         if (code == "price_check_off") {
             return @tr("Back to selling.");
         }
-        if (code == "drawer_opened") {
-            return @tr("Drawer opened (logged).");
-        }
-        if (code == "coming_soon") {
-            return @tr("Coming in a later version.");
-        }
         if (code == "no_other_unit") {
             return @tr("This item has no other unit.");
         }
@@ -258,6 +256,60 @@ export global Strings {
         }
         if (code == "cart_not_empty") {
             return @tr("Finish or void the cart first.");
+        }
+        if (code == "drawer_opened") {
+            return @tr("Drawer opened.");
+        }
+        if (code == "cart_held") {
+            return @tr("The cart is on hold. Shift+F11 resumes it.");
+        }
+        if (code == "hold_first") {
+            return @tr("Hold the current cart first (type a note or press Enter).");
+        }
+        if (code == "cart_taken") {
+            return @tr("Another register took this cart already. The list is up to date.");
+        }
+        if (code == "held_deleted") {
+            return @tr("The held cart was deleted.");
+        }
+        if (code == "cart_resumed") {
+            return @tr("Cart resumed ({} lines). Prices were checked again.", arg);
+        }
+        if (code == "held_unreadable") {
+            return @tr("This held cart cannot be read.");
+        }
+        if (code == "reprinted") {
+            return @tr("Copy of {} printed.", arg);
+        }
+        if (code == "sale_voided") {
+            return @tr("Sale {} voided.", arg);
+        }
+        if (code == "has_returns") {
+            return @tr("This sale has returns, so it cannot be voided. Return the rest instead.");
+        }
+        if (code == "return_qty_exceeded") {
+            return @tr("More than what can still be returned.");
+        }
+        if (code == "return_window") {
+            return @tr("The sale is older than the return window. A manager must approve.");
+        }
+        if (code == "already_voided") {
+            return @tr("This sale is voided or was changed meanwhile.");
+        }
+        if (code == "receipt_not_found") {
+            return @tr("No sale with this receipt number.");
+        }
+        if (code == "other_branch_sale") {
+            return @tr("This sale is not from this branch (or cannot be returned here).");
+        }
+        if (code == "return_no_receipt") {
+            return @tr("A return has no receipt to show.");
+        }
+        if (code == "exchange_started") {
+            return @tr("Exchange: credit {}. Scan the new items, then pay.", arg);
+        }
+        if (code == "exchange_cancelled") {
+            return @tr("The exchange was cancelled.");
         }
         if (code == "cart_restored") {
             return @tr("The cart was restored ({} lines).", arg);
@@ -368,7 +420,7 @@ export global Strings {
             return @tr("Search");
         }
         if (code == "name_search") {
-            return @tr("Customer by name");
+            return @tr("Name search");
         }
         if (code == "tax_invoice") {
             return @tr("Tax invoice");
@@ -394,14 +446,59 @@ export global Strings {
         if (code == "price_check") {
             return @tr("Price check");
         }
-        if (code == "receipts_soon") {
+        if (code == "receipts") {
             return @tr("Receipts");
         }
-        if (code == "returns_soon") {
-            return @tr("Returns");
+        if (code == "returns") {
+            return @tr("Return");
         }
-        if (code == "hold_soon") {
+        if (code == "hold") {
             return @tr("Hold");
+        }
+        if (code == "resume") {
+            return @tr("Resume");
+        }
+        if (code == "cancel_exchange") {
+            return @tr("Cancel exchange");
+        }
+        if (code == "delete_held") {
+            return @tr("Delete");
+        }
+        if (code == "show_receipt") {
+            return @tr("Show receipt");
+        }
+        if (code == "more_page") {
+            return @tr("More");
+        }
+        if (code == "reprint") {
+            return @tr("Reprint");
+        }
+        if (code == "post_void") {
+            return @tr("Void sale");
+        }
+        if (code == "start_return") {
+            return @tr("Return");
+        }
+        if (code == "refund_method") {
+            return @tr("Cash / balance");
+        }
+        if (code == "no_receipt") {
+            return @tr("No receipt");
+        }
+        if (code == "refund") {
+            return @tr("Refund");
+        }
+        if (code == "exchange") {
+            return @tr("Exchange");
+        }
+        if (code == "return_all") {
+            return @tr("All / none");
+        }
+        if (code == "write_off") {
+            return @tr("Write off");
+        }
+        if (code == "history") {
+            return @tr("History");
         }
         if (code == "new_sale") {
             return @tr("New sale");
@@ -489,6 +586,18 @@ export global Strings {
         if (code == "sale.void") {
             return @tr("Void the cart");
         }
+        if (code == "sale.post_void") {
+            return @tr("Void a paid sale");
+        }
+        if (code == "sale.reprint") {
+            return @tr("Reprint a receipt");
+        }
+        if (code == "refund.with_receipt") {
+            return @tr("Return after the return window");
+        }
+        if (code == "drawer.open") {
+            return @tr("Open the drawer");
+        }
         return code;
     }
 
@@ -568,7 +677,63 @@ export global Strings {
         if (code == "help") {
             return @tr("Keys");
         }
+        if (code == "hold_note") {
+            return @tr("Hold the cart: note (optional)");
+        }
+        if (code == "held") {
+            return @tr("Held carts");
+        }
+        if (code == "receipts") {
+            return @tr("Last receipts");
+        }
+        if (code == "history") {
+            return @tr("Purchase history");
+        }
+        if (code == "receipt") {
+            return @tr("Receipt");
+        }
+        if (code == "post_void") {
+            return @tr("Void the sale: why?");
+        }
+        if (code == "return_find") {
+            return @tr("Return: which sale?");
+        }
+        if (code == "return_lines") {
+            return @tr("Return: pick the items");
+        }
+        if (code == "return_no_receipt") {
+            return @tr("Return without receipt");
+        }
+        if (code == "return_done") {
+            return @tr("Return posted");
+        }
+        if (code == "write_off") {
+            return @tr("Write off: why?");
+        }
+        if (code == "refund_total") {
+            return @tr("REFUND");
+        }
+        if (code == "cash_back") {
+            return @tr("CASH TO PAY BACK");
+        }
         return code;
+    }
+
+    // Placeholders of the sell dialogs' typed field (phase S5).
+    public pure function placeholder(code: string) -> string {
+        if (code == "receipt_number") {
+            return @tr("Type or scan a receipt number");
+        }
+        if (code == "item_code") {
+            return @tr("Scan or type the returned item");
+        }
+        if (code == "note") {
+            return @tr("A note for the held cart");
+        }
+        if (code == "write_off") {
+            return @tr("Why is it written off?");
+        }
+        return "";
     }
 
     // Void reasons (spec 2.6 §3).
