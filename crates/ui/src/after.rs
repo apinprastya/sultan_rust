@@ -17,11 +17,13 @@
 //! - **Return / exchange** (F10, an empty cart): a receipt number, a pick from the attached
 //!   customer's recent receipts, or F2 for a return without a receipt (items are scanned; the
 //!   refund is the current price for the attached customer, quoted). The lines show what can
-//!   still be returned; `+` / `−` / `*` pick the quantity, Del writes a line off (with a reason),
+//!   still be returned; `+` / `−` / `*` pick the quantity (by receipt, Q or a digit types it, with
+//!   3 decimals for a weighed line), Del writes a line off (with a reason),
 //!   Tab switches the refund between cash and the customer's balance. Enter posts the return
 //!   (`PUT /returns/{id}`); `return_window` and the `refund.no_receipt` limit go through the
 //!   override dialog. F9 starts an exchange instead: the refund becomes the credit of a new cart
-//!   whose payment starts with it, and the return is posted together with the new sale.
+//!   whose payment starts with it (showing what is paid back when the credit is larger), and the
+//!   return is posted together with the new sale.
 //! - **Purchase history**: F9 on a customer in the customer dialog lists their sales (VOID marked)
 //!   and returns, newest first, ten at a time (F8 loads more); Enter shows a sale's receipt.
 //! - **Drawer** (F5): `POST /drawer/open` (`drawer.open`, overridable with the session ID).
@@ -32,9 +34,9 @@ use sultan_client::{
     QuoteLine, QuoteRequest, Receipt, ReturnLineRequest, ReturnRequest, Sale, SalePage, SaleReturn,
     SaleSummary, VoidRequest,
 };
-use sultan_core::catalog::Qty;
+use sultan_core::catalog::{Qty, UnitKind};
 use sultan_core::money::Money;
-use sultan_core::sale::{ReturnedSoFar, SoldLine, line_refund};
+use sultan_core::sale::{ReturnedSoFar, SaleError, SoldLine, check_qty, line_refund};
 
 use crate::amount::rupiah;
 use crate::controller::{
@@ -329,6 +331,8 @@ pub struct ReturnLine {
     pub refund: i64,
     /// Written off with this reason.
     pub write_off: Option<String>,
+    /// A decimal unit (a weighed line): a typed quantity may have 3 decimals (else whole).
+    pub decimal: bool,
 }
 
 /// Where the return dialog is.
@@ -366,6 +370,8 @@ pub struct Return {
     pub balance: bool,
     /// The write-off reason being typed for a line.
     pub write_off: Option<(usize, String)>,
+    /// A quantity being typed for the highlighted line (by receipt; digits and a decimal comma).
+    pub typed_qty: Option<String>,
     /// Override tokens so far.
     pub tokens: Vec<String>,
     /// The posted return.
@@ -446,6 +452,10 @@ impl Return {
                 paid: (l.total, l.returned_qty_thousandths, l.refunded),
                 refund: 0,
                 write_off: None,
+                // The sale line carries no unit kind: a weighed line, or one sold with decimals,
+                // is a decimal unit (§19 item 68).
+                decimal: l.scale_label.as_deref() == Some("weight")
+                    || l.qty_thousandths % 1_000 != 0,
             })
             .collect();
         self.cursor = 0;
@@ -481,6 +491,61 @@ impl Return {
         if no_receipt {
             return true;
         }
+        self.refresh(i);
+        false
+    }
+
+    /// Sets the typed quantity of line `i` (by receipt): whole numbers, or 3 decimals for a
+    /// decimal unit (`core::sale::check_qty`), capped at what is left; `0` takes the line out.
+    ///
+    /// # Errors
+    /// `invalid_qty` for a quantity that cannot be read or does not fit the unit.
+    fn set_qty(&mut self, i: usize, text: &str) -> Result<(), SaleError> {
+        let invalid = SaleError::InvalidQty { reason: "typed" };
+        let qty = Qty::parse(&text.replace(',', ".")).map_err(|_| invalid.clone())?;
+        let Some(l) = self.lines.get_mut(i) else {
+            return Err(invalid);
+        };
+        if qty != Qty::ZERO {
+            let kind = if l.decimal {
+                UnitKind::Decimal
+            } else {
+                UnitKind::Integer
+            };
+            check_qty(qty, kind)?;
+        }
+        l.qty = qty.thousandths().min(l.left);
+        self.refresh(i);
+        Ok(())
+    }
+
+    /// Typing the quantity: digits, one decimal comma (a decimal unit), Backspace. `None` when
+    /// no quantity is being typed.
+    fn type_qty(&mut self, key: Key) -> Option<bool> {
+        let decimal = self.lines.get(self.cursor).is_some_and(|l| l.decimal);
+        let t = self.typed_qty.as_mut()?;
+        Some(match key {
+            Key::Digit(d) if t.len() < 9 => {
+                t.push(char::from(b'0' + d));
+                true
+            }
+            Key::Char(',' | '.') if decimal && !t.contains(',') => {
+                t.push(',');
+                true
+            }
+            Key::Backspace => {
+                t.pop();
+                true
+            }
+            _ => false,
+        })
+    }
+
+    /// The refund of line `i`'s quantity (`core::sale::line_refund`, by receipt).
+    fn refresh(&mut self, i: usize) {
+        let Some(l) = self.lines.get_mut(i) else {
+            return;
+        };
         let (total, returned, refunded) = l.paid;
         l.refund = line_refund(
             SoldLine {
@@ -494,7 +559,6 @@ impl Return {
             Qty::from_thousandths(l.qty),
         )
         .map_or(0, Money::minor);
-        false
     }
 }
 
@@ -675,7 +739,7 @@ impl Controller {
                 keys
             }
             Modal::Return(r) => match r.step {
-                _ if r.write_off.is_some() => {
+                _ if r.write_off.is_some() || r.typed_qty.is_some() => {
                     vec![s(Key::Enter, Confirm, "ok"), s(Key::Escape, Back, "cancel")]
                 }
                 ReturnStep::Find => vec![
@@ -694,6 +758,9 @@ impl Controller {
                         }
                     }
                     if !r.lines.is_empty() && r.text.is_empty() {
+                        if !r.no_receipt {
+                            keys.push(s(Key::Char('q'), Action::EditQty, "edit_qty"));
+                        }
                         keys.push(s(Key::Char('+'), Action::More, "more"));
                         keys.push(s(Key::Char('-'), Action::Less, "less"));
                         keys.push(s(Key::Char('*'), Action::All, "return_all"));
@@ -771,6 +838,9 @@ impl Controller {
                 if let Some((_, reason)) = &mut r.write_off {
                     return Some(text(reason, 200));
                 }
+                if let Some(used) = r.type_qty(key) {
+                    return Some(used);
+                }
                 let count = if r.step == ReturnStep::Find {
                     r.recent.len()
                 } else {
@@ -787,6 +857,10 @@ impl Controller {
                         true
                     }
                     (ReturnStep::Find, _) => text(&mut r.text, 40),
+                    (ReturnStep::Lines, Key::Digit(d)) if !r.no_receipt && !r.lines.is_empty() => {
+                        r.typed_qty = Some(char::from(b'0' + d).to_string());
+                        true
+                    }
                     (ReturnStep::Lines, Key::Char('+' | '-' | '*')) if r.text.is_empty() => false,
                     (ReturnStep::Lines, _) if r.no_receipt => text(&mut r.text, 40),
                     _ => false,
@@ -807,6 +881,7 @@ impl Controller {
             }
             Some(Modal::Return(r)) if r.step == ReturnStep::Lines && index < r.lines.len() => {
                 r.cursor = index;
+                r.typed_qty = None;
             }
             _ => {}
         }
@@ -967,6 +1042,16 @@ impl Controller {
                 }
                 Vec::new()
             }
+            Action::EditQty => {
+                if let Some(Modal::Return(r)) = self.modal_mut()
+                    && r.step == ReturnStep::Lines
+                    && !r.no_receipt
+                    && !r.lines.is_empty()
+                {
+                    r.typed_qty = Some(String::new());
+                }
+                Vec::new()
+            }
             Action::Exchange => self.start_exchange(),
             Action::Confirm => self.after_confirm(),
             Action::Back => {
@@ -1054,8 +1139,9 @@ impl Controller {
         h.sell.modal = match modal {
             Modal::Receipt(p) => p.back.map(|d| Modal::Docs(*d)),
             Modal::PostVoid(v) => v.back.map(|d| Modal::Docs(*d)),
-            Modal::Return(mut r) if r.write_off.is_some() => {
+            Modal::Return(mut r) if r.write_off.is_some() || r.typed_qty.is_some() => {
                 r.write_off = None;
+                r.typed_qty = None;
                 Some(Modal::Return(r))
             }
             Modal::Return(mut r) if r.step == ReturnStep::Lines && !r.text.is_empty() => {
@@ -1148,6 +1234,23 @@ impl Controller {
                     l.write_off = Some(reason);
                 }
                 r.write_off = None;
+            }
+            return Vec::new();
+        }
+        if let Some(typed) = &r.typed_qty {
+            let i = r.cursor;
+            let typed = typed.clone();
+            let result = match self.modal_mut() {
+                Some(Modal::Return(r)) => r.set_qty(i, &typed),
+                _ => Ok(()),
+            };
+            match result {
+                Ok(()) => {
+                    if let Some(Modal::Return(r)) = self.modal_mut() {
+                        r.typed_qty = None;
+                    }
+                }
+                Err(e) => self.set_notice(crate::till::sale_notice(&e)),
             }
             return Vec::new();
         }

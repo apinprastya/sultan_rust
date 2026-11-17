@@ -720,6 +720,24 @@ pub struct Pay {
 /// The longest reference, in characters (`core` refuses more).
 pub const MAX_REFERENCE: usize = 64;
 
+/// An exchange `credit` against a new cart of `total` (D12, `core::sale::net_exchange`): what
+/// the customer still pays, and what is paid back besides: in cash after cash rounding (as the
+/// server's refund plan does), or the exact rest to the balance (`balance`).
+#[must_use]
+pub fn exchange_net(credit: i64, total: i64, rounding: CashRounding, balance: bool) -> (i64, i64) {
+    let Ok(net) =
+        sultan_core::sale::net_exchange(Money::from_minor(credit), Money::from_minor(total))
+    else {
+        return (total.max(0), 0);
+    };
+    let back = if balance {
+        net.refund
+    } else {
+        rounding.apply(net.refund, true).amount
+    };
+    (net.customer_pays.minor(), back.minor())
+}
+
 impl Pay {
     /// A payment of `total` with these tender types.
     ///
@@ -767,6 +785,13 @@ impl Pay {
         }
         self.after_tender();
         Ok(self)
+    }
+
+    /// What an exchange pays back besides (D12): the credit this sale does not use, in cash
+    /// after cash rounding, or to the balance (`balance`). See [`exchange_net`].
+    #[must_use]
+    pub fn pay_back(&self, credit: i64, balance: bool) -> i64 {
+        exchange_net(credit, self.payment.total().minor(), self.rounding, balance).1
     }
 
     fn core(&self, index: usize) -> Option<CoreTender> {
@@ -1041,5 +1066,29 @@ impl Pay {
                 .and_then(|id| self.ids.iter().position(|x| *x == id))
                 .is_some_and(|i| self.types[i].opens_drawer)
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn exchange_net_pays_back_cash_rounded_or_the_exact_balance() {
+        // Credit 75 650 against 5 000: 70 650 back.
+        let net = |rounding, balance| exchange_net(75_650, 5_000, rounding, balance);
+        assert_eq!(net(CashRounding::None, false), (0, 70_650));
+        assert_eq!(net(CashRounding::Nearest100, false), (0, 70_700));
+        assert_eq!(net(CashRounding::Down100, false), (0, 70_600));
+        assert_eq!(net(CashRounding::Down100, true), (0, 70_650));
+        // The cart costs more: the customer pays the rest, nothing comes back.
+        assert_eq!(
+            exchange_net(5_000, 7_000, CashRounding::Down500, false),
+            (2_000, 0)
+        );
+        assert_eq!(
+            exchange_net(-1, 7_000, CashRounding::None, false),
+            (7_000, 0)
+        );
     }
 }

@@ -9,7 +9,9 @@ use axum::http::{Method, StatusCode};
 use serde_json::{Value, json};
 use sultan_core::access::BranchScope;
 
+use crate::catalog_fixtures::{STANDARD, put_product};
 use crate::common::{ANI_PIN, BUDI_PIN, Harness, Response, api_tests, new_id};
+use crate::pricing::{DEFAULT_LIST, fixed, price};
 use crate::sales::{
     BALANCE, CASH, Item, ani, approve, balance_of, customer, item, line, on_hand, open, sale, sell,
     tender,
@@ -17,6 +19,7 @@ use crate::sales::{
 
 api_tests!(
     returns_by_receipt_split_the_line_amount,
+    weighed_line_returns_in_parts,
     return_window_and_branch_rules,
     no_receipt_return_needs_an_override_above_the_limit,
     exchange_nets_the_refund,
@@ -148,6 +151,51 @@ async fn returns_by_receipt_split_the_line_amount(h: &Harness) {
     )
     .await
     .assert_problem(404, "not_found");
+}
+
+/// Spec 2.6 §19 item 68: a weighed line (1.250 kg) returned as 0.500 kg, then the 0.750 kg left;
+/// the refunds sum to the line total.
+async fn weighed_line_returns_in_parts(h: &Harness) {
+    let owner = h.owner_token().await;
+    let (id, variant, kg) = (new_id(), new_id(), new_id());
+    let body = json!({
+        "code": "KEJU", "name": "Keju", "type": "weighed", "tax_class_id": STANDARD,
+        "units": [{ "id": kg, "name": "kg", "kind": "decimal", "factor_thousandths": 1000 }],
+        "base_unit_id": kg,
+        "variants": [{ "id": variant, "plu": 401 }],
+    });
+    let r = put_product(h, &owner, &id, &body).await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.body);
+    price(
+        h,
+        &owner,
+        DEFAULT_LIST,
+        &variant,
+        &kg,
+        json!([fixed(1, 10_001)]),
+    )
+    .await;
+    let cheese = Item { variant, pcs: kg };
+    let token = ani(h).await;
+    let at = (token.as_str(), h.jkt_device.as_str());
+    open(h, at, 0).await;
+    let mut l = line(&cheese, 0);
+    l["qty_thousandths"] = 1_250.into();
+    let s = sell(h, at, sale(vec![l], vec![tender(CASH, 20_000)])).await;
+    assert_eq!(s["lines"][0]["total"], 12_501);
+    let mut part = returned(&s, 1, &cheese, 0);
+    part["lines"][0]["qty_thousandths"] = 500.into();
+    let r = put_return(h, at, &new_id(), &part, None).await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.body);
+    assert_eq!(r.body["refund"], 5_000);
+    part["lines"][0]["qty_thousandths"] = 751.into();
+    put_return(h, at, &new_id(), &part, None)
+        .await
+        .assert_problem(422, "return_qty_exceeded");
+    part["lines"][0]["qty_thousandths"] = 750.into();
+    let r = put_return(h, at, &new_id(), &part, None).await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.body);
+    assert_eq!(r.body["refund"], 7_501, "5 000 + 7 501 = 12 501");
 }
 
 async fn return_window_and_branch_rules(h: &Harness) {

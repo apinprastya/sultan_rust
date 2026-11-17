@@ -328,7 +328,7 @@ fn last_receipts_reprint_and_post_void() {
     assert!(t.receipt().contains(&second), "{}", t.receipt());
     assert_eq!(
         t.chips(),
-        ["r reprint", "v post_void", "t start_return", "Esc back"]
+        ["R reprint", "V post_void", "T start_return", "Esc back"]
     );
     t.press(&["R"]);
     assert_eq!(t.note(), "reprinted");
@@ -374,7 +374,7 @@ fn last_receipts_reprint_and_post_void() {
     assert!(t.receipt().contains("VOID"));
     assert_eq!(
         t.chips(),
-        ["r reprint", "Esc back"],
+        ["R reprint", "Esc back"],
         "a voided sale is only reprinted"
     );
     t.press(&["Esc"]);
@@ -524,6 +524,7 @@ fn returns_by_receipt_window_and_without_receipt() {
     assert_eq!(
         t.chips(),
         [
+            "Q edit_qty",
             "+ more",
             "- less",
             "* return_all",
@@ -636,9 +637,15 @@ fn exchanges_both_ways() {
     assert!(t.buttons().contains(&"F10 cancel_exchange".to_owned()));
     t.scan(&aqua());
     t.scan(&aqua());
+    let s = t.sell();
+    assert_eq!(
+        (s.exchange_rest.as_str(), s.exchange_back.as_str()),
+        ("Rp 2.000", ""),
+        "the totals panel: the customer pays the rest"
+    );
     t.press(&["F4"]);
     let s = t.sell();
-    assert_eq!(s.pay_rest, "Rp 2.000");
+    assert_eq!((s.pay_rest.as_str(), s.pay_back.as_str()), ("Rp 2.000", ""));
     let paid: Vec<SellRow> = t.app.ui.get_pay_rows().iter().collect();
     assert_eq!(
         (paid[0].label.as_str(), paid[0].detail.as_str()),
@@ -669,8 +676,27 @@ fn exchanges_both_ways() {
     t.press(&["*"]);
     t.press(&["F9"]);
     t.scan(&teh());
+    let s = t.sell();
+    assert_eq!(
+        (
+            s.exchange.as_str(),
+            s.exchange_rest.as_str(),
+            s.exchange_back.as_str(),
+            s.exchange_balance
+        ),
+        ("Rp 84.000", "", "Rp 79.000", false),
+        "the totals panel: what is paid back in cash"
+    );
     t.press(&["F4"]);
-    assert_eq!(t.sell().pay_step, "ready", "the credit covers it");
+    let s = t.sell();
+    assert_eq!(s.pay_step, "ready", "the credit covers it");
+    assert_eq!(
+        (s.pay_back.as_str(), s.exchange.as_str()),
+        ("Rp 79.000", "Rp 84.000"),
+        "the pay-back shows before Enter"
+    );
+    let paid: Vec<SellRow> = t.app.ui.get_pay_rows().iter().collect();
+    assert_eq!(paid[0].detail, "Rp 5.000", "what the credit covers");
     t.press(&["Enter"]);
     let s = t.sell();
     assert!(s.done);
@@ -694,6 +720,114 @@ fn exchanges_both_ways() {
     t.press(&["F10"]);
     assert_eq!(t.note(), "exchange_cancelled");
     assert_eq!(t.sell().exchange, "");
+}
+
+/// §19 item 68: a weighed line is returned by a typed quantity (3 decimals), capped at what is
+/// left; the refunds of its returns sum to the line amount (`core::sale::line_refund`).
+#[test]
+fn weighed_lines_return_by_typed_quantity() {
+    let t = till();
+    let product: sultan_client::Product = serde_json::from_value(json!({
+        "code": "KEJU", "name": "Keju", "type": "weighed",
+        "tax_class_id": "00000000-0000-7000-8000-000000000101",
+        "units": [{ "id": "01900000-0000-7000-8000-000000000030", "name": "kg",
+                    "kind": "decimal", "factor_thousandths": 1000 }],
+        "base_unit_id": "01900000-0000-7000-8000-000000000030",
+        "variants": [{ "id": "01900000-0000-7000-8000-000000000031", "plu": 400 }],
+    }))
+    .unwrap();
+    t.fake
+        .seed_product("01900000-0000-7000-8000-000000000032", &product);
+    t.fake.seed_price_entry(
+        sultan_client::pricing::DEFAULT_PRICE_LIST,
+        "01900000-0000-7000-8000-000000000033",
+        &sultan_client::PriceEntryBody {
+            variant_id: "01900000-0000-7000-8000-000000000031".to_owned(),
+            unit_id: "01900000-0000-7000-8000-000000000030".to_owned(),
+            valid_from: None,
+            valid_to: None,
+            tiers: vec![sultan_client::PriceTier::fixed(1000, 10_001)],
+        },
+    );
+    // 1.250 kg at 10 001 = 12 501.
+    let number = t.sell_cash(&["1.25*400"]);
+    t.press(&["F10"]);
+    t.typed(&number);
+    t.press(&["Enter"]);
+    assert_eq!(t.list()[0].detail, "0 / 1,250 · Rp 0");
+    assert!(t.chips().contains(&"Q edit_qty".to_owned()));
+    // A digit opens the quantity: 0,5 kg.
+    t.typed("0,5");
+    let s = t.sell();
+    assert_eq!(
+        (
+            s.modal_title.as_str(),
+            s.modal_value.as_str(),
+            s.modal_name.as_str()
+        ),
+        ("return_qty", "0,5", "Keju · ≤ 1,250")
+    );
+    assert_eq!(t.chips(), ["Enter ok", "Esc cancel"]);
+    t.press(&["Enter"]);
+    assert_eq!(t.list()[0].detail, "0,500 / 1,250 · Rp 5.000");
+    t.press(&["Enter"]);
+    let s = t.sell();
+    assert_eq!(s.modal_title, "return_done");
+    assert!(
+        s.modal_name.ends_with("· Rp 5.000"),
+        "the fake's refund: {}",
+        s.modal_name
+    );
+    t.press(&["Enter"]);
+    // Then the rest: Q, more than is left is capped at 0,750 kg.
+    t.press(&["F10"]);
+    t.typed(&number);
+    t.press(&["Enter"]);
+    assert_eq!(t.list()[0].detail, "0 / 0,750 · Rp 0");
+    t.press(&["Q"]);
+    assert_eq!(t.sell().modal_value, "");
+    t.typed("2");
+    t.press(&["Esc"]);
+    assert_eq!(
+        t.sell().modal_title,
+        "return_lines",
+        "Esc drops the typed quantity"
+    );
+    t.typed("1,,9");
+    t.press(&["Backspace"]);
+    t.typed("0001");
+    t.press(&["Enter"]);
+    assert_eq!(t.note(), "invalid_qty", "at most 3 decimals");
+    t.press(&["Esc"]);
+    t.typed("2");
+    t.press(&["Enter"]);
+    assert_eq!(t.list()[0].detail, "0,750 / 0,750 · Rp 7.501");
+    t.press(&["Enter"]);
+    let s = t.sell();
+    assert_eq!(s.modal_title, "return_done");
+    assert!(
+        s.modal_name.ends_with("· Rp 7.501"),
+        "5 000 + 7 501 = 12 501: {}",
+        s.modal_name
+    );
+    t.press(&["Enter"]);
+
+    // A whole unit takes whole numbers only: no decimal comma, `0` takes the line out.
+    let number = t.sell_cash(&[&format!("3*{}", teh())]);
+    t.press(&["F10"]);
+    t.typed(&number);
+    t.press(&["Enter"]);
+    t.typed("2,5");
+    assert_eq!(t.sell().modal_value, "25");
+    t.press(&["Enter"]);
+    assert_eq!(
+        t.list()[0].detail,
+        "3 / 3 · Rp 15.000",
+        "capped at what is left"
+    );
+    t.typed("0");
+    t.press(&["Enter"]);
+    assert_eq!(t.list()[0].detail, "0 / 3 · Rp 0");
 }
 
 #[test]
@@ -742,6 +876,10 @@ fn indonesian_labels() {
     t.scan(&teh());
     t.press(&["F11"]);
     assert_eq!(t.app.ui.invoke_chip_label("hold".into()), "Tahan");
+    assert_eq!(
+        t.app.ui.invoke_chip_label("write_off".into()),
+        "Barang rusak"
+    );
     t.press(&["Enter"]);
     assert_eq!(
         t.message(),

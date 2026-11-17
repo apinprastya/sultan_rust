@@ -2701,7 +2701,7 @@ msgid "All / none"
 msgstr "Semua / tidak"
 
 msgid "Write off"
-msgstr "Hapus buku"
+msgstr "Barang rusak"
 
 msgid "History"
 msgstr "Riwayat"
@@ -2746,7 +2746,7 @@ msgid "Return posted"
 msgstr "Retur tercatat"
 
 msgid "Write off: why?"
-msgstr "Hapus buku: kenapa?"
+msgstr "Alasan barang rusak"
 
 msgid "REFUND"
 msgstr "UANG KEMBALI"
@@ -2764,4 +2764,19 @@ msgid "A note for the held cart"
 msgstr "Catatan untuk keranjang yang ditahan"
 
 msgid "Why is it written off?"
-msgstr "Kenapa dihapus buku?"
+msgstr "Ketik alasan barang rusak"
+
+msgid "Paid from the credit"
+msgstr "Dibayar dari kredit"
+
+msgid "Pay back in cash"
+msgstr "Kembalikan tunai"
+
+msgid "Pay back to the balance"
+msgstr "Kembalikan ke saldo"
+
+msgid "Return: how many?"
+msgstr "Retur: berapa banyak?"
+
+msgid "Quantity to return (a decimal comma for weighed items)"
+msgstr "Jumlah yang diretur (koma desimal untuk barang timbang)"

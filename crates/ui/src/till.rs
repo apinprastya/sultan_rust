@@ -637,6 +637,10 @@ impl Controller {
                 if self.sell().is_some_and(|s| {
                     (s.focus.is_some() && s.modal.is_none())
                         || matches!(s.modal, Some(Modal::Receipt(_)))
+                        || matches!(&s.modal, Some(Modal::Return(r))
+                            if r.step == crate::after::ReturnStep::Lines
+                                && !r.no_receipt
+                                && r.write_off.is_none())
                 }) =>
             {
                 Key::Char(c.to_ascii_lowercase())

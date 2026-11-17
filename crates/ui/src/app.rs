@@ -958,6 +958,20 @@ fn render_sell(
     let mut receipt: Vec<SharedString> = Vec::new();
     if let Some(r) = &sell.exchange {
         view.exchange = rupiah(r.refund()).into();
+        view.exchange_balance = r.balance;
+        if let Some(t) = &totals {
+            let (pays, back) = crate::sell::exchange_net(
+                r.refund(),
+                t.total.minor(),
+                sell.cart.settings.rounding,
+                r.balance,
+            );
+            if back > 0 {
+                view.exchange_back = rupiah(back).into();
+            } else {
+                view.exchange_rest = rupiah(pays).into();
+            }
+        }
     }
     if let Some(modal) = &sell.modal {
         let (kind, title) = match modal {
@@ -1091,6 +1105,12 @@ fn render_sell(
             crate::amount::signed_rupiah(rounding).into()
         };
         view.pay_balance = pay.balance.map(rupiah).unwrap_or_default().into();
+        if let Some(r) = &sell.exchange {
+            let back = pay.pay_back(r.refund(), r.balance);
+            if back > 0 {
+                view.pay_back = rupiah(back).into();
+            }
+        }
         view.pay_text = pay.text.as_str().into();
         view.pay_input = if pay.digits.is_empty() {
             SharedString::new()
@@ -1287,6 +1307,15 @@ fn after_view(
                     view.modal_name = l.name.as_str().into();
                 }
                 return ("list", "write_off");
+            }
+            if let Some(typed) = &r.typed_qty {
+                view.modal_field = true;
+                view.modal_value = typed.as_str().into();
+                view.modal_placeholder = "return_qty".into();
+                if let Some(l) = r.lines.get(r.cursor) {
+                    view.modal_name = format!("{} · ≤ {}", l.name, qty_text(l.left)).into();
+                }
+                return ("list", "return_qty");
             }
             match r.step {
                 ReturnStep::Find => {

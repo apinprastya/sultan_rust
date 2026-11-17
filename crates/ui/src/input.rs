@@ -127,7 +127,8 @@ impl Key {
         }
     }
 
-    /// The label on a key chip, e.g. `F10`, `Enter`, `Esc`.
+    /// The label on a key chip, e.g. `F10`, `Enter`, `Esc`. Letters show in upper case (`R`);
+    /// the shortcuts that use them match either case (`Controller::sell_key`).
     #[must_use]
     pub fn label(self) -> String {
         match self {
@@ -149,7 +150,7 @@ impl Key {
             Self::CtrlDown => "Ctrl+↓".to_owned(),
             Self::CtrlDelete => "Ctrl+Del".to_owned(),
             Self::Ctrl(c) => format!("Ctrl+{}", c.to_ascii_uppercase()),
-            Self::Char(c) => c.to_string(),
+            Self::Char(c) => c.to_uppercase().to_string(),
             Self::Other => String::new(),
         }
     }
@@ -298,7 +299,8 @@ mod tests {
             (Key::Digit(3), "3"), (Key::Backspace, "⌫"), (Key::Enter, "Enter"),
             (Key::Escape, "Esc"), (Key::Up, "↑"), (Key::Down, "↓"), (Key::Left, "←"),
             (Key::Right, "→"), (Key::Tab, "Tab"), (Key::BackTab, "Shift+Tab"),
-            (Key::F(10), "F10"), (Key::Char('x'), "x"), (Key::Other, ""),
+            (Key::F(10), "F10"), (Key::Char('x'), "X"), (Key::Other, ""),
+            (Key::Char('*'), "*"), (Key::Char('-'), "-"),
             (Key::ShiftF(3), "Shift+F3"), (Key::CtrlF(10), "Ctrl+F10"), (Key::Delete, "Del"),
             (Key::CtrlUp, "Ctrl+↑"), (Key::CtrlDown, "Ctrl+↓"), (Key::CtrlDelete, "Ctrl+Del"),
             (Key::Ctrl('d'), "Ctrl+D"),

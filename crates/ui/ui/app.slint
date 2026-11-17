@@ -182,6 +182,11 @@ export struct SellView {
     modal-big-label: string,
     modal-refund: string,
     exchange: string,
+    // An exchange against the cart (D12): the rest to pay, or what is paid back besides (in
+    // cash after cash rounding, or to the balance: `exchange-balance`), "" = none.
+    exchange-rest: string,
+    exchange-back: string,
+    exchange-balance: bool,
     // Payment panel: step cash, pick, amount, reference, ready, save.
     pay-open: bool,
     pay-step: string,
@@ -194,6 +199,8 @@ export struct SellView {
     pay-saved: string,
     pay-rounding: string,
     pay-balance: string,
+    // An exchange: the credit the sale does not use, paid back as the return asked.
+    pay-back: string,
     pay-text: string,
     pay-cursor: int,
     pay-note: Note,
@@ -1148,6 +1155,14 @@ component TotalsPanel inherits Card {
             value: root.view.total;
             strong: true;
         }
+        if root.view.exchange-rest != "": TotalLine {
+            label: @tr("Rest to pay");
+            value: root.view.exchange-rest;
+        }
+        if root.view.exchange-back != "": TotalLine {
+            label: root.view.exchange-balance ? @tr("Pay back to the balance") : @tr("Pay back in cash");
+            value: root.view.exchange-back;
+        }
         HorizontalLayout {
             Text {
                 horizontal-stretch: 1;
@@ -1500,15 +1515,25 @@ component PayPanel inherits Rectangle {
                 label: @tr("Total");
                 value: root.view.pay-total;
             }
+            if root.view.exchange != "": PayLine {
+                label: @tr("Exchange credit");
+                value: root.view.exchange;
+            }
             for t in root.paid: PayLine {
-                label: t.label == "exchange" ? @tr("Exchange credit") : t.label;
+                label: t.label == "exchange" ? @tr("Paid from the credit") : t.label;
                 value: t.detail;
             }
             if root.view.pay-rounding != "": PayLine {
                 label: @tr("Cash rounding");
                 value: root.view.pay-rounding;
             }
-            PayLine {
+            if root.view.pay-back != "": PayLine {
+                big: true;
+                label: root.view.exchange-balance ? @tr("Pay back to the balance") : @tr("Pay back in cash");
+                value: root.view.pay-back;
+                tint: Theme.success;
+            }
+            if root.view.pay-back == "": PayLine {
                 big: true;
                 label: root.view.pay-step == "ready" || root.view.pay-step == "save" ? @tr("Change") : @tr("Rest to pay");
                 value: root.view.pay-step == "ready" || root.view.pay-step == "save" ? root.view.pay-change : root.view.pay-rest;

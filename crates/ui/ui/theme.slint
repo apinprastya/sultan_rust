@@ -710,6 +710,9 @@ export global Strings {
         if (code == "write_off") {
             return @tr("Write off: why?");
         }
+        if (code == "return_qty") {
+            return @tr("Return: how many?");
+        }
         if (code == "refund_total") {
             return @tr("REFUND");
         }
@@ -732,6 +735,9 @@ export global Strings {
         }
         if (code == "write_off") {
             return @tr("Why is it written off?");
+        }
+        if (code == "return_qty") {
+            return @tr("Quantity to return (a decimal comma for weighed items)");
         }
         return "";
     }
