@@ -11,6 +11,8 @@
 //!   (`migrations/{sqlite,mysql}`) and the few upserts in [`auth`] differ.
 //! - Customers, groups, tiers and the customer balance ledger (spec 2.5) live in [`customers`].
 //! - Price lists, entries, tax rates and the pricing settings (spec 2.3) live in [`pricing`].
+//! - Tender types, sales, post-voids, returns, held carts, the stock movement ledger and the
+//!   purchase history (spec 2.6) live in [`sales`].
 //! - Rows map to and from the domain types of `sultan_core`. No access rule lives here: the
 //!   server checks permissions, lockout, override approval and the Owner invariant with `core`.
 //!
@@ -39,6 +41,7 @@ pub mod outbox;
 pub mod overrides;
 pub mod pricing;
 pub mod roles;
+pub mod sales;
 pub mod seed;
 pub mod users;
 

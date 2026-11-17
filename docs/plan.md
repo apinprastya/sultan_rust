@@ -241,7 +241,7 @@ audit log viewer · light/dark theme · i18n ID/EN.
   only in cash or customer balance · exchange in one flow · tax-invoice switch · old Qt keys ·
   every removed line is a void · return window 30 days · held carts never expire.
 
-## Status (updated 2026-11-16)
+## Status (updated 2026-11-17)
 
 Where we are, so any session can pick up from here. Update this section at the end of every phase.
 
@@ -272,6 +272,13 @@ Where we are, so any session can pick up from here. Update this section at the e
   split, permission values, payment (tenders, cash rounding, change, saved change), post-void and
   return refunds, exchange netting, stock movements, receipt text, session expected cash and
   counters; sale/return numbers in `doc_number`; new balance entry kind `refund` (spec §19).
+- **2.6 Sales** S2 `db` (2026-11-17, `crates/db/src/sales/`): tender types (seeded Cash, Debit
+  card, QRIS, Customer balance), sales with lines/tenders, post-voids, returns + exchanges (one
+  transaction), held carts (guarded take), append-only stock movement ledger, per-register
+  per-local-day sale/return numbers (unique key + retry), idempotent posting by request hash,
+  customer purchase history (merged customers included) and the till's recent receipts, the
+  session events for `core::sale::session_report`; `sale.reprint` / `tender.manage` permissions
+  and the balance kind `refund` (migrations `20261117000001/2`). Readings in spec §19 (from S2).
 - **UI only, except HQ** (§3, 2026-11-09):
   - Start screen on single-app and terminal machines: F1 Kasir, F2 Back office, F3 Settings.
   - Settings: language (F6), set up again (F8), and on a single app "Allow terminals to connect"
@@ -292,15 +299,17 @@ Where we are, so any session can pick up from here. Update this section at the e
 - Back office: the Prices tab is not part of the product form's unsaved-changes check; archived
   price lists are not listed (no unarchive on screen).
 - Register: no payout slip is printed; the attached customer does not refresh on
-  `customer.changed`; purchase history is empty until 2.6.
+  `customer.changed`; purchase history is empty until 2.6 S3 (`sales::purchase_history` exists).
+- Pricing: deleting a price entry or changing a tax rate is still always allowed, even when a
+  posted sale used it (2.3 R2 limitation; sales now exist).
 - Each sub-agent worktree builds its own `target/` (20–40 GB with coverage); clear finished ones.
 
 **Next**
 - **2.6 Sales (register)**: spec agreed 2026-11-16 (`docs/spec/2.6-sales.md`). S1 `core::sale`
-  done; next **S2 `db`** (tender types, sales, returns, held carts, stock ledger, number
-  allocation, permissions seed incl. `sale.reprint` / `tender.manage`, balance kind `refund` in
-  the `kind` check), then S3 `server` + client · S4 register sell · S5 register after the sale
-  (hold/resume, post-void, returns, reprint, history) · S6 back office.
+  and S2 `db` done; next **S3 `server` + client** (routes of §12 with the retry of 2.1 §5 around
+  posting, re-quote at posting, request hash for `PUT /sales|returns/{id}`, session report from
+  `sales::session_events` + line/cart void audits, events, Postman), then S4 register sell · S5
+  register after the sale (hold/resume, post-void, returns, reprint, history) · S6 back office.
 - Other P1 specs still to discuss: 2.4 is P2; 2.7 cash in/out + X/Z, 2.8 inventory, 2.9 money,
   2.10 reports, 2.11 hardware (ESC/POS + drawer), old-Sultan importer.
 

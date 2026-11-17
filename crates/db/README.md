@@ -7,8 +7,35 @@ Persistence for Sultan POS: sqlx migrations and repositories for SQLite and MySQ
   differs), embedded with `sqlx::migrate!` and applied by `Db::migrate()` (`build.rs` rebuilds the
   crate when a migration changes).
 - `src/`: one module per area (`org`, `users`, `roles`, `seed`, `devices`, `auth`, `overrides`,
-  `cashier_sessions`, `catalog`, `customers`, `pricing`, `audit`, `outbox`, `idempotency`). The queries are
+  `cashier_sessions`, `catalog`, `customers`, `pricing`, `sales`, `audit`, `outbox`,
+  `idempotency`). The queries are
   shared between backends and use the runtime query API, so building never needs a `DATABASE_URL`.
+
+## Sales (spec 2.6, phase S2)
+
+`src/sales/` and `20261117000001_sales.sql` / `20261117000002_balance_refund.sql`:
+
+| Table | What |
+|---|---|
+| `tender_type` | HQ master data: name, fixed `kind` (`cash`, `card`, `qris`, `transfer`, `ewallet`, `customer_balance`, `other`), `needs_reference`, `opens_drawer`, `active`, `sort_order`, `archived_at`. Seeded with fixed ids: Cash (…0301), Debit card (…0302), QRIS (…0303), Customer balance (…0304). |
+| `sale`, `sale_line`, `sale_tender` | A posted sale (status `posted` / `voided`), its lines (the `core::sale::LineTotals` values, price mode, scale label, bundle components as JSON, and `returned_qty` / `refunded` so far) and tenders (`exchange` without a tender type). `legacy_number` marks an imported old-Sultan sale (read-only). `request_hash` makes `PUT /sales/{id}` idempotent. |
+| `sale_void`, `sale_void_tender` | The post-void: the paying (current) session, reason, refund split and how it was paid back (cash or balance). |
+| `sale_return`, `sale_return_line`, `sale_return_tender` | Returns (by receipt with `sale_id` + `sale_line_no`, or without), restock / write-off per line, refund tenders (cash, balance, `exchange`), the exchange's new sale. |
+| `held_cart` | Branch-local held carts (JSON payload, item count, total); `taken_*` once resumed. Not synced. |
+| `stock_movement` | The append-only stock ledger (D9, triggers like `audit_log`): base-unit `base_qty` signed by kind (`sale` −, `sale_void` +, `return` +, `write_off` −), branch + location, document. On hand = Σ `base_qty`; no cached balance yet (2.8). |
+
+- **Numbers:** `MAX(seq) + 1` per register and branch-local day inside the posting transaction,
+  guarded by `UNIQUE (register_id, local_day, seq)` on `sale` and on `sale_return`, like cashier
+  session numbers below: a lost race is a retryable `DbError::Conflict`.
+- **Races between documents:** a return bumps `sale.return_count` and each sale line's
+  `returned_qty` / `refunded` with guarded `UPDATE`s; a post-void needs `return_count = 0`. A guard
+  that fails is a lost race (retryable); the rerun reports the real refusal.
+- **No foreign keys** from documents to branches, registers, sessions, users, customers or
+  variants (like `customer_balance_entry`): synced documents may arrive before those rows. Only
+  the parts of one document reference each other.
+- **Balance kind `refund`:** SQLite cannot change a `CHECK`, so `20261117000002_balance_refund.sql`
+  rebuilds `customer_balance_entry` (copy, drop, rename, recreate the index and the append-only
+  triggers); MySQL drops and re-adds the two named checks.
 
 ## Tests
 
@@ -82,7 +109,8 @@ kill %1 && rm -rf "$DIR"
   `WHERE kind = 'default'` for the single default list). MySQL uses `STORED` generated columns
   `live_target` and `default_key` under `UNIQUE` keys, like the phone above. The repository reports
   `price_list_conflict` first; the indexes catch races.
-- The migrations create triggers that make `audit_log` and `customer_balance_entry` append-only.
+- The migrations create triggers that make `audit_log`, `customer_balance_entry` and
+  `stock_movement` append-only.
   With binary logging on (the default), a user without `SUPER` needs
   `log_bin_trust_function_creators = 1` to create them.
 - Session numbers (`cashier_sessions::insert`) are allocated as `MAX(seq) + 1` inside the open
