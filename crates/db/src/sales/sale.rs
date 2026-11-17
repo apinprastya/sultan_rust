@@ -911,6 +911,16 @@ async fn insert_sale(
     Ok(())
 }
 
+/// Whether sale `id` was posted already (spec 2.6 §12): `Some(stored)` when with the same
+/// body hash, [`SaleDbError::Conflict`] with another, `None` when the ID is new. The server
+/// asks first, so a replay answers the stored document even when the cart went stale since.
+///
+/// # Errors
+/// [`SaleDbError::Conflict`], or the database error.
+pub async fn replayed_sale(tx: &mut Tx, id: SaleId, hash: &TokenHash) -> SaleResult<Option<Sale>> {
+    replay(tx, id, hash).await
+}
+
 /// The stored sale when `id` exists with the same request hash; [`SaleDbError::Conflict`] when it
 /// exists with another one; `None` when it does not exist.
 async fn replay(tx: &mut Tx, id: SaleId, hash: &TokenHash) -> SaleResult<Option<Sale>> {

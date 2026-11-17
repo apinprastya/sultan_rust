@@ -13,7 +13,7 @@ use sultan_core::time::Timestamp;
 use sultan_db::Db;
 
 use crate::events::EventHub;
-use crate::movements::{NoSales, SessionMovements};
+use crate::movements::{SalesMovements, SessionMovements};
 
 /// What this node is (`docs/plan.md` §1). Decides whether HQ-owned master data may be written
 /// here (spec 2.1 §1).
@@ -101,8 +101,8 @@ pub struct AppState {
     pub session_idle_ms: i64,
     /// The event hub behind `GET /events` (plan Phase 6). Clones of the state share it.
     pub events: EventHub,
-    /// Sales/refunds/cash movements of a cashier session for the close report; [`NoSales`] until
-    /// the sales phase (see [`crate::movements`]).
+    /// Sales/refunds/cash movements of a cashier session for the close report;
+    /// [`SalesMovements`] by default (see [`crate::movements`]).
     pub movements: Arc<dyn SessionMovements>,
 }
 
@@ -116,7 +116,7 @@ impl AppState {
             clock,
             session_idle_ms: DEFAULT_SESSION_IDLE_MS,
             events: EventHub::default(),
-            movements: Arc::new(NoSales),
+            movements: Arc::new(SalesMovements),
         }
     }
 
@@ -193,7 +193,7 @@ mod tests {
         let state = state
             .with_session_idle_ms(5)
             .with_events(hub)
-            .with_movements(Arc::new(NoSales));
+            .with_movements(Arc::new(crate::movements::NoSales));
         assert_eq!(state.session_idle_ms, 5);
         state.events.publish(crate::events::Event::user_changed(
             sultan_core::ids::UserId::generate(),

@@ -279,6 +279,15 @@ Where we are, so any session can pick up from here. Update this section at the e
   customer purchase history (merged customers included) and the till's recent receipts, the
   session events for `core::sale::session_report`; `sale.reprint` / `tender.manage` permissions
   and the balance kind `refund` (migrations `20261117000001/2`). Readings in spec §19 (from S2).
+- **2.6 Sales** S3 `server` + client (2026-11-17): routes of §12 (`/tender-types`, `PUT /sales/{id}`
+  with the re-quote (`409 cart_stale` + fresh quote), every permission check with comma-separated
+  `X-Override` tokens, open-session check, tenders and saved change, the 2.1 §5 retry, replay by
+  body hash; sale reads, lists, by-number, receipt text with audited reprints; post-void;
+  `PUT /returns/{id}` with exchange; held carts; `POST /cart-voids` for till voids;
+  `GET /customers/{id}/history` and `/recent-receipts`), the close report's `sales` block and the
+  §10 expected cash (`movements::SalesMovements`), events `sale.posted`, `sale.voided`,
+  `cart.held`, `cart.taken`, the client's register and back-office methods with the fake, and
+  the Postman folder "Sales (spec 2.6)". Readings in spec §19 (from S3).
 - **UI only, except HQ** (§3, 2026-11-09):
   - Start screen on single-app and terminal machines: F1 Kasir, F2 Back office, F3 Settings.
   - Settings: language (F6), set up again (F8), and on a single app "Allow terminals to connect"
@@ -299,17 +308,20 @@ Where we are, so any session can pick up from here. Update this section at the e
 - Back office: the Prices tab is not part of the product form's unsaved-changes check; archived
   price lists are not listed (no unarchive on screen).
 - Register: no payout slip is printed; the attached customer does not refresh on
-  `customer.changed`; purchase history is empty until 2.6 S3 (`sales::purchase_history` exists).
+  `customer.changed`.
+- Sales: `return_days` is fixed at 30 (no stored setting yet, spec 2.6 §19 from S3); the receipt
+  width is a query parameter (no branch setting); stock is not checked for branch blocks at
+  posting (only archived products are refused).
 - Pricing: deleting a price entry or changing a tax rate is still always allowed, even when a
   posted sale used it (2.3 R2 limitation; sales now exist).
 - Each sub-agent worktree builds its own `target/` (20–40 GB with coverage); clear finished ones.
 
 **Next**
-- **2.6 Sales (register)**: spec agreed 2026-11-16 (`docs/spec/2.6-sales.md`). S1 `core::sale`
-  and S2 `db` done; next **S3 `server` + client** (routes of §12 with the retry of 2.1 §5 around
-  posting, re-quote at posting, request hash for `PUT /sales|returns/{id}`, session report from
-  `sales::session_events` + line/cart void audits, events, Postman), then S4 register sell · S5
-  register after the sale (hold/resume, post-void, returns, reprint, history) · S6 back office.
+- **2.6 Sales (register)**: spec agreed 2026-11-16 (`docs/spec/2.6-sales.md`). S1 `core::sale`,
+  S2 `db` and S3 `server` + client done; next **S4 register: sell** (cart, line actions with
+  `POST /cart-voids`, payment panel, saved change, receipt preview, crash copy, keys), then S5
+  register after the sale (hold/resume, post-void, returns + exchanges, reprint, history) · S6
+  back office (tender types, sales and returns lists, purchase history tab).
 - Other P1 specs still to discuss: 2.4 is P2; 2.7 cash in/out + X/Z, 2.8 inventory, 2.9 money,
   2.10 reports, 2.11 hardware (ESC/POS + drawer), old-Sultan importer.
 

@@ -52,6 +52,17 @@
 //! | 422 | `invalid_rule` | a rule on (or in an entry of) the `default` price list, or a % rule of −100% or less (spec 2.3 §2, §15); `field` |
 //! | 422 | `no_price` | no price list prices the line (spec 2.3 §4.5); in a quote it is a per-line error, with `suggestion` on an open-price line |
 //! | 413 | `payload_too_large` | the request body is over the endpoint's limit (product images: 10 MB) |
+//! | 409 | `cart_stale` | the posted sale's totals differ from the server's fresh quote (spec 2.6 §5); `quote` = `{totals, lines}` of the fresh quote |
+//! | 409 | `cart_taken` | the held cart was resumed by another register already (spec 2.6 §4) |
+//! | 409 | `has_returns` | a sale with a return cannot be post-voided (spec 2.6 §7) |
+//! | 409 | `conflict` | also: a sale or return ID posted again with another body, a second post-void, a return of a voided sale (spec 2.6 §12) |
+//! | 409 | `archived` | also: an archived tender type cannot be edited (spec 2.6 §19 item 21) |
+//! | 403 | `return_window` | the sale is older than `return_days`: a manager override of `refund.with_receipt` is needed (spec 2.6 §8); `permission`, `days` |
+//! | 422 | `return_qty_exceeded` | returning more than sold − already returned (spec 2.6 §8); `field: qty` |
+//! | 422 | `tender_reference_required` | the tender type needs a reference (spec 2.6 §5); `field: reference` |
+//! | 422 | `tender_over_rest` | a non-cash tender above the rest (spec 2.6 §5); `field: amount`, `rest` |
+//! | 422 | `cart_too_large` | more than 300 lines (spec 2.6 §2); `max` |
+//! | 422 | `invalid_qty` | a sale or return quantity ≤ 0, above 99 999.999 or with decimals for an integer unit (spec 2.6 §19 item 1); `field: qty` |
 //! | 423 | `locked_out` | too many failures; `locked_until` (unix ms) is included (§4) |
 //! | 500 | `internal` | database or other unexpected error (details are not exposed) |
 
@@ -67,6 +78,7 @@ use sultan_db::DbError;
 use sultan_db::catalog::{CatalogDbError, Duplicate};
 use sultan_db::customers::CustomerDbError;
 use sultan_db::pricing::PricingDbError;
+use sultan_db::sales::SaleDbError;
 
 /// The media type of every error body.
 pub const PROBLEM_JSON: &str = "application/problem+json";
@@ -575,6 +587,46 @@ impl From<PricingDbError> for ApiError {
                 Self::invalid_field(field, format!("`{field}` {message}"))
             }
             PricingDbError::Db(error) => error.into(),
+        }
+    }
+}
+
+impl From<sultan_core::sale::SaleError> for ApiError {
+    fn from(error: sultan_core::sale::SaleError) -> Self {
+        use sultan_core::sale::SaleError as E;
+        let status = match &error {
+            E::Customer(e) => return e.clone().into(),
+            E::Pricing(e) => return e.clone().into(),
+            E::CartStale | E::CartTaken | E::HasReturns | E::AlreadyVoided => StatusCode::CONFLICT,
+            E::ReturnWindow { .. } => StatusCode::FORBIDDEN,
+            _ => StatusCode::UNPROCESSABLE_ENTITY,
+        };
+        let mut api = Self::new(status, error.code(), error.to_string());
+        if let Some(field) = error.field() {
+            api = api.with("field", field);
+        }
+        match error {
+            E::CartTooLarge { max } => api.with("max", max),
+            E::ReturnQtyExceeded { max } => api.with("max_thousandths", max.thousandths()),
+            E::ReturnWindow { days } => api
+                .with("days", days)
+                .with("permission", "refund.with_receipt"),
+            E::TenderOverRest { rest } => api.with("rest", rest.minor()),
+            _ => api,
+        }
+    }
+}
+
+impl From<SaleDbError> for ApiError {
+    fn from(error: SaleDbError) -> Self {
+        let detail = error.to_string();
+        match error {
+            SaleDbError::NotFound(what) => Self::not_found(what),
+            SaleDbError::Invalid { field, message } => Self::invalid_field(field, message),
+            SaleDbError::Archived => Self::new(StatusCode::CONFLICT, "archived", detail),
+            SaleDbError::Rule(rule) => rule.into(),
+            SaleDbError::Conflict(..) => Self::new(StatusCode::CONFLICT, "conflict", detail),
+            SaleDbError::Db(e) => e.into(),
         }
     }
 }

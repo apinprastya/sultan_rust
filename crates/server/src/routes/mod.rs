@@ -11,6 +11,9 @@
 //!   classes, lookup and search, catalog settings and code generators ([`catalog`]).
 //! - R3 (spec 2.3): price lists, entries, tax rates, pricing settings ([`pricing`]) and the quote
 //!   and lookup price ([`pricing_quote`]).
+//! - S3 (spec 2.6): tender types ([`tender_types`]), sales and post-voids, till voids and
+//!   receipts ([`sales`], built by [`sale_post`]), returns and exchanges ([`returns`]), held carts
+//!   ([`held_carts`]), the purchase history ([`customers`]).
 //!
 //! Master-data writes follow one pattern (`docs/plan.md` §1, spec 2.1 §1, §7):
 //! - `PUT /{resource}/{uuid}` creates (`201`) or overwrites (`200`) the record with a
@@ -28,6 +31,7 @@ pub mod catalog;
 pub mod customer_balance;
 pub mod customer_groups;
 pub mod customers;
+pub mod held_carts;
 pub mod locations;
 pub mod overrides;
 pub mod permissions;
@@ -36,8 +40,12 @@ pub mod pricing_quote;
 pub mod product_images;
 pub mod products;
 pub mod registers;
+pub mod returns;
 pub mod roles;
+pub mod sale_post;
+pub mod sales;
 pub mod taxonomy;
+pub mod tender_types;
 pub mod users;
 
 use std::str::FromStr;

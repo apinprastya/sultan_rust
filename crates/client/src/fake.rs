@@ -26,6 +26,7 @@
 
 mod backoffice;
 mod customers;
+mod sales;
 
 use std::collections::HashMap;
 use std::sync::{Mutex, MutexGuard, PoisonError};
@@ -42,6 +43,7 @@ use crate::{
 pub use backoffice::{BackOfficeUser, EXEMPT_TAX_CLASS, OTHER_BRANCH_ID, STANDARD_TAX_CLASS};
 pub use backoffice::{PriceCustomer, PricingDemo};
 pub use customers::{ERASED_NAME, SEED_BUDI, SEED_GOLD, SEED_GROUP, SEED_SILVER, SEED_SITI};
+pub use sales::{TENDER_BALANCE, TENDER_CARD, TENDER_CASH, TENDER_QRIS};
 
 /// Failures before a lockout (spec 2.1 §4).
 pub const MAX_FAILURES: u32 = 5;
@@ -116,6 +118,7 @@ struct State {
     sink: Option<EventSink>,
     catalog: backoffice::Catalog,
     customers: customers::Customers,
+    sales: sales::Sales,
 }
 
 /// The fake service; see the module docs.
@@ -744,6 +747,121 @@ impl Service for FakeService {
             return ready(Err(e));
         }
         ready(s.quote(token, request))
+    }
+
+    fn tender_types(&self, token: &str) -> crate::BoxFuture<Vec<crate::TenderType>> {
+        self.tender_types_call(token, false)
+    }
+
+    fn post_sale(
+        &self,
+        token: &str,
+        id: &str,
+        body: &crate::SaleRequest,
+        override_token: Option<&str>,
+    ) -> crate::BoxFuture<crate::Sale> {
+        self.post_sale_call(token, id, body, override_token)
+    }
+
+    fn sale(&self, token: &str, id: &str) -> crate::BoxFuture<crate::Sale> {
+        self.sale_call(token, id)
+    }
+
+    fn sale_by_number(&self, token: &str, number: &str) -> crate::BoxFuture<crate::Sale> {
+        self.sale_call(token, number)
+    }
+
+    fn sales(&self, token: &str, query: &crate::DocQuery) -> crate::BoxFuture<crate::SalePage> {
+        self.sales_call(token, query)
+    }
+
+    fn receipt(
+        &self,
+        token: &str,
+        id: &str,
+        copy: bool,
+        override_token: Option<&str>,
+    ) -> crate::BoxFuture<crate::Receipt> {
+        self.receipt_call(token, id, copy, override_token)
+    }
+
+    fn void_sale(
+        &self,
+        token: &str,
+        id: &str,
+        body: &crate::VoidRequest,
+        key: &str,
+        override_token: Option<&str>,
+    ) -> crate::BoxFuture<crate::Sale> {
+        self.void_sale_call(token, id, body, key, override_token)
+    }
+
+    fn cart_void(
+        &self,
+        token: &str,
+        body: &crate::CartVoidRequest,
+        key: &str,
+        override_token: Option<&str>,
+    ) -> crate::BoxFuture<crate::CartVoid> {
+        self.cart_void_call(token, body, key, override_token)
+    }
+
+    fn post_return(
+        &self,
+        token: &str,
+        id: &str,
+        body: &crate::ReturnRequest,
+        override_token: Option<&str>,
+    ) -> crate::BoxFuture<crate::SaleReturn> {
+        self.post_return_call(token, id, body, override_token)
+    }
+
+    fn hold_cart(
+        &self,
+        token: &str,
+        id: &str,
+        body: &crate::HoldRequest,
+    ) -> crate::BoxFuture<crate::HeldCart> {
+        self.hold_call(token, id, body)
+    }
+
+    fn held_carts(&self, token: &str) -> crate::BoxFuture<Vec<crate::HeldCart>> {
+        self.held_carts_call(token)
+    }
+
+    fn take_held_cart(
+        &self,
+        token: &str,
+        id: &str,
+        _key: &str,
+    ) -> crate::BoxFuture<crate::HeldCart> {
+        self.take_call(token, id)
+    }
+
+    fn delete_held_cart(
+        &self,
+        token: &str,
+        id: &str,
+        override_token: Option<&str>,
+    ) -> crate::BoxFuture<crate::HeldCart> {
+        self.drop_cart_call(token, id, override_token)
+    }
+
+    fn customer_history(
+        &self,
+        token: &str,
+        id: &str,
+        _before: Option<&str>,
+    ) -> crate::BoxFuture<crate::HistoryPage> {
+        self.history_call(token, id)
+    }
+
+    fn recent_receipts(
+        &self,
+        token: &str,
+        customer_id: &str,
+    ) -> crate::BoxFuture<Vec<crate::SaleSummary>> {
+        self.recent_call(token, customer_id)
     }
 }
 

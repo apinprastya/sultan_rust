@@ -72,11 +72,12 @@ pub use history::{
 };
 pub use returns::{
     NewReturn, Return, ReturnHeader, ReturnLine, StoredReturnLine, get_return, list_returns,
-    post_return,
+    post_return, replayed_return,
 };
 pub use sale::{
     DocFilter, MAX_DOC_PAGE, NewSale, NewSaleVoid, Sale, SaleHeader, SaleLine, SaleTotals,
-    SaleVoid, StoredSaleLine, get_sale, get_sale_by_number, list_sales, post_sale, void_sale,
+    SaleVoid, StoredSaleLine, get_sale, get_sale_by_number, list_sales, post_sale, replayed_sale,
+    void_sale,
 };
 pub use stock::{StockMovementRecord, document_movements, stock_on_hand};
 pub use tender_types::{

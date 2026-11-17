@@ -730,6 +730,20 @@ pub async fn post_return(
     Ok((Written::Created, stored))
 }
 
+/// Whether return `id` was posted already (spec 2.6 §12): `Some(stored)` when with the same
+/// body hash, [`SaleDbError::Conflict`] with another, `None` when the ID is new. The server
+/// asks first, so a replay answers the stored document even when the cart went stale since.
+///
+/// # Errors
+/// [`SaleDbError::Conflict`], or the database error.
+pub async fn replayed_return(
+    tx: &mut Tx,
+    id: ReturnId,
+    hash: &TokenHash,
+) -> SaleResult<Option<Return>> {
+    replay(tx, id, hash).await
+}
+
 async fn replay(tx: &mut Tx, id: ReturnId, hash: &TokenHash) -> SaleResult<Option<Return>> {
     let stored = sql::fetch_optional(
         Conn::Tx(&mut *tx),

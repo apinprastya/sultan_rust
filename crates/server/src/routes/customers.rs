@@ -21,7 +21,8 @@
 //!   ("Negative balances", spec 2.5 §11): `customer.manage`.
 //! - `POST /customers/{id}/archive`, `/unarchive`, `/merge {from}` (`customer.manage`) and
 //!   `/erase` (`customer.erase`), with `Idempotency-Key`.
-//! - `GET /customers/{id}/history`: **an empty page until sales exist**; it fills in with spec 2.6.
+//! - `GET /customers/{id}/history`: the purchase history (spec 2.6 §12: sales, voided ones marked,
+//!   and returns), and `GET /customers/{id}/recent-receipts`: the latest posted sales for a return.
 //!
 //! **Node roles** (spec 2.5 §12): on a branch node only sign-up (a `PUT` that creates, or its
 //! replay) is allowed; every other write is `403 read_only_replica`. Forwarding a till's profile
@@ -55,6 +56,7 @@ use sultan_db::customers::{
     MembershipTier, Written,
 };
 use sultan_db::org;
+use sultan_db::sales;
 use utoipa::{IntoParams, ToSchema};
 use uuid::Uuid;
 
@@ -925,19 +927,25 @@ pub async fn merge(
     Ok(Json(Names::load(state, &session).await?.dto(&stored)))
 }
 
-/// One receipt in a customer's history (filled with spec 2.6).
+/// One entry of a customer's purchase history (spec 2.5 §9, 2.6 §19 item 30).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
 pub struct HistoryItemDto {
+    /// `sale` or `return`.
+    pub kind: String,
     /// The sale or return document.
     pub document_id: String,
     /// Its number.
     pub number: String,
     /// Branch.
     pub branch_id: String,
+    /// The customer it was posted for (this one, or one merged into it).
+    pub customer_id: String,
     /// When it was posted (unix ms).
     pub posted_at: i64,
-    /// Total, minor units.
+    /// A sale: what was paid (`total + cash_rounding`); a return: its refund. Minor units.
     pub total: i64,
+    /// A voided sale (shown marked VOID).
+    pub voided: bool,
 }
 
 /// A page of purchase history.
@@ -945,33 +953,131 @@ pub struct HistoryItemDto {
 pub struct HistoryPage {
     /// Documents, newest first.
     pub items: Vec<HistoryItemDto>,
-    /// The cursor of the next page; `null` at the end.
+    /// The cursor of the next page (opaque, pass as `before`); `null` at the end.
     pub next_before_id: Option<String>,
 }
 
-/// `GET /api/v1/customers/{id}/history` (spec 2.5 §9): the customer's posted sales and returns.
-/// **There are no sales yet**: this answers an empty page for a known customer and fills in with
-/// spec 2.6.
+/// Query of `GET /customers/{id}/history`.
+#[derive(Debug, Clone, Default, Deserialize, IntoParams)]
+pub struct HistoryQuery {
+    /// `next_before_id` of the previous page.
+    pub before: Option<String>,
+    /// Page size, 1–100 (default 20).
+    pub limit: Option<u32>,
+}
+
+fn history_cursor(value: &str) -> Result<sales::HistoryCursor, ApiError> {
+    let invalid = || ApiError::invalid_field("before", "`before` is not a history cursor");
+    let (at, id) = value.split_once('_').ok_or_else(invalid)?;
+    Ok(sales::HistoryCursor {
+        posted_at: Timestamp::from_unix_millis(at.parse().map_err(|_| invalid())?),
+        id: id.parse().map_err(|_| invalid())?,
+    })
+}
+
+/// `GET /api/v1/customers/{id}/history?before=&limit=` (spec 2.5 §9, 2.6 §12): the customer's
+/// sales (voided ones marked) and posted returns, including those of customers merged into it,
+/// newest first. Any user session.
 ///
 /// # Errors
-/// `401`, `400 invalid_body`, `404 not_found`.
+/// `401`, `400 invalid_body`, `404 not_found`, `422 invalid_field` (`before`, `limit`).
 #[utoipa::path(get, path = "/api/v1/customers/{id}/history", tag = "customers",
     security(("bearer" = []), ("bearer" = [], "register_token" = [])),
-    params(("id" = String, Path, description = "Customer ID")),
+    params(("id" = String, Path, description = "Customer ID"), HistoryQuery),
     responses((status = 200, body = HistoryPage), (status = 404, body = crate::openapi::Problem)))]
 pub async fn history(
     State(state): State<AppState>,
     _session: UserSession,
     Path(id): Path<String>,
+    ApiQuery(query): ApiQuery<HistoryQuery>,
 ) -> Result<Json<HistoryPage>, ApiError> {
     let id: Uuid = parse_id(&id, "id")?;
+    let limit = query.limit.unwrap_or(20);
+    if !(1..=sales::MAX_HISTORY_PAGE).contains(&limit) {
+        return Err(ApiError::invalid_field(
+            "limit",
+            format!("`limit` must be 1 to {}", sales::MAX_HISTORY_PAGE),
+        ));
+    }
+    let before = query.before.as_deref().map(history_cursor).transpose()?;
     cust::get_customer(&state.db, id)
         .await?
         .ok_or_else(|| ApiError::not_found("customer"))?;
+    let entries = sales::purchase_history(&state.db, id, before, limit).await?;
+    let next_before_id = (entries.len() == limit as usize)
+        .then(|| {
+            entries
+                .last()
+                .map(|e| format!("{}_{}", e.posted_at.unix_millis(), e.id))
+        })
+        .flatten();
     Ok(Json(HistoryPage {
-        items: Vec::new(),
-        next_before_id: None,
+        items: entries
+            .iter()
+            .map(|e| HistoryItemDto {
+                kind: match e.doc {
+                    sales::HistoryDoc::Sale => "sale",
+                    sales::HistoryDoc::Return => "return",
+                }
+                .to_owned(),
+                document_id: e.id.to_string(),
+                number: e.number.clone(),
+                branch_id: e.branch.to_string(),
+                customer_id: e.customer.to_string(),
+                posted_at: e.posted_at.unix_millis(),
+                total: e.amount.minor(),
+                voided: e.voided,
+            })
+            .collect(),
+        next_before_id,
     }))
+}
+
+/// Query of `GET /customers/{id}/recent-receipts`.
+#[derive(Debug, Clone, Default, Deserialize, IntoParams)]
+pub struct RecentQuery {
+    /// How far back, in days (default 90, at most 3 650).
+    pub days: Option<u32>,
+    /// How many, 1–50 (default 5).
+    pub limit: Option<u32>,
+}
+
+/// `GET /api/v1/customers/{id}/recent-receipts?days=&limit=` (spec 2.5 §9, 2.6 §8): the
+/// customer's latest **posted** sales, to start a return by receipt from the till. Any user
+/// session.
+///
+/// # Errors
+/// `401`, `400 invalid_body`, `404 not_found`, `422 invalid_field` (`days`, `limit`).
+#[utoipa::path(get, path = "/api/v1/customers/{id}/recent-receipts", tag = "customers",
+    security(("bearer" = []), ("bearer" = [], "register_token" = [])),
+    params(("id" = String, Path, description = "Customer ID"), RecentQuery),
+    responses((status = 200, body = [super::sales::SaleHeaderDto]),
+        (status = 404, body = crate::openapi::Problem)))]
+pub async fn recent_receipts(
+    State(state): State<AppState>,
+    _session: UserSession,
+    Path(id): Path<String>,
+    ApiQuery(query): ApiQuery<RecentQuery>,
+) -> Result<Json<Vec<super::sales::SaleHeaderDto>>, ApiError> {
+    let id: Uuid = parse_id(&id, "id")?;
+    let days = query.days.unwrap_or(90);
+    let limit = query.limit.unwrap_or(5);
+    if !(1..=3_650).contains(&days) || !(1..=50).contains(&limit) {
+        return Err(ApiError::invalid_field(
+            "limit",
+            "`days` must be 1 to 3650 and `limit` 1 to 50",
+        ));
+    }
+    cust::get_customer(&state.db, id)
+        .await?
+        .ok_or_else(|| ApiError::not_found("customer"))?;
+    let since = state
+        .now()
+        .saturating_add_millis(-i64::from(days) * 24 * 60 * 60 * 1_000);
+    let list = sales::recent_receipts(&state.db, id, since, limit).await?;
+    Ok(Json(
+        list.iter().map(super::sales::SaleHeaderDto::from).collect(),
+    ))
 }
 
 /// The audit `before`/`after` of a balance change.

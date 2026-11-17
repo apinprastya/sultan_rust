@@ -91,12 +91,8 @@ pub async fn authorize(
     action: Action<'_>,
     header: &OverrideHeader,
 ) -> Result<Option<UserId>, ApiError> {
-    let Action {
-        permission,
-        value,
-        context_ref,
-    } = action;
-    let limit = match permissions.check(permission, value) {
+    let permission = action.permission;
+    let limit = match permissions.check(permission, action.value) {
         Decision::Allowed => return Ok(None),
         Decision::Denied => return Err(AccessError::PermissionDenied { permission }.into()),
         Decision::NeedsOverride { limit } => limit,
@@ -104,6 +100,27 @@ pub async fn authorize(
     let Some(presented) = &header.0 else {
         return Err(AccessError::NeedsOverride { permission, limit }.into());
     };
+    use_token(state, tx, caller, action, presented)
+        .await?
+        .map(Some)
+        .ok_or_else(ApiError::invalid_override)
+}
+
+/// Uses up `presented` for `action` if it was approved for exactly this (action, value,
+/// register, `context_ref`) and this requester; audits the use as `override.use`. `None` when it
+/// does not match.
+async fn use_token(
+    state: &AppState,
+    tx: &mut Tx,
+    caller: &RegisterSession,
+    action: Action<'_>,
+    presented: &str,
+) -> Result<Option<UserId>, ApiError> {
+    let Action {
+        permission,
+        value,
+        context_ref,
+    } = action;
     let now = state.now();
     let hash = token::hash(presented);
     let use_ = OverrideUse {
@@ -114,10 +131,12 @@ pub async fn authorize(
         context_ref,
     };
     let requester = caller.user.user.id;
-    let approval = overrides::consume(&mut *tx, &use_, now)
+    let Some(approval) = overrides::consume(&mut *tx, &use_, now)
         .await?
         .filter(|a| a.requester == requester)
-        .ok_or_else(ApiError::invalid_override)?;
+    else {
+        return Ok(None);
+    };
 
     let mut entry = AuditEntry::new(now, "override.use");
     entry.branch = Some(caller.register.branch);
@@ -134,6 +153,84 @@ pub async fn authorize(
     }));
     audit::append(&mut *tx, &entry).await?;
     Ok(Some(approval.approver))
+}
+
+/// The tokens of an `X-Override` header: one, or several separated by commas when one request
+/// needs more than one approval (a sale with a line discount and a cart discount above the
+/// cashier's limits, spec 2.6 §19 from S3).
+#[must_use]
+pub fn tokens(header: &OverrideHeader) -> Vec<&str> {
+    header.0.as_deref().map_or_else(Vec::new, |h| {
+        h.split(',')
+            .map(str::trim)
+            .filter(|t| !t.is_empty())
+            .collect()
+    })
+}
+
+/// Authorizes several limited actions of one request (spec 2.6 §5: a sale is checked again at
+/// posting). Each action the caller's permissions allow passes as in [`authorize`]; each that
+/// needs an override takes one of the header's [`tokens`] that matches it. An action without a
+/// matching token answers `403 needs_override` for it, or `403 invalid_override` when tokens were
+/// sent and none of them matched anything. A `forced` action needs an override even when the
+/// caller holds the permission (the return window, spec 2.6 §8); without a token it answers
+/// `forced`'s error. Returns the approver of each action (`None` = the caller's own permission).
+///
+/// # Errors
+/// `403 permission_denied` / `needs_override` / `invalid_override`, the forced error, or the
+/// database error.
+pub async fn authorize_all(
+    state: &AppState,
+    tx: &mut Tx,
+    caller: &RegisterSession,
+    permissions: &PermissionSet,
+    actions: &[(Action<'_>, Option<ApiError>)],
+    header: &OverrideHeader,
+) -> Result<Vec<Option<UserId>>, ApiError> {
+    let mut left: Vec<&str> = tokens(header);
+    let sent = !left.is_empty();
+    let mut used_any = false;
+    let mut approvers = Vec::with_capacity(actions.len());
+    for (action, forced) in actions {
+        let needed = if let Some(error) = forced {
+            error.clone()
+        } else {
+            match permissions.check(action.permission, action.value) {
+                Decision::Allowed => {
+                    approvers.push(None);
+                    continue;
+                }
+                Decision::Denied => {
+                    return Err(AccessError::PermissionDenied {
+                        permission: action.permission,
+                    }
+                    .into());
+                }
+                Decision::NeedsOverride { limit } => AccessError::NeedsOverride {
+                    permission: action.permission,
+                    limit,
+                }
+                .into(),
+            }
+        };
+        let mut approver = None;
+        for i in 0..left.len() {
+            if let Some(a) = use_token(state, tx, caller, *action, left[i]).await? {
+                approver = Some(a);
+                left.remove(i);
+                break;
+            }
+        }
+        match approver {
+            Some(a) => {
+                used_any = true;
+                approvers.push(Some(a));
+            }
+            None if sent && !used_any => return Err(ApiError::invalid_override()),
+            None => return Err(needed),
+        }
+    }
+    Ok(approvers)
 }
 
 #[cfg(test)]
