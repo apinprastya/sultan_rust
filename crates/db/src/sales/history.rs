@@ -19,7 +19,7 @@ use crate::sql::{self, Arg, Row, args};
 /// Which document a history entry is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum HistoryDoc {
-    /// A posted sale.
+    /// A sale (posted, or voided later: see [`HistoryEntry::voided`]).
     Sale,
     /// A posted return.
     Return,
@@ -42,6 +42,9 @@ pub struct HistoryEntry {
     pub posted_at: Timestamp,
     /// A sale: what was paid (`total + cash_rounding`); a return: the refund.
     pub amount: Money,
+    /// A sale that was voided (shown marked VOID, spec 2.6 §19 item 30). Always false for a
+    /// return.
+    pub voided: bool,
 }
 
 /// Where a history page ends: the last entry's posting time and ID.
@@ -70,8 +73,9 @@ pub const MAX_HISTORY_PAGE: u32 = 100;
 const CUSTOMERS: &str =
     "customer_id IN (SELECT id FROM customer WHERE id = ? OR merged_into_id = ?)";
 
-/// The customer's posted sales and returns, including those of customers merged into it,
-/// newest first (`GET /customers/{id}/history`, spec 2.5 §9). Voided sales are left out.
+/// The customer's sales (posted and voided, marked by [`HistoryEntry::voided`]) and posted
+/// returns, including those of customers merged into it, newest first
+/// (`GET /customers/{id}/history`, spec 2.5 §9, 2.6 §19 item 30).
 /// `before` = the last entry of the previous page; `limit` 0 = 20, at most [`MAX_HISTORY_PAGE`].
 ///
 /// # Errors
@@ -92,12 +96,14 @@ pub async fn purchase_history<'c>(
     };
     values.push(clamp_limit(limit, 20, MAX_HISTORY_PAGE).into());
     let sql = format!(
-        "SELECT doc, id, number, branch_id, customer_id, posted_at, amount FROM (\
+        "SELECT doc, id, number, branch_id, customer_id, posted_at, amount, voided FROM (\
          SELECT 1 AS doc, id, number, branch_id, customer_id, posted_at, \
-         total + cash_rounding AS amount FROM sale WHERE status = 'posted' AND {CUSTOMERS} \
+         total + cash_rounding AS amount, \
+         CASE WHEN status = 'voided' THEN 1 ELSE 0 END AS voided \
+         FROM sale WHERE {CUSTOMERS} \
          UNION ALL \
-         SELECT 2 AS doc, id, number, branch_id, customer_id, posted_at, refund AS amount \
-         FROM sale_return WHERE status = 'posted' AND {CUSTOMERS}) h{cursor} \
+         SELECT 2 AS doc, id, number, branch_id, customer_id, posted_at, refund AS amount, \
+         0 AS voided FROM sale_return WHERE status = 'posted' AND {CUSTOMERS}) h{cursor} \
          ORDER BY posted_at DESC, id DESC LIMIT ?"
     );
     sql::fetch_all(conn.into(), &sql, values, |row| {
@@ -112,6 +118,7 @@ pub async fn purchase_history<'c>(
             customer: sql::id(row, "customer_id")?,
             posted_at: sql::ts(row, "posted_at")?,
             amount: sql::money(row, "amount")?,
+            voided: row.i64("voided")? != 0,
         })
     })
     .await

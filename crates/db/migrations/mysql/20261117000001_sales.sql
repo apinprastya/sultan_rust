@@ -34,10 +34,10 @@ CREATE INDEX ix_tender_type_sort ON tender_type (sort_order, id);
 -- (…0301–…0304) so every node seeds the same rows. HQ renames, deactivates or archives them.
 INSERT INTO tender_type (id, name, kind, needs_reference, opens_drawer, active, sort_order,
                          archived_at, created_at, updated_at) VALUES
-    (X'00000000000070008000000000000301', 'Cash', 'cash', 0, 1, 1, 0, NULL, 0, 0),
-    (X'00000000000070008000000000000302', 'Debit card', 'card', 1, 0, 1, 10, NULL, 0, 0),
+    (X'00000000000070008000000000000301', 'Tunai', 'cash', 0, 1, 1, 0, NULL, 0, 0),
+    (X'00000000000070008000000000000302', 'Kartu debit', 'card', 1, 0, 1, 10, NULL, 0, 0),
     (X'00000000000070008000000000000303', 'QRIS', 'qris', 1, 0, 1, 20, NULL, 0, 0),
-    (X'00000000000070008000000000000304', 'Customer balance', 'customer_balance', 0, 0, 1, 30,
+    (X'00000000000070008000000000000304', 'Saldo pelanggan', 'customer_balance', 0, 0, 1, 30,
      NULL, 0, 0);
 
 -- Spec 2.6 §1: a sale is created posted (D1) and may later be voided (§7).

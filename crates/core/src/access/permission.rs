@@ -200,6 +200,7 @@ impl Permission {
                 | Self::SaleVoidLine
                 | Self::SaleVoid
                 | Self::SalePostVoid
+                | Self::SaleReprint
                 | Self::PriceOverride
                 | Self::RefundWithReceipt
                 | Self::RefundNoReceipt
@@ -385,6 +386,7 @@ mod tests {
     fn overridable_is_only_till_actions() {
         assert!(Permission::SaleDiscount.is_overridable());
         assert!(Permission::DrawerOpen.is_overridable());
+        assert!(Permission::SaleReprint.is_overridable());
         assert!(!Permission::SaleCreate.is_overridable());
         assert!(!Permission::UserManage.is_overridable());
         assert!(!Permission::SessionViewExpected.is_overridable());
@@ -436,15 +438,17 @@ mod tests {
     }
 
     #[test]
-    fn sales_keys_are_stable_unlimited_and_not_overridable() {
-        for (p, key) in [
-            (Permission::SaleReprint, "sale.reprint"),
-            (Permission::TenderManage, "tender.manage"),
+    fn sales_keys_are_stable_and_unlimited() {
+        // `sale.reprint` takes a manager override at the till (spec 2.6 §19 item 33, decided
+        // 2026-11-17); `tender.manage` is HQ back office only.
+        for (p, key, overridable) in [
+            (Permission::SaleReprint, "sale.reprint", true),
+            (Permission::TenderManage, "tender.manage", false),
         ] {
             assert_eq!(p.as_str(), key);
             assert_eq!(key.parse::<Permission>(), Ok(p));
             assert_eq!(p.limit_kind(), None, "{key}");
-            assert!(!p.is_overridable(), "{key}");
+            assert_eq!(p.is_overridable(), overridable, "{key}");
         }
     }
 

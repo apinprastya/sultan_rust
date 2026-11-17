@@ -424,6 +424,45 @@ async fn return_refusals(db: &Db) {
             "{field}: {err:?}"
         );
     }
+    // Spec 2.6 §19 item 34 (decided 2026-11-17): a sale with a customer refunds to the balance
+    // of that customer only, never to another one attached to the return.
+    let other = customer(db, &till.o, "C3333333").await;
+    let (_, members) = post(
+        db,
+        &sale_at(
+            &till,
+            &[item(5_000, 1)],
+            None,
+            Some((till.customer, Money::ZERO)),
+            &[Pay::Cash(5_000)],
+            Money::ZERO,
+            NOV16,
+        ),
+    )
+    .await
+    .unwrap();
+    let mut to_other = return_of(
+        &till,
+        &members,
+        &[(1, 1, ReturnDisposition::Restock)],
+        RefundMethod::Balance,
+        Some(Money::ZERO),
+        Money::ZERO,
+        None,
+        NOV16 + 1,
+    );
+    to_other.customer = Some(other);
+    let err = post_return(db, &to_other).await.unwrap_err();
+    assert!(
+        matches!(
+            &err,
+            SaleDbError::Invalid {
+                field: "customer",
+                ..
+            }
+        ),
+        "{err:?}"
+    );
     let err = post_return(db, &variant(&|r| r.lines[0].qty = Qty::ZERO))
         .await
         .unwrap_err();
@@ -849,7 +888,7 @@ async fn purchase_history_includes_merged_customers(db: &Db) {
         );
         docs.push(post(db, &s).await.unwrap().1);
     }
-    // A return of the newest one, a voided sale that stays out.
+    // A return of the newest one, and a voided sale that is listed, marked voided.
     let r = return_of(
         &till,
         &docs[2],
@@ -894,25 +933,28 @@ async fn purchase_history_includes_merged_customers(db: &Db) {
     let history = sales::purchase_history(db, till.customer, None, 0)
         .await
         .unwrap();
-    let got: Vec<(HistoryDoc, Uuid)> = history.iter().map(|e| (e.doc, e.id)).collect();
+    let got: Vec<(HistoryDoc, Uuid, bool)> =
+        history.iter().map(|e| (e.doc, e.id, e.voided)).collect();
     assert_eq!(
         got,
         [
-            (HistoryDoc::Return, *returned.header.id.as_uuid()),
-            (HistoryDoc::Sale, *docs[2].header.id.as_uuid()),
-            (HistoryDoc::Sale, *docs[1].header.id.as_uuid()),
-            (HistoryDoc::Sale, *docs[0].header.id.as_uuid()),
+            (HistoryDoc::Sale, *voided.header.id.as_uuid(), true),
+            (HistoryDoc::Return, *returned.header.id.as_uuid(), false),
+            (HistoryDoc::Sale, *docs[2].header.id.as_uuid(), false),
+            (HistoryDoc::Sale, *docs[1].header.id.as_uuid(), false),
+            (HistoryDoc::Sale, *docs[0].header.id.as_uuid(), false),
         ]
     );
-    assert_eq!(history[2].customer, b);
+    assert_eq!(history[3].customer, b);
+    assert_eq!(history[0].amount, rp(3_000));
+    assert_eq!(history[2].amount, rp(2_000));
     assert_eq!(history[1].amount, rp(2_000));
-    assert_eq!(history[0].amount, rp(2_000));
     // Paged.
-    let first = sales::purchase_history(db, till.customer, None, 2)
+    let first = sales::purchase_history(db, till.customer, None, 3)
         .await
         .unwrap();
     let second =
-        sales::purchase_history(db, till.customer, Some(HistoryCursor::from(&first[1])), 2)
+        sales::purchase_history(db, till.customer, Some(HistoryCursor::from(&first[2])), 3)
             .await
             .unwrap();
     assert_eq!(

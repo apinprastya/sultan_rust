@@ -72,7 +72,7 @@ async fn tender_types_seed_put_and_archive(db: &Db) {
     let till = till(db).await;
     let seeded = sales::list_tender_types(db, false).await.unwrap();
     let names: Vec<_> = seeded.iter().map(|r| r.tender.name.as_str()).collect();
-    assert_eq!(names, ["Cash", "Debit card", "QRIS", "Customer balance"]);
+    assert_eq!(names, ["Tunai", "Kartu debit", "QRIS", "Saldo pelanggan"]);
     assert_eq!(seeded[0].tender.id, CASH_TENDER_TYPE);
     assert!(seeded[0].tender.opens_drawer);
     assert!(seeded[1].tender.needs_reference);

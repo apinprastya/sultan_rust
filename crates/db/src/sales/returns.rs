@@ -394,10 +394,15 @@ async fn check_against_sale(
         .await?
         .ok_or(SaleDbError::NotFound("sale"))?;
     sultan_core::sale::ensure_returnable(h.status, h.legacy_number.is_some())?;
-    if reverses_payment(r) && r.customer != h.customer {
+    // A balance payment goes back to the sale's customer, and when the sale has a customer, a
+    // refund to the balance goes only to that customer (spec 2.6 §19 item 34, decided
+    // 2026-11-17).
+    let to_sale_customer =
+        reverses_payment(r) || (h.customer.is_some() && !r.balance_entries.is_empty());
+    if to_sale_customer && r.customer != h.customer {
         return Err(SaleDbError::invalid(
             "customer",
-            "a balance payment goes back to the sale's customer",
+            "the balance goes back to the sale's customer",
         ));
     }
     let stored = sales::lines(Conn::Tx(&mut *tx), sale).await?;

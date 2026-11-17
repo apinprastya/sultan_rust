@@ -13,12 +13,13 @@ use crate::conn::{Conn, Tx};
 use crate::error::Result;
 use crate::sql::{self, Row, args};
 
-/// The seeded "Cash" tender type (migration `20261117000001_sales.sql`), so a fresh install can
-/// sell.
+/// The seeded cash tender type, "Tunai" (migration `20261117000001_sales.sql`), so a fresh
+/// install can sell.
 pub const CASH_TENDER_TYPE: TenderTypeId =
     TenderTypeId::from_uuid(Uuid::from_u128(0x0000_0000_0000_7000_8000_0000_0000_0301));
 
-/// The seeded "Customer balance" tender type (saved change spent at the till, 2.5 §11).
+/// The seeded customer-balance tender type, "Saldo pelanggan" (saved change spent at the till,
+/// 2.5 §11).
 pub const CUSTOMER_BALANCE_TENDER_TYPE: TenderTypeId =
     TenderTypeId::from_uuid(Uuid::from_u128(0x0000_0000_0000_7000_8000_0000_0000_0304));
 

@@ -17,7 +17,7 @@ Persistence for Sultan POS: sqlx migrations and repositories for SQLite and MySQ
 
 | Table | What |
 |---|---|
-| `tender_type` | HQ master data: name, fixed `kind` (`cash`, `card`, `qris`, `transfer`, `ewallet`, `customer_balance`, `other`), `needs_reference`, `opens_drawer`, `active`, `sort_order`, `archived_at`. Seeded with fixed ids: Cash (…0301), Debit card (…0302), QRIS (…0303), Customer balance (…0304). |
+| `tender_type` | HQ master data: name, fixed `kind` (`cash`, `card`, `qris`, `transfer`, `ewallet`, `customer_balance`, `other`), `needs_reference`, `opens_drawer`, `active`, `sort_order`, `archived_at`. Seeded with fixed ids and Indonesian names: Tunai (cash, …0301), Kartu debit (…0302), QRIS (…0303), Saldo pelanggan (customer balance, …0304). |
 | `sale`, `sale_line`, `sale_tender` | A posted sale (status `posted` / `voided`), its lines (the `core::sale::LineTotals` values, price mode, scale label, bundle components as JSON, and `returned_qty` / `refunded` so far) and tenders (`exchange` without a tender type). `legacy_number` marks an imported old-Sultan sale (read-only). `request_hash` makes `PUT /sales/{id}` idempotent. |
 | `sale_void`, `sale_void_tender` | The post-void: the paying (current) session, reason, refund split and how it was paid back (cash or balance). |
 | `sale_return`, `sale_return_line`, `sale_return_tender` | Returns (by receipt with `sale_id` + `sale_line_no`, or without), restock / write-off per line, refund tenders (cash, balance, `exchange`), the exchange's new sale. |
