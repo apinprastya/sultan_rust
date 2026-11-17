@@ -219,6 +219,17 @@ impl State {
                 .or(label_qty),
             amount: found.amount.map(sultan_core::money::Money::minor),
             branch_id: branch.map(str::to_owned),
+            units: p
+                .units
+                .iter()
+                .filter(|u| u.sellable && !u.archived)
+                .map(|u| crate::LookupUnit {
+                    id: u.id.clone(),
+                    name: u.name.clone(),
+                    kind: u.kind.clone(),
+                    factor_thousandths: u.factor_thousandths,
+                })
+                .collect(),
         })
     }
 }

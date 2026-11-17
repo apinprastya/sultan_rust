@@ -58,6 +58,7 @@ fn till(language: &str, user: usize) -> Till {
         language: Some(language.to_owned()),
         clock: Arc::new(|| T0),
         start: false,
+        cart_file: None,
     };
     let app = build_app(
         fake.clone(),
@@ -131,6 +132,16 @@ impl Till {
             .ui
             .get_chips()
             .iter()
+            .map(|c| format!("{} {}", c.keys, c.label))
+            .collect()
+    }
+
+    /// The session home's buttons.
+    fn buttons(&self) -> Vec<String> {
+        let ui = &self.app.ui;
+        ui.get_actions()
+            .iter()
+            .chain(ui.get_actions_b().iter())
             .map(|c| format!("{} {}", c.keys, c.label))
             .collect()
     }
@@ -322,7 +333,7 @@ fn attach_and_detach() {
         t.app.ui.invoke_message(home.note).as_str(),
         "Customer attached: Budi S. · 0812****789 · Gold"
     );
-    assert!(t.chips().contains(&"F4 detach_customer".to_owned()));
+    assert!(t.buttons().contains(&"Ctrl+F3 detach_customer".to_owned()));
     // F3 opens the attached customer; the strip opens it too.
     t.press("F3");
     let d = t.dialog();
@@ -337,7 +348,7 @@ fn attach_and_detach() {
         t.app.ui.invoke_message(t.home().note).as_str(),
         "Customer detached."
     );
-    assert!(!t.chips().contains(&"F4 detach_customer".to_owned()));
+    assert!(!t.buttons().contains(&"Ctrl+F3 detach_customer".to_owned()));
     // Locking forgets the customer.
     t.press("F3");
     t.find("K7QH29XM");

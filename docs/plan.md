@@ -288,6 +288,18 @@ Where we are, so any session can pick up from here. Update this section at the e
   §10 expected cash (`movements::SalesMovements`), events `sale.posted`, `sale.voided`,
   `cart.held`, `cart.taken`, the client's register and back-office methods with the fake, and
   the Postman folder "Sales (spec 2.6)". Readings in spec §19 (from S3).
+- **2.6 Sales** S4 register: sell (2026-11-17, `crates/ui/src/{sell,till,crash}.rs`): the session
+  home is the sell screen: scan / type (`3*` qty) / F2 search into a cart quoted as a whole, open
+  prices, the cart table and totals, F7 price check, the customer line with Shift+F3 / Ctrl+F3
+  and the tax-invoice switch (Ctrl+T); line actions (qty, ±1, unit, manual price, line
+  discount, void with a reason through `POST /cart-voids`), cart discount and cart void with the
+  manager override; the payment panel (F4 cash with rounding and change, F9 other tenders with
+  references, the customer balance, F8 saved change, zero total), posting with every approval
+  collected (comma-separated `X-Override`), `cart_stale` handling, change due + receipt preview
+  (`?lang=` on the receipt; Indonesian labels in `core::sale::Label`); the crash copy
+  `register.cart` (atomic, `0600`, same cashier session only); the §13 keys (F1, F2, F3,
+  Shift/Ctrl+F3, F4, F5 (logged only), F7, F8, F9, F12, Ctrl+F10; F6/F10/F11 "coming"). Lookups
+  carry the product's sellable `units` (server + client). Readings in spec §19 (from S4).
 - **UI only, except HQ** (§3, 2026-11-09):
   - Start screen on single-app and terminal machines: F1 Kasir, F2 Back office, F3 Settings.
   - Settings: language (F6), set up again (F8), and on a single app "Allow terminals to connect"
@@ -314,13 +326,16 @@ Where we are, so any session can pick up from here. Update this section at the e
   posting (only archived products are refused).
 - Pricing: deleting a price entry or changing a tax rate is still always allowed, even when a
   posted sale used it (2.3 R2 limitation; sales now exist).
+- Register (S4): F5 only logs the drawer (no audited `drawer.open` endpoint yet); saved change is
+  checked against `max_saved_per_sale` / `max_balance` only at posting (the register cannot read
+  the balance settings); the fake's receipt text is minimal (names are variant IDs).
 - Each sub-agent worktree builds its own `target/` (20–40 GB with coverage); clear finished ones.
 
 **Next**
 - **2.6 Sales (register)**: spec agreed 2026-11-16 (`docs/spec/2.6-sales.md`). S1 `core::sale`,
-  S2 `db` and S3 `server` + client done; next **S4 register: sell** (cart, line actions with
-  `POST /cart-voids`, payment panel, saved change, receipt preview, crash copy, keys), then S5
-  register after the sale (hold/resume, post-void, returns + exchanges, reprint, history) · S6
+  S2 `db`, S3 `server` + client and S4 register: sell done; next **S5 register after the sale**
+  (F11 hold / Shift+F11 resume, F6 last receipts with reprint and post-void, F10 returns +
+  exchanges, the customer's purchase history; also `drawer.open` as an audited server call) · S6
   back office (tender types, sales and returns lists, purchase history tab).
 - Other P1 specs still to discuss: 2.4 is P2; 2.7 cash in/out + X/Z, 2.8 inventory, 2.9 money,
   2.10 reports, 2.11 hardware (ESC/POS + drawer), old-Sultan importer.

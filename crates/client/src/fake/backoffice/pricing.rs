@@ -920,6 +920,11 @@ impl FakeService {
             .insert(id.to_owned(), customer);
     }
 
+    /// Sets the pricing settings (tax, cash rounding) without recording a call (setup).
+    pub fn set_pricing_settings(&self, settings: PricingSettings) {
+        self.state().catalog.pricing.settings = settings;
+    }
+
     /// Stores a price list as the owner without recording a call (setup).
     ///
     /// # Panics

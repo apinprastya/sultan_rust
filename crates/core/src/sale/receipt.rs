@@ -116,6 +116,40 @@ impl Label {
             Self::Exchange => "Exchange",
         }
     }
+
+    /// The Indonesian text (spec 2.6 §19 from S4: a receipt prints in the window language).
+    #[must_use]
+    pub const fn indonesian(self) -> &'static str {
+        match self {
+            Self::Copy => "SALINAN",
+            Self::Void => "BATAL",
+            Self::TaxId => "NPWP",
+            Self::Register => "Kasir",
+            Self::Cashier => "Petugas",
+            Self::Discount => "Diskon",
+            Self::Subtotal => "Subtotal",
+            Self::TaxBase => "DPP",
+            Self::Tax => "PPN",
+            Self::TaxIncluded => "termasuk PPN",
+            Self::Rounding => "Pembulatan",
+            Self::Total => "TOTAL",
+            Self::Change => "Kembali",
+            Self::Reference => "Ref",
+            Self::SavedToBalance => "Disimpan ke saldo",
+            Self::Balance => "Saldo",
+            Self::Exchange => "Tukar barang",
+        }
+    }
+
+    /// The text in `language` (`id` → Indonesian, anything else English).
+    #[must_use]
+    pub fn text(self, language: &str) -> &'static str {
+        if language.starts_with("id") {
+            self.indonesian()
+        } else {
+            self.english()
+        }
+    }
 }
 
 /// The branch block at the top.
@@ -941,6 +975,10 @@ mod tests {
             Exchange,
         ] {
             assert!(!l.english().is_empty());
+            assert!(!l.indonesian().is_empty());
+            assert_eq!(l.text("en"), l.english());
+            assert_eq!(l.text("id"), l.indonesian());
         }
+        assert_eq!(Label::Change.text("id-ID"), "Kembali");
     }
 }

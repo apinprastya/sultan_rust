@@ -9,6 +9,7 @@
 
 import { Theme, Strings } from "theme.slint";
 import { Note, Chip, Card, KeyChip, NoteLine, Avatar, PinDots, Keypad } from "widgets.slint";
+import { ListView } from "std-widgets.slint";
 
 export { Note, Chip, Theme, Strings }
 // The first-run setup wizard, a window of its own.
@@ -120,6 +121,78 @@ export struct ScanView {
     cust-name: string,
     cust-diff: string,
     cust-note: Note,
+}
+
+// A cart line (spec 2.6 §2 line view; `crates/ui/src/app.rs` `cart_rows`).
+export struct CartRow {
+    name: string,
+    variant: string,
+    qty: string,
+    unit: string,
+    price: string,
+    // The listed price an override replaced, shown struck through; "" = none.
+    was: string,
+    // The unit price is struck through (an override or a discount applies).
+    struck: bool,
+    discount: string,
+    amount: string,
+    // `override`, `open`, `label`, `no_price` or "".
+    flag: string,
+    selected: bool,
+    last: bool,
+}
+
+// A row of a sell dialog's list, the payment panel or the help: a label and a detail.
+export struct SellRow {
+    label: string,
+    detail: string,
+}
+
+// The sell screen (spec 2.6 S4; `crates/ui/src/till.rs`).
+export struct SellView {
+    lines-focus: bool,
+    check: bool,
+    pricing: bool,
+    empty: bool,
+    subtotal: string,
+    discount: string,
+    // Tax when prices exclude tax; "" otherwise.
+    tax: string,
+    total: string,
+    items: string,
+    tax-invoice: bool,
+    // Dialog: "", entry, reason, units, search, help.
+    modal: string,
+    // What the entry asks: qty, price, open_price, line_discount, cart_discount; or the list's
+    // title code.
+    modal-title: string,
+    modal-name: string,
+    modal-value: string,
+    modal-hint: string,
+    modal-pct: bool,
+    modal-cursor: int,
+    modal-text: string,
+    // Payment panel: step cash, pick, amount, reference, ready, save.
+    pay-open: bool,
+    pay-step: string,
+    pay-total: string,
+    pay-rest: string,
+    pay-due: string,
+    pay-input: string,
+    pay-tender: string,
+    pay-change: string,
+    pay-saved: string,
+    pay-rounding: string,
+    pay-balance: string,
+    pay-text: string,
+    pay-cursor: int,
+    pay-note: Note,
+    // After posting.
+    done: bool,
+    done-number: string,
+    done-change: string,
+    done-total: string,
+    done-drawer: bool,
 }
 
 export struct DenomRow {
@@ -467,6 +540,7 @@ component Stat inherits Rectangle {
 // FocusScope, so the field never takes the focus away from the shortcuts).
 component ScanBox inherits Rectangle {
     in property <ScanView> view;
+    in property <bool> check;
     callback action(string);
     accessible-role: text-input;
     accessible-label: @tr("Barcode, SKU or PLU");
@@ -485,7 +559,7 @@ component ScanBox inherits Rectangle {
             alignment: center;
             spacing: 2px;
             Text {
-                text: @tr("BARCODE · SKU · PLU");
+                text: root.check ? @tr("PRICE CHECK · BARCODE · SKU · PLU") : @tr("BARCODE · SKU · PLU · 3* SETS THE QTY");
                 color: Theme.muted;
                 font-size: 11px;
                 font-weight: 700;
@@ -530,7 +604,7 @@ component ScanBox inherits Rectangle {
             alignment: center;
             KeyChip {
                 keys: "Enter";
-                label: Strings.chip("look_up");
+                label: Strings.chip(root.check ? "look_up" : "add_item");
                 clicked => {
                     root.action("confirm");
                 }
@@ -664,13 +738,13 @@ component ItemPanel inherits Card {
         alignment: center;
         spacing: 8px;
         Text {
-            text: root.view.looking != "" ? @tr("Looking up {}…", root.view.looking) : @tr("Scan an item to see it here.");
+            text: root.view.looking != "" ? @tr("Looking up {}…", root.view.looking) : @tr("Price check: scan an item to see its price.");
             color: Theme.text;
             font-size: 18px;
             horizontal-alignment: center;
         }
         Subtitle {
-            text: @tr("Selling arrives in a later version.") + " " + @tr("Your session stays open while the register is locked.");
+            text: @tr("F7 again goes back to selling.");
             horizontal-alignment: center;
         }
     }
@@ -831,39 +905,274 @@ component CustomerStrip inherits Rectangle {
     }
 }
 
+// One cart line (spec 2.6 §2): name and variant, qty and unit, unit price (struck through when
+// an override or a discount applies), discount, amount. A click selects it.
+component CartLine inherits Rectangle {
+    in property <CartRow> line;
+    callback clicked;
+    accessible-role: list-item;
+    accessible-label: root.line.name;
+    accessible-value: root.line.qty + " " + root.line.unit + " · " + root.line.amount;
+    accessible-action-default => { root.clicked(); }
+    height: 48px;
+    border-radius: 8px;
+    background: root.line.selected ? Theme.accent-soft : root.line.last ? Theme.raised : transparent;
+    border-width: root.line.selected ? 2px : 0px;
+    border-color: Theme.accent;
+    TouchArea {
+        clicked => {
+            root.clicked();
+        }
+    }
+    HorizontalLayout {
+        padding-left: 10px;
+        padding-right: 10px;
+        spacing: 10px;
+        VerticalLayout {
+            horizontal-stretch: 1;
+            alignment: center;
+            Text {
+                text: root.line.name;
+                color: Theme.text;
+                font-size: 16px;
+                font-weight: 600;
+                overflow: elide;
+            }
+            if root.line.variant != "" || root.line.flag != "": Text {
+                text: root.line.variant + (root.line.flag != "" ? (root.line.variant != "" ? " · " : "") + Strings.line-flag(root.line.flag) : "");
+                color: root.line.flag == "no_price" ? Theme.danger : Theme.muted;
+                font-size: 12px;
+                overflow: elide;
+            }
+        }
+        Text {
+            width: 90px;
+            text: root.line.qty + " " + root.line.unit;
+            color: Theme.text;
+            font-size: 16px;
+            horizontal-alignment: right;
+            vertical-alignment: center;
+        }
+        VerticalLayout {
+            width: 105px;
+            alignment: center;
+            Text {
+                text: root.line.price;
+                color: root.line.struck ? Theme.muted : Theme.text;
+                font-size: 15px;
+                horizontal-alignment: right;
+                Rectangle {
+                    visible: root.line.struck;
+                    y: parent.height / 2;
+                    height: 1px;
+                    background: Theme.muted;
+                }
+            }
+            if root.line.was != "": Text {
+                text: @tr("was {}", root.line.was);
+                color: Theme.muted;
+                font-size: 11px;
+                horizontal-alignment: right;
+            }
+        }
+        Text {
+            width: 85px;
+            text: root.line.discount;
+            color: Theme.success;
+            font-size: 15px;
+            horizontal-alignment: right;
+            vertical-alignment: center;
+        }
+        Text {
+            width: 115px;
+            text: root.line.amount;
+            color: Theme.text;
+            font-size: 17px;
+            font-weight: 700;
+            horizontal-alignment: right;
+            vertical-alignment: center;
+        }
+    }
+}
+
+// The cart lines; Ctrl+↑ gives them the keyboard.
+component CartTable inherits Card {
+    in property <[CartRow]> rows;
+    in property <SellView> view;
+    callback pick(int);
+    accessible-role: groupbox;
+    accessible-label: @tr("Cart");
+    border-color: root.view.lines-focus ? Theme.accent : Theme.border;
+    border-width: root.view.lines-focus ? 2px : 1px;
+    VerticalLayout {
+        padding: 10px;
+        spacing: 4px;
+        HorizontalLayout {
+            padding-left: 10px;
+            padding-right: 10px;
+            spacing: 10px;
+            Text {
+                horizontal-stretch: 1;
+                text: @tr("ITEM");
+                color: Theme.muted;
+                font-size: 11px;
+                font-weight: 700;
+            }
+            Text {
+                width: 90px;
+                text: @tr("QTY");
+                color: Theme.muted;
+                font-size: 11px;
+                font-weight: 700;
+                horizontal-alignment: right;
+            }
+            Text {
+                width: 105px;
+                text: @tr("PRICE");
+                color: Theme.muted;
+                font-size: 11px;
+                font-weight: 700;
+                horizontal-alignment: right;
+            }
+            Text {
+                width: 85px;
+                text: @tr("DISCOUNT");
+                color: Theme.muted;
+                font-size: 11px;
+                font-weight: 700;
+                horizontal-alignment: right;
+            }
+            Text {
+                width: 115px;
+                text: @tr("AMOUNT");
+                color: Theme.muted;
+                font-size: 11px;
+                font-weight: 700;
+                horizontal-alignment: right;
+            }
+        }
+        if root.view.empty: VerticalLayout {
+            vertical-stretch: 1;
+            alignment: center;
+            Text {
+                text: root.view.check ? @tr("Price check: scan an item to see its price.") : @tr("Scan an item to start a sale.");
+                color: Theme.muted;
+                font-size: 18px;
+                horizontal-alignment: center;
+            }
+        }
+        if !root.view.empty: ListView {
+            vertical-stretch: 1;
+            for row[i] in root.rows: CartLine {
+                line: row;
+                clicked => {
+                    root.pick(i);
+                }
+            }
+        }
+    }
+}
+
+component TotalLine inherits HorizontalLayout {
+    in property <string> label;
+    in property <string> value;
+    in property <bool> strong;
+    spacing: 8px;
+    Text {
+        horizontal-stretch: 1;
+        text: root.label;
+        color: root.strong ? Theme.text : Theme.muted;
+        font-size: root.strong ? 18px : 14px;
+        font-weight: root.strong ? 700 : 400;
+        vertical-alignment: center;
+    }
+    Text {
+        text: root.value;
+        color: Theme.text;
+        font-size: root.strong ? 30px : 15px;
+        font-weight: root.strong ? 800 : 600;
+        horizontal-alignment: right;
+        vertical-alignment: center;
+    }
+}
+
+// Subtotal, discounts, tax (tax-exclusive only), total and item count (spec 2.6 §2).
+component TotalsPanel inherits Card {
+    in property <SellView> view;
+    accessible-role: groupbox;
+    accessible-label: @tr("Totals");
+    accessible-value: root.view.total;
+    VerticalLayout {
+        padding: 14px;
+        spacing: 6px;
+        TotalLine {
+            label: @tr("Subtotal");
+            value: root.view.subtotal;
+        }
+        TotalLine {
+            label: @tr("Discounts");
+            value: root.view.discount;
+        }
+        if root.view.tax != "": TotalLine {
+            label: @tr("Tax");
+            value: root.view.tax;
+        }
+        Rectangle {
+            height: 1px;
+            background: Theme.border;
+        }
+        TotalLine {
+            label: @tr("Total");
+            value: root.view.total;
+            strong: true;
+        }
+        HorizontalLayout {
+            Text {
+                horizontal-stretch: 1;
+                text: @tr("{} items", root.view.items);
+                color: Theme.muted;
+                font-size: 13px;
+            }
+            Text {
+                text: root.view.pricing ? @tr("Pricing…") : root.view.tax-invoice ? @tr("Tax invoice") : "";
+                color: root.view.pricing ? Theme.warn : Theme.accent;
+                font-size: 13px;
+                font-weight: 600;
+            }
+        }
+    }
+}
+
 component HomePage inherits Rectangle {
     in property <string> user;
     in property <HomeView> view;
     in property <ScanView> scan;
+    in property <SellView> sell;
+    in property <[CartRow]> rows;
     in property <[Chip]> chips;
+    in property <[Chip]> chips-b;
     callback action(string);
+    callback pick(string, int);
     HorizontalLayout {
-        padding: 28px;
-        spacing: 24px;
+        padding: 16px;
+        spacing: 16px;
         VerticalLayout {
             horizontal-stretch: 1;
-            spacing: 14px;
+            spacing: 10px;
             HorizontalLayout {
-                spacing: 16px;
+                spacing: 12px;
                 VerticalLayout {
                     horizontal-stretch: 1;
                     alignment: center;
-                    spacing: 4px;
                     Title {
                         text: @tr("Hello, {}", root.user);
+                        font-size: 22px;
                         overflow: elide;
                     }
                     if root.view.number != "": Subtitle {
-                        text: @tr("Session {}", root.view.number);
+                        text: @tr("Session {}", root.view.number) + " · " + @tr("open since {}", root.view.since) + " · " + @tr("opening cash {}", root.view.opening);
+                        overflow: elide;
                     }
-                }
-                Stat {
-                    label: @tr("Session open since");
-                    value: root.view.since;
-                }
-                Stat {
-                    label: @tr("Opening cash");
-                    value: root.view.opening;
                 }
             }
             CustomerStrip {
@@ -874,13 +1183,22 @@ component HomePage inherits Rectangle {
             }
             ScanBox {
                 view: root.scan;
+                check: root.sell.check;
                 action(a) => {
                     root.action(a);
                 }
             }
-            ItemPanel {
+            if root.sell.check: ItemPanel {
                 vertical-stretch: 1;
                 view: root.scan;
+            }
+            if !root.sell.check: CartTable {
+                vertical-stretch: 1;
+                rows: root.rows;
+                view: root.sell;
+                pick(i) => {
+                    root.pick("line", i);
+                }
             }
             NoteLine {
                 note: root.view.note;
@@ -888,24 +1206,399 @@ component HomePage inherits Rectangle {
             }
         }
         VerticalLayout {
-            width: 260px;
-            spacing: 12px;
+            width: 360px;
+            spacing: 10px;
+            TotalsPanel {
+                view: root.sell;
+            }
             Text {
                 text: @tr("ACTIONS");
                 color: Theme.muted;
                 font-size: 12px;
                 font-weight: 700;
             }
-            for c in root.chips: KeyChip {
-                keys: c.keys;
-                label: Strings.chip(c.label);
-                large: true;
-                clicked => {
-                    root.action(c.id);
+            HorizontalLayout {
+                spacing: 6px;
+                VerticalLayout {
+                    width: 177px;
+                    spacing: 6px;
+                    for c in root.chips: KeyChip {
+                        keys: c.keys;
+                        label: Strings.chip(c.label);
+                        clicked => {
+                            root.action(c.id);
+                        }
+                    }
+                }
+                VerticalLayout {
+                    width: 177px;
+                    spacing: 6px;
+                    for c in root.chips-b: KeyChip {
+                        keys: c.keys;
+                        label: Strings.chip(c.label);
+                        clicked => {
+                            root.action(c.id);
+                        }
+                    }
                 }
             }
             Rectangle {
                 vertical-stretch: 1;
+            }
+        }
+    }
+}
+
+// A dialog of the sell screen: a typed value (qty, price, discount), the void reason, the unit,
+// the product search or the key list (`crates/ui/src/till.rs` `Modal`).
+component SellDialog inherits Rectangle {
+    in property <SellView> view;
+    in property <[SellRow]> rows;
+    in property <[Chip]> chips;
+    callback pick(int);
+    callback action(string);
+    background: #000000a0;
+    TouchArea { }
+    Card {
+        width: 620px;
+        height: root.view.modal == "entry" ? 300px : 560px;
+        accessible-role: groupbox;
+        accessible-label: Strings.sell-title(root.view.modal-title);
+        VerticalLayout {
+            padding: 24px;
+            spacing: 12px;
+            Title {
+                text: Strings.sell-title(root.view.modal-title);
+            }
+            if root.view.modal-name != "": Subtitle {
+                text: root.view.modal-name;
+                overflow: elide;
+            }
+            if root.view.modal == "entry" || root.view.modal == "search" || (root.view.modal == "reason" && root.view.modal-cursor == 3): Rectangle {
+                height: 60px;
+                border-radius: 10px;
+                border-width: 2px;
+                border-color: Theme.accent;
+                background: Theme.raised;
+                accessible-role: text-input;
+                accessible-label: Strings.sell-title(root.view.modal-title);
+                accessible-value: root.view.modal == "reason" ? root.view.modal-text : root.view.modal-value;
+                HorizontalLayout {
+                    padding-left: 14px;
+                    padding-right: 14px;
+                    spacing: 8px;
+                    Text {
+                        horizontal-stretch: 1;
+                        text: root.view.modal == "reason" ? (root.view.modal-text != "" ? root.view.modal-text : @tr("Type the reason")) : root.view.modal-value;
+                        color: Theme.text;
+                        font-size: 24px;
+                        font-weight: 600;
+                        vertical-alignment: center;
+                    }
+                    if root.view.modal == "entry" && (root.view.modal-title == "line_discount" || root.view.modal-title == "cart_discount"): Text {
+                        text: root.view.modal-pct ? "%" : "Rp";
+                        color: Theme.accent;
+                        font-size: 22px;
+                        font-weight: 700;
+                        vertical-alignment: center;
+                    }
+                }
+            }
+            if root.view.modal-hint != "": Text {
+                text: root.view.modal-hint;
+                color: Theme.muted;
+                font-size: 13px;
+                wrap: word-wrap;
+            }
+            if root.view.modal != "entry": ListView {
+                vertical-stretch: 1;
+                for r[i] in root.rows: Rectangle {
+                    height: 40px;
+                    border-radius: 8px;
+                    background: i == root.view.modal-cursor && root.view.modal != "help" ? Theme.accent-soft : transparent;
+                    accessible-role: list-item;
+                    accessible-label: root.view.modal == "reason" ? Strings.void-reason(r.label) : r.label;
+                    accessible-action-default => { root.pick(i); }
+                    TouchArea {
+                        clicked => {
+                            root.pick(i);
+                        }
+                    }
+                    HorizontalLayout {
+                        padding-left: 12px;
+                        padding-right: 12px;
+                        spacing: 12px;
+                        Text {
+                            width: root.view.modal == "help" ? 130px : 360px;
+                            text: root.view.modal == "reason" ? Strings.void-reason(r.label) : r.label;
+                            color: root.view.modal == "help" ? Theme.accent : Theme.text;
+                            font-size: 15px;
+                            font-weight: 600;
+                            vertical-alignment: center;
+                            overflow: elide;
+                        }
+                        Text {
+                            horizontal-stretch: 1;
+                            text: root.view.modal == "help" ? Strings.chip(r.detail) : r.detail;
+                            color: root.view.modal == "help" ? Theme.text : Theme.muted;
+                            font-size: 14px;
+                            vertical-alignment: center;
+                            overflow: elide;
+                        }
+                    }
+                }
+            }
+            if root.view.modal == "entry": Rectangle {
+                vertical-stretch: 1;
+            }
+            HorizontalLayout {
+                spacing: 10px;
+                alignment: end;
+                for c in root.chips: KeyChip {
+                    keys: c.keys;
+                    label: Strings.chip(c.label);
+                    clicked => {
+                        root.action(c.id);
+                    }
+                }
+            }
+        }
+    }
+}
+
+component PayLine inherits HorizontalLayout {
+    in property <string> label;
+    in property <string> value;
+    in property <bool> big;
+    in property <color> tint: Theme.text;
+    spacing: 8px;
+    Text {
+        horizontal-stretch: 1;
+        text: root.label;
+        color: Theme.muted;
+        font-size: root.big ? 18px : 15px;
+        vertical-alignment: center;
+    }
+    Text {
+        text: root.value;
+        color: root.tint;
+        font-size: root.big ? 34px : 18px;
+        font-weight: root.big ? 800 : 600;
+        horizontal-alignment: right;
+        vertical-alignment: center;
+    }
+}
+
+// The payment panel (spec 2.6 §5): split tenders, the rest, cash with change and rounding,
+// references, the customer balance and saved change (F8).
+component PayPanel inherits Rectangle {
+    in property <SellView> view;
+    in property <[SellRow]> paid;
+    in property <[SellRow]> tenders;
+    in property <[Chip]> chips;
+    callback pick(int);
+    callback action(string);
+    background: #000000a0;
+    TouchArea { }
+    Card {
+        width: 720px;
+        height: 600px;
+        accessible-role: groupbox;
+        accessible-label: @tr("Payment");
+        VerticalLayout {
+            padding: 24px;
+            spacing: 10px;
+            Title {
+                text: @tr("Payment");
+            }
+            PayLine {
+                label: @tr("Total");
+                value: root.view.pay-total;
+            }
+            for t in root.paid: PayLine {
+                label: t.label;
+                value: t.detail;
+            }
+            if root.view.pay-rounding != "": PayLine {
+                label: @tr("Cash rounding");
+                value: root.view.pay-rounding;
+            }
+            PayLine {
+                big: true;
+                label: root.view.pay-step == "ready" || root.view.pay-step == "save" ? @tr("Change") : @tr("Rest to pay");
+                value: root.view.pay-step == "ready" || root.view.pay-step == "save" ? root.view.pay-change : root.view.pay-rest;
+                tint: root.view.pay-step == "ready" || root.view.pay-step == "save" ? Theme.success : Theme.text;
+            }
+            if root.view.pay-saved != "": PayLine {
+                label: @tr("Saved to the balance");
+                value: root.view.pay-saved;
+                tint: Theme.success;
+            }
+            if root.view.pay-balance != "": PayLine {
+                label: @tr("Customer balance");
+                value: root.view.pay-balance;
+            }
+            Rectangle {
+                height: 1px;
+                background: Theme.border;
+            }
+            if root.view.pay-step == "pick": ListView {
+                vertical-stretch: 1;
+                accessible-role: groupbox;
+                accessible-label: @tr("Other tenders");
+                for t[i] in root.tenders: Rectangle {
+                    height: 40px;
+                    border-radius: 8px;
+                    background: i == root.view.pay-cursor ? Theme.accent-soft : transparent;
+                    accessible-role: list-item;
+                    accessible-label: t.label;
+                    accessible-action-default => { root.pick(i); }
+                    TouchArea {
+                        clicked => {
+                            root.pick(i);
+                        }
+                    }
+                    HorizontalLayout {
+                        padding-left: 12px;
+                        spacing: 12px;
+                        Text {
+                            horizontal-stretch: 1;
+                            text: t.label;
+                            color: Theme.text;
+                            font-size: 16px;
+                            font-weight: 600;
+                            vertical-alignment: center;
+                        }
+                        Text {
+                            text: t.detail;
+                            color: Theme.muted;
+                            font-size: 13px;
+                            vertical-alignment: center;
+                        }
+                    }
+                }
+            }
+            if root.view.pay-step != "pick" && root.view.pay-step != "ready": VerticalLayout {
+                spacing: 4px;
+                Text {
+                    text: root.view.pay-step == "cash" ? @tr("Cash received (Enter alone: exactly {})", root.view.pay-due) : root.view.pay-step == "amount" ? @tr("{}: amount (Enter alone: {})", root.view.pay-tender, root.view.pay-due) : root.view.pay-step == "reference" ? @tr("{}: reference (approval code, last 4 digits)", root.view.pay-tender) : @tr("Change to save to the balance (0 gives it all back)");
+                    color: Theme.muted;
+                    font-size: 14px;
+                }
+                Rectangle {
+                    height: 60px;
+                    border-radius: 10px;
+                    border-width: 2px;
+                    border-color: Theme.accent;
+                    background: Theme.raised;
+                    accessible-role: text-input;
+                    accessible-label: @tr("Payment entry");
+                    accessible-value: root.view.pay-step == "reference" ? root.view.pay-text : root.view.pay-input;
+                    Text {
+                        x: 14px;
+                        text: root.view.pay-step == "reference" ? root.view.pay-text : root.view.pay-input;
+                        color: Theme.text;
+                        font-size: 26px;
+                        font-weight: 700;
+                        vertical-alignment: center;
+                    }
+                }
+            }
+            if root.view.pay-step == "ready": Text {
+                text: @tr("Paid. Enter confirms the sale.");
+                color: Theme.success;
+                font-size: 16px;
+                font-weight: 600;
+            }
+            if root.view.pay-step != "pick": Rectangle {
+                vertical-stretch: 1;
+            }
+            NoteLine {
+                note: root.view.pay-note;
+            }
+            HorizontalLayout {
+                spacing: 10px;
+                alignment: end;
+                for c in root.chips: KeyChip {
+                    keys: c.keys;
+                    label: Strings.chip(c.label);
+                    clicked => {
+                        root.action(c.id);
+                    }
+                }
+            }
+        }
+    }
+}
+
+// After posting (spec 2.6 §5): the change due in large digits and the receipt preview.
+component DonePanel inherits Rectangle {
+    in property <SellView> view;
+    in property <[string]> receipt;
+    callback action(string);
+    background: #000000a0;
+    TouchArea { }
+    Card {
+        width: 900px;
+        height: 600px;
+        accessible-role: groupbox;
+        accessible-label: @tr("Sale posted");
+        HorizontalLayout {
+            padding: 24px;
+            spacing: 24px;
+            VerticalLayout {
+                horizontal-stretch: 1;
+                spacing: 12px;
+                Title {
+                    text: @tr("Sale {} posted", root.view.done-number);
+                }
+                Text {
+                    text: @tr("CHANGE DUE");
+                    color: Theme.muted;
+                    font-size: 14px;
+                    font-weight: 700;
+                }
+                Text {
+                    text: root.view.done-change;
+                    accessible-role: text;
+                    accessible-label: @tr("Change due");
+                    color: Theme.success;
+                    font-size: 72px;
+                    font-weight: 800;
+                }
+                Subtitle {
+                    text: @tr("Total paid {}", root.view.done-total);
+                }
+                if root.view.done-drawer: Subtitle {
+                    text: @tr("The drawer opens.");
+                }
+                Rectangle {
+                    vertical-stretch: 1;
+                }
+                KeyChip {
+                    keys: "Enter";
+                    label: Strings.chip("new_sale");
+                    large: true;
+                    clicked => {
+                        root.action("confirm");
+                    }
+                }
+            }
+            Rectangle {
+                width: 380px;
+                background: #fbfaf6;
+                border-radius: 6px;
+                accessible-role: text;
+                accessible-label: @tr("Receipt");
+                ListView {
+                    for l in root.receipt: Text {
+                        x: 12px;
+                        text: l;
+                        color: #222222;
+                        font-family: "monospace";
+                        font-size: 13px;
+                    }
+                }
             }
         }
     }
@@ -1690,13 +2383,22 @@ export component MainWindow inherits Window {
     in property <OverrideView> approval;
     in property <CustomerView> customer;
     in property <[CustomerRow]> customers;
+    // The sell screen (spec 2.6 S4).
+    in property <SellView> sell;
+    in property <[CartRow]> cart-rows;
+    in property <[Chip]> actions-b;
+    in property <[SellRow]> sell-rows;
+    in property <[SellRow]> pay-rows;
+    in property <[SellRow]> tender-rows;
+    in property <[string]> receipt-lines;
     out property <bool> has-focus: keys.has-focus;
 
     // A key (Slint key text and modifiers); true = handled.
     callback key(string, bool, bool) -> bool;
     // A chip or button (`crates/ui/src/controller.rs` `Action` IDs).
     callback action(string);
-    // A click on a list item: kind (`user`, `approver`, `row`, `customer`, `field`) and index.
+    // A click on a list item: kind (`user`, `approver`, `row`, `customer`, `field`, `line`,
+    // `item`, `tender`) and index.
     callback pick(string, int);
     // Results of background calls are waiting (posted from other threads).
     callback pump();
@@ -1755,9 +2457,15 @@ export component MainWindow inherits Window {
                     user: root.user-name;
                     view: root.home;
                     scan: root.scan;
+                    sell: root.sell;
+                    rows: root.cart-rows;
                     chips: root.actions;
+                    chips-b: root.actions-b;
                     action(a) => {
                         root.action(a);
+                    }
+                    pick(kind, i) => {
+                        root.pick(kind, i);
                     }
                 }
                 if root.screen == "close": ClosePage {
@@ -1789,8 +2497,9 @@ export component MainWindow inherits Window {
                     height: 1px;
                     background: Theme.border;
                 }
-                // The home page shows its actions as large buttons; the dialog has its own.
-                if !root.approval.open && root.screen != "home": HorizontalLayout {
+                // The home page shows its actions as buttons (the bar has the field's or the
+                // lines' keys); the dialogs have their own.
+                if !root.approval.open && !root.customer.open && root.sell.modal == "" && !root.sell.pay-open && !root.sell.done: HorizontalLayout {
                     padding-left: 20px;
                     padding-right: 20px;
                     padding-top: 10px;
@@ -1805,6 +2514,45 @@ export component MainWindow inherits Window {
                         }
                     }
                 }
+            }
+        }
+
+        if root.screen == "home" && root.sell.modal != "": SellDialog {
+            width: 100%;
+            height: 100%;
+            view: root.sell;
+            rows: root.sell-rows;
+            chips: root.chips;
+            pick(i) => {
+                root.pick("item", i);
+            }
+            action(a) => {
+                root.action(a);
+            }
+        }
+
+        if root.screen == "home" && root.sell.pay-open: PayPanel {
+            width: 100%;
+            height: 100%;
+            view: root.sell;
+            paid: root.pay-rows;
+            tenders: root.tender-rows;
+            chips: root.chips;
+            pick(i) => {
+                root.pick("tender", i);
+            }
+            action(a) => {
+                root.action(a);
+            }
+        }
+
+        if root.screen == "home" && root.sell.done: DonePanel {
+            width: 100%;
+            height: 100%;
+            view: root.sell;
+            receipt: root.receipt-lines;
+            action(a) => {
+                root.action(a);
             }
         }
 

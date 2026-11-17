@@ -692,6 +692,14 @@ impl Service for FakeService {
         ready(s.lookup(token, code))
     }
 
+    fn product_search(&self, token: &str, q: &str) -> crate::BoxFuture<crate::SearchPage> {
+        let (s, failure) = self.begin("product_search", q.to_owned());
+        if let Some(e) = failure {
+            return ready(Err(e));
+        }
+        ready(s.search(token, q, 20, None))
+    }
+
     fn permissions(&self, token: &str) -> crate::BoxFuture<Vec<String>> {
         self.permissions_call(token)
     }
@@ -780,9 +788,10 @@ impl Service for FakeService {
         token: &str,
         id: &str,
         copy: bool,
+        lang: &str,
         override_token: Option<&str>,
     ) -> crate::BoxFuture<crate::Receipt> {
-        self.receipt_call(token, id, copy, override_token)
+        self.receipt_call(token, id, copy, lang, override_token)
     }
 
     fn void_sale(

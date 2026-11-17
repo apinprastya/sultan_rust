@@ -204,29 +204,21 @@ fn register_window_against_sultan_serve() {
     assert_eq!(ui.get_screen(), "home");
     assert_eq!(ui.get_home().opening, "Rp 200.000");
 
-    // A 15% discount needs Budi's approval; the action is retried with the token.
-    press(&app, Key::F2);
-    assert!(ui.get_approval().open);
-    assert_eq!(ui.get_approval().limit, "10%");
-    let budi = ui
-        .get_managers()
-        .iter()
-        .position(|m| m.name == "Budi")
-        .unwrap();
-    for _ in 0..budi {
-        press(&app, Key::DownArrow);
-    }
-    type_digits(&app, "2222");
-    press(&app, Key::Return);
-    assert!(!ui.get_approval().open);
-    let note = ui.get_home().note;
-    assert_eq!(
-        (note.code.as_str(), note.arg.as_str()),
-        ("override_ok", "Budi")
-    );
+    // The sell screen against the real server: the tender types are loaded, F1 lists the keys.
+    assert!(ui.get_sell().empty);
+    press(&app, Key::F1);
+    assert_eq!(ui.get_sell().modal, "help");
+    press(&app, Key::Escape);
+    assert_eq!(ui.get_sell().modal, "");
 
-    // Blind close with the exact amount: balanced.
+    // Blind close (Ctrl+F10, an empty cart) with the exact amount: balanced.
+    app.ui.window().dispatch_event(WindowEvent::KeyPressed {
+        text: Key::Control.into(),
+    });
     press(&app, Key::F10);
+    app.ui.window().dispatch_event(WindowEvent::KeyReleased {
+        text: Key::Control.into(),
+    });
     type_digits(&app, "200000");
     press(&app, Key::Return);
     press(&app, Key::Return);

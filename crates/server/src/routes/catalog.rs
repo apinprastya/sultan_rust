@@ -271,6 +271,22 @@ pub struct LookupDto {
     /// without a customer (spec 2.3 §10), in minor units; `null` when no list prices it. The
     /// branch is the assortment's, else the session's.
     pub unit_price: Option<i64>,
+    /// The product's active sellable units, in position order: the register's unit change
+    /// (spec 2.6 §2) offers these.
+    pub units: Vec<LookupUnitDto>,
+}
+
+/// A unit the item can be sold in.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
+pub struct LookupUnitDto {
+    /// The unit.
+    pub id: String,
+    /// Its name.
+    pub name: String,
+    /// `integer` or `decimal`.
+    pub kind: String,
+    /// Base units per unit, thousandths.
+    pub factor_thousandths: i64,
 }
 
 const fn source_str(source: MatchSource) -> &'static str {
@@ -303,6 +319,7 @@ fn lookup_dto(item: &LookupItem, branch: Option<BranchId>) -> LookupDto {
         amount: item.amount.map(sultan_core::money::Money::minor),
         branch_id: branch.map(|b| b.to_string()),
         unit_price: None,
+        units: Vec::new(),
     }
 }
 
@@ -375,6 +392,16 @@ pub async fn lookup(
     )
     .await?;
     dto.unit_price = price.unit_price.map(sultan_core::money::Money::minor);
+    dto.units = price
+        .units
+        .iter()
+        .map(|u| LookupUnitDto {
+            id: u.id.to_string(),
+            name: u.name.clone(),
+            kind: unit_kind_str(u.kind).to_owned(),
+            factor_thousandths: u.factor.thousandths(),
+        })
+        .collect();
     if let Some(qty) = price.label_qty {
         dto.qty_thousandths = Some(qty.thousandths());
     }

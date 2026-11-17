@@ -34,6 +34,20 @@ pub enum Key {
     BackTab,
     /// F1–F12.
     F(u8),
+    /// Shift+F1–F12 (Shift+F3: customer name search).
+    ShiftF(u8),
+    /// Ctrl+F1–F12 (Ctrl+F3: detach the customer, Ctrl+F10: close the session).
+    CtrlF(u8),
+    /// Delete.
+    Delete,
+    /// Ctrl+↑: to the cart lines.
+    CtrlUp,
+    /// Ctrl+↓: back to the barcode field.
+    CtrlDown,
+    /// Ctrl+Delete: void the cart.
+    CtrlDelete,
+    /// Ctrl+letter (lower case): Ctrl+D cart discount, Ctrl+N void cart, Ctrl+T tax invoice.
+    Ctrl(char),
     /// Another printable character (letters, `-`, `.`, space, `é`, …): what a barcode scanner
     /// or a typed SKU sends besides digits, and the text of the customer dialog's fields (spec
     /// 2.5 M5). The barcode field keeps only printable ASCII without space.
@@ -52,7 +66,16 @@ const UP: char = '\u{F700}';
 const DOWN: char = '\u{F701}';
 const LEFT: char = '\u{F702}';
 const RIGHT: char = '\u{F703}';
+const DELETE: char = '\u{7f}';
 const F1: u32 = 0xF704;
+
+/// The F-key number of a Slint key text, if it is one.
+fn f_key(c: char) -> Option<u8> {
+    let code = u32::from(c);
+    (F1..F1 + 12)
+        .contains(&code)
+        .then(|| u8::try_from(code - F1 + 1).unwrap_or(0))
+}
 
 impl Key {
     /// The key for a Slint key event text. Keys with Ctrl are never digits or editing keys, so a
@@ -64,9 +87,25 @@ impl Key {
             return Self::Other;
         };
         if control {
-            return Self::Other;
+            // Keys with Ctrl are never digits or editing keys, only shortcuts.
+            return match c {
+                UP => Self::CtrlUp,
+                DOWN => Self::CtrlDown,
+                DELETE => Self::CtrlDelete,
+                c if f_key(c).is_some() => Self::CtrlF(f_key(c).unwrap_or(0)),
+                // Some platforms send the control character (Ctrl+D = U+0004).
+                '\u{1}'..='\u{1a}' => Self::Ctrl(char::from(
+                    b'a' - 1 + u8::try_from(u32::from(c)).unwrap_or(0),
+                )),
+                c if c.is_ascii_alphabetic() => Self::Ctrl(c.to_ascii_lowercase()),
+                _ => Self::Other,
+            };
+        }
+        if shift && let Some(n) = f_key(c) {
+            return Self::ShiftF(n);
         }
         match c {
+            DELETE => Self::Delete,
             '0'..='9' => Self::Digit(u8::try_from(u32::from(c) - u32::from('0')).unwrap_or(0)),
             BACKSPACE => Self::Backspace,
             RETURN | '\r' => Self::Enter,
@@ -103,6 +142,13 @@ impl Key {
             Self::Tab => "Tab".to_owned(),
             Self::BackTab => "Shift+Tab".to_owned(),
             Self::F(n) => format!("F{n}"),
+            Self::ShiftF(n) => format!("Shift+F{n}"),
+            Self::CtrlF(n) => format!("Ctrl+F{n}"),
+            Self::Delete => "Del".to_owned(),
+            Self::CtrlUp => "Ctrl+↑".to_owned(),
+            Self::CtrlDown => "Ctrl+↓".to_owned(),
+            Self::CtrlDelete => "Ctrl+Del".to_owned(),
+            Self::Ctrl(c) => format!("Ctrl+{}", c.to_ascii_uppercase()),
             Self::Char(c) => c.to_string(),
             Self::Other => String::new(),
         }
@@ -224,11 +270,19 @@ mod tests {
             ("a", false, false, Key::Char('a')),
             ("A", false, true, Key::Char('A')),
             ("-", false, false, Key::Char('-')),
-            ("a", true, false, Key::Other),
+            ("a", true, false, Key::Ctrl('a')),
+            ("D", true, true, Key::Ctrl('d')),
+            ("\u{4}", true, false, Key::Ctrl('d')),
+            ("\u{F700}", true, false, Key::CtrlUp),
+            ("\u{F701}", true, false, Key::CtrlDown),
+            ("\u{7f}", true, false, Key::CtrlDelete),
+            ("\u{F70D}", true, false, Key::CtrlF(10)),
+            ("\u{F706}", false, true, Key::ShiftF(3)),
+            ("-", true, false, Key::Other),
             (" ", false, false, Key::Char(' ')),
             ("é", false, false, Key::Char('é')),
             ("\u{F729}", false, false, Key::Other),
-            ("\u{7f}", false, false, Key::Other),
+            ("\u{7f}", false, false, Key::Delete),
             ("", false, false, Key::Other),
             ("12", false, false, Key::Other),
         ];
@@ -245,6 +299,9 @@ mod tests {
             (Key::Escape, "Esc"), (Key::Up, "↑"), (Key::Down, "↓"), (Key::Left, "←"),
             (Key::Right, "→"), (Key::Tab, "Tab"), (Key::BackTab, "Shift+Tab"),
             (Key::F(10), "F10"), (Key::Char('x'), "x"), (Key::Other, ""),
+            (Key::ShiftF(3), "Shift+F3"), (Key::CtrlF(10), "Ctrl+F10"), (Key::Delete, "Del"),
+            (Key::CtrlUp, "Ctrl+↑"), (Key::CtrlDown, "Ctrl+↓"), (Key::CtrlDelete, "Ctrl+Del"),
+            (Key::Ctrl('d'), "Ctrl+D"),
         ];
         for (key, label) in cases {
             assert_eq!(key.label(), label);

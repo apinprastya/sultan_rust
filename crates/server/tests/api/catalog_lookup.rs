@@ -25,6 +25,7 @@ api_tests!(
 
 /// Device token alone, a PIN session at a register, and back office with an optional
 /// `branch_id` that must be one of the user's branches.
+#[allow(clippy::too_many_lines)] // every caller kind, one answer each
 async fn lookup_by_device_token_or_session(h: &Harness) {
     let owner = h.owner_token().await;
     let doc = kaos("KAOS02", "899200");
@@ -55,8 +56,23 @@ async fn lookup_by_device_token_or_session(h: &Harness) {
             "amount": null,
             "branch_id": h.jkt.id.to_string(),
             "unit_price": null,
+            "units": r.body["units"].clone(),
         })
     );
+    // The units the register can change to (spec 2.6 §2): pcs and box(24).
+    let units: Vec<(&str, i64)> = r.body["units"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|u| {
+            (
+                u["name"].as_str().unwrap(),
+                u["factor_thousandths"].as_i64().unwrap(),
+            )
+        })
+        .collect();
+    assert_eq!(units, [("pcs", 1_000), ("box", 24_000)]);
+    assert_eq!(r.body["units"][0]["id"], json!(doc.base_unit));
     // The query cannot move a register to another branch.
     let r = as_device(h, &h.jkt_device, &format!("{uri}&branch_id={}", h.bdg.id)).await;
     assert_eq!(r.body["branch_id"], h.jkt.id.to_string());

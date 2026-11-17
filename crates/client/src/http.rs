@@ -347,6 +347,13 @@ impl Service for HttpService {
         Box::pin(send(request))
     }
 
+    fn product_search(&self, token: &str, q: &str) -> crate::BoxFuture<SearchPage> {
+        let request = self
+            .request(Method::GET, "/catalog/search", Some(token))
+            .query(&[("q", q), ("limit", "20")]);
+        Box::pin(send(request))
+    }
+
     fn customer_by_phone(&self, token: &str, phone: &str) -> crate::BoxFuture<Customer> {
         let request = self
             .request(Method::GET, "/customers/lookup", Some(token))
@@ -474,9 +481,12 @@ impl Service for HttpService {
         token: &str,
         id: &str,
         copy: bool,
+        lang: &str,
         override_token: Option<&str>,
     ) -> crate::BoxFuture<Receipt> {
-        let mut request = self.request(Method::GET, &format!("/sales/{id}/receipt"), Some(token));
+        let mut request = self
+            .request(Method::GET, &format!("/sales/{id}/receipt"), Some(token))
+            .query(&[("lang", lang)]);
         if copy {
             request = request.query(&[("copy", "true")]);
         }

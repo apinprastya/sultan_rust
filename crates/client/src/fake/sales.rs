@@ -59,6 +59,8 @@ pub(super) struct Sales {
     held: Vec<HeldCart>,
     voids: Vec<CartVoid>,
     keyed: HashMap<String, Sale>,
+    /// A line void needs a manager too (as a cashier without `sale.void_line` would).
+    pub(super) line_void_override: bool,
 }
 
 impl Default for Sales {
@@ -91,6 +93,7 @@ impl Default for Sales {
             held: Vec::new(),
             voids: Vec::new(),
             keyed: HashMap::new(),
+            line_void_override: false,
         }
     }
 }
@@ -155,6 +158,61 @@ impl State {
             }
         }
         Err(api(403, "invalid_override"))
+    }
+
+    /// Every check above the caller's limit takes one matching token (the server's
+    /// `authorize_all`): none for the first unmatched check → `needs_override` (with `permission`
+    /// and `limit`), or `invalid_override` when tokens were sent and none matched yet.
+    fn authorize_all(
+        &mut self,
+        user: &super::FakeUser,
+        checks: &[(&str, i64)],
+        context: &str,
+        header: Option<&str>,
+    ) -> Result<(), ClientError> {
+        if user.reports {
+            return Ok(());
+        }
+        let mut left: Vec<String> = header
+            .map(|h| {
+                h.split(',')
+                    .map(str::trim)
+                    .filter(|t| !t.is_empty())
+                    .map(str::to_owned)
+                    .collect()
+            })
+            .unwrap_or_default();
+        let sent = !left.is_empty();
+        let mut used_any = false;
+        let mut matched = Vec::new();
+        for (action, value) in checks {
+            if *value <= user.discount_limit {
+                continue;
+            }
+            let found = left.iter().position(|t| {
+                self.overrides
+                    .get(t)
+                    .is_some_and(|(a, v, c, _)| a == action && c == context && *v == Some(*value))
+            });
+            match found {
+                Some(i) => {
+                    matched.push(left.remove(i));
+                    used_any = true;
+                }
+                None if sent && !used_any => return Err(api(403, "invalid_override")),
+                None => {
+                    return Err(Problem::new(403, "needs_override", "needs override")
+                        .with("permission", *action)
+                        .with("limit", user.discount_limit)
+                        .into());
+                }
+            }
+        }
+        // Only a sale that goes through uses its tokens up (like the server's transaction).
+        for t in matched {
+            self.overrides.remove(&t);
+        }
+        Ok(())
     }
 
     fn tender(&self, id: &str) -> Result<&TenderType, ClientError> {
@@ -238,22 +296,27 @@ impl State {
                 .with("quote", json!({ "totals": fresh }))
                 .into());
         }
-        let most = totals
-            .lines
-            .iter()
-            .map(sultan_core::sale::LineTotals::line_discount_bp)
-            .chain([totals.cart_discount_bp()])
-            .max()
-            .unwrap_or(0);
-        if i64::from(most) > user.discount_limit {
-            self.manager_or_override(
-                &user,
-                "sale.discount",
-                Some(i64::from(most)),
-                id,
-                override_token,
-            )?;
+        // Every limited check of the sale in the server's order (lines, then the cart
+        // discount), each against the caller's limit; one token per approval (§19 item 36).
+        let mut checks: Vec<(&str, i64)> = Vec::new();
+        for (q, t) in quote.lines.iter().zip(&totals.lines) {
+            if q.mode == "overridden"
+                && let (Some(resolved), Some(price)) = (q.resolved_price, q.unit_price)
+            {
+                let drop = sultan_core::sale::discount_bp(
+                    Money::from_minor(resolved),
+                    Money::from_minor((resolved - price).max(0)),
+                );
+                checks.push(("price.override", i64::from(drop)));
+            }
+            if t.line_discount > Money::ZERO {
+                checks.push(("sale.discount", i64::from(t.line_discount_bp())));
+            }
         }
+        if totals.cart_discount > Money::ZERO {
+            checks.push(("sale.cart_discount", i64::from(totals.cart_discount_bp())));
+        }
+        self.authorize_all(&user, &checks, id, override_token)?;
         let balance = body
             .customer_id
             .as_deref()
@@ -451,8 +514,10 @@ impl State {
         token: &str,
         id: &str,
         copy: bool,
+        lang: &str,
         override_token: Option<&str>,
     ) -> Result<Receipt, ClientError> {
+        use sultan_core::sale::Label;
         let user = self.caller(token)?;
         let sale = self.sales.sales[self.sale_index(id)?].1.clone();
         if copy {
@@ -475,18 +540,22 @@ impl State {
         let voided = sale.summary.status == "voided";
         let mut lines = Vec::new();
         if copy {
-            lines.push("COPY".to_owned());
+            lines.push(Label::Copy.text(lang).to_owned());
         }
         if voided {
-            lines.push("VOID".to_owned());
+            lines.push(Label::Void.text(lang).to_owned());
         }
         lines.push(sale.summary.number.clone());
         for l in &sale.lines {
             lines.push(format!("{} {}", l.name, l.total));
         }
-        lines.push(format!("TOTAL {}", sale.summary.paid));
+        lines.push(format!("{} {}", Label::Total.text(lang), sale.summary.paid));
+        let change = sale.summary.change_given;
+        if change > 0 {
+            lines.push(format!("{} {change}", Label::Change.text(lang)));
+        }
         if voided {
-            lines.push("VOID".to_owned());
+            lines.push(Label::Void.text(lang).to_owned());
         }
         let text = lines.iter().fold(String::new(), |mut t, l| {
             t.push_str(l);
@@ -561,6 +630,13 @@ impl State {
     ) -> Result<CartVoid, ClientError> {
         let (user, session) = self.own_session(token)?;
         let approver = match body.kind.as_str() {
+            "line" if self.sales.line_void_override => self.manager_or_override(
+                &user,
+                "sale.void_line",
+                None,
+                &body.cart_id,
+                override_token,
+            )?,
             "line" => None,
             "cart" => {
                 self.manager_or_override(&user, "sale.void", None, &body.cart_id, override_token)?
@@ -919,6 +995,17 @@ fn run<T: Send + 'static>(
 }
 
 impl FakeService {
+    /// Makes a line void need a manager (`sale.void_line` above the cashier, spec 2.6 §3).
+    pub fn require_line_void_override(&self, on: bool) {
+        self.state().sales.line_void_override = on;
+    }
+
+    /// The posted sales with their request bodies, oldest first.
+    #[must_use]
+    pub fn posted_sales(&self) -> Vec<(SaleRequest, Sale)> {
+        self.state().sales.sales.clone()
+    }
+
     /// The cart voids recorded so far (what the close report would count).
     #[must_use]
     pub fn cart_voids(&self) -> Vec<CartVoid> {
@@ -977,11 +1064,15 @@ impl FakeService {
         token: &str,
         id: &str,
         copy: bool,
+        lang: &str,
         override_token: Option<&str>,
     ) -> crate::BoxFuture<Receipt> {
-        run(self, "receipt", format!("{id} copy={copy}"), |s| {
-            s.receipt(token, id, copy, override_token)
-        })
+        run(
+            self,
+            "receipt",
+            format!("{id} copy={copy} lang={lang}"),
+            |s| s.receipt(token, id, copy, lang, override_token),
+        )
     }
 
     pub(super) fn void_sale_call(

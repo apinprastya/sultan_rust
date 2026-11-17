@@ -55,8 +55,8 @@ use std::sync::Arc;
 
 pub use catalog::{
     Brand, BrandBody, CatalogSettings, Category, CategoryBody, CategoryNode, Generate, ImageInfo,
-    Lookup, Me, Product, ProductPage, ProductQuery, ProductSummary, SearchHit, SearchPage,
-    TaxClass,
+    Lookup, LookupUnit, Me, Product, ProductPage, ProductQuery, ProductSummary, SearchHit,
+    SearchPage, TaxClass,
 };
 pub use customers::{
     BalanceEntry, BalanceSettings, Customer, CustomerBalance, CustomerBody, CustomerGroup,
@@ -145,6 +145,10 @@ pub trait Service: Send + Sync {
     /// `422 archived` / `not_sold_here` / `not_sellable` / `scale_value_zero`.
     fn lookup(&self, token: &str, code: &str) -> BoxFuture<Lookup>;
 
+    /// `GET /catalog/search?q=&limit=20`: the register's product search (F2, spec 2.6 §2): the
+    /// first page of sellable variants; the register adds a hit by looking up its SKU.
+    fn product_search(&self, token: &str, q: &str) -> BoxFuture<SearchPage>;
+
     /// `GET /customers/lookup?phone=`: the customer with this phone (any accepted form; spec 2.5
     /// §6). A merged customer's phone finds the survivor. Errors: `404 not_found`,
     /// `422 invalid_phone`.
@@ -209,13 +213,15 @@ pub trait Service: Send + Sync {
     fn sale_by_number(&self, token: &str, number: &str) -> BoxFuture<Sale>;
     /// `GET /sales?…`: one page; a cashier lists their own session (`cashier_session_id`).
     fn sales(&self, token: &str, query: &DocQuery) -> BoxFuture<SalePage>;
-    /// `GET /sales/{id}/receipt[?copy=true]`: the receipt text; a copy of another than the last
-    /// sale of the session needs `sale.reprint` (`override_token`).
+    /// `GET /sales/{id}/receipt[?copy=true]&lang=`: the receipt text with labels in `lang`
+    /// (`id` or `en`); a copy of another than the last sale of the session needs `sale.reprint`
+    /// (`override_token`).
     fn receipt(
         &self,
         token: &str,
         id: &str,
         copy: bool,
+        lang: &str,
         override_token: Option<&str>,
     ) -> BoxFuture<Receipt>;
     /// `POST /sales/{id}/void` with `Idempotency-Key: key` (spec 2.6 §7).

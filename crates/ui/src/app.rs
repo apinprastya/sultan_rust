@@ -31,9 +31,11 @@ use crate::count::{CountForm, DENOMINATIONS, is_coin};
 use crate::customer::{Call, Dialog, Perms, Reply, receipt_line};
 use crate::input::{Key, date_time, time_of_day};
 use crate::scan::{CustomerPrice, ScanField, line_amount, match_kind, percent_off, qty_text};
+use crate::sell::{Line, PayStep};
+use crate::till::{EntryKind, Modal, Sell, VOID_REASONS, VoidTarget};
 use crate::{
-    Chip, CloseView, CustomerRow, CustomerView, DenomRow, HomeView, LockView, MainWindow, Note,
-    OpenView, OverrideView, ReportLine, ReportView, ScanView, UserTile,
+    CartRow, Chip, CloseView, CustomerRow, CustomerView, DenomRow, HomeView, LockView, MainWindow,
+    Note, OpenView, OverrideView, ReportLine, ReportView, ScanView, SellRow, SellView, UserTile,
 };
 
 /// How service calls run; see the module docs.
@@ -74,6 +76,8 @@ pub struct Options {
     /// Opened from the Start screen: the lock screen offers F9 to go back to it (the window
     /// closes).
     pub start: bool,
+    /// The cart's crash copy (spec 2.6 D2), next to `register.token`; `None` keeps none.
+    pub cart_file: Option<crate::crash::CartFile>,
 }
 
 impl Options {
@@ -85,6 +89,7 @@ impl Options {
             language: None,
             clock: system_clock(),
             start: false,
+            cart_file: None,
         }
     }
 }
@@ -109,6 +114,12 @@ struct Models {
     report_lines: Rc<VecModel<ReportLine>>,
     report_tenders: Rc<VecModel<ReportLine>>,
     customers: Rc<VecModel<CustomerRow>>,
+    cart_rows: Rc<VecModel<CartRow>>,
+    actions_b: Rc<VecModel<Chip>>,
+    sell_rows: Rc<VecModel<SellRow>>,
+    pay_rows: Rc<VecModel<SellRow>>,
+    tender_rows: Rc<VecModel<SellRow>>,
+    receipt_lines: Rc<VecModel<SharedString>>,
 }
 
 /// Replaces the rows of `model` if they changed.
@@ -235,6 +246,7 @@ fn customer_call(
 
 /// Starts the service call of `effect`. Calls happen now (the fake does its work here); the
 /// returned future only waits for the answer.
+#[allow(clippy::too_many_lines)] // one arm per service call
 fn start(service: &dyn Service, effect: Effect) -> Option<MsgFuture> {
     macro_rules! call {
         ($future:expr, $msg:path) => {{
@@ -264,14 +276,6 @@ fn start(service: &dyn Service, effect: Effect) -> Option<MsgFuture> {
         Effect::RequestOverride { token, body } => {
             call!(service.request_override(&token, &body), Msg::Approved)
         }
-        Effect::Protected {
-            token,
-            body,
-            override_token,
-        } => call!(
-            service.demo_protected(&token, &body, override_token.as_deref()),
-            Msg::Protected
-        ),
         Effect::Logout { token } => call!(service.logout(&token), Msg::LoggedOut),
         Effect::Lookup {
             token,
@@ -302,7 +306,76 @@ fn start(service: &dyn Service, effect: Effect) -> Option<MsgFuture> {
                     as MsgFuture,
             )
         }
-        Effect::WatchEvents { .. } | Effect::Exit => None,
+        Effect::QuoteCart {
+            token,
+            request,
+            seq,
+            generation,
+        } => {
+            let future = service.quote(&token, &request);
+            Some(
+                Box::pin(async move { Msg::CartQuoted(generation, seq, future.await) })
+                    as MsgFuture,
+            )
+        }
+        Effect::Search {
+            token,
+            q,
+            generation,
+        } => {
+            let future = service.product_search(&token, &q);
+            Some(Box::pin(async move { Msg::Searched(generation, future.await) }) as MsgFuture)
+        }
+        Effect::CartVoid {
+            token,
+            body,
+            key,
+            override_token,
+            generation,
+        } => {
+            let future = service.cart_void(&token, &body, &key, override_token.as_deref());
+            Some(Box::pin(async move { Msg::CartVoided(generation, future.await) }) as MsgFuture)
+        }
+        Effect::TenderTypes { token, generation } => {
+            let future = service.tender_types(&token);
+            Some(Box::pin(async move { Msg::Tenders(generation, future.await) }) as MsgFuture)
+        }
+        Effect::PostSale {
+            token,
+            id,
+            body,
+            override_token,
+            generation,
+        } => {
+            let future = service.post_sale(&token, &id, &body, override_token.as_deref());
+            Some(
+                Box::pin(async move { Msg::Posted(generation, Box::new(future.await)) })
+                    as MsgFuture,
+            )
+        }
+        Effect::WatchEvents { .. }
+        | Effect::Exit
+        | Effect::Receipt { .. }
+        | Effect::SaveCart(_)
+        | Effect::DeleteCart
+        | Effect::LoadCart { .. } => None,
+    }
+}
+
+/// The window language for the receipt labels: `id` or `en` (the bundled translation in use).
+fn receipt_language(options: &Options) -> String {
+    let language = options.language.clone().unwrap_or_else(|| {
+        std::env::var("LANG")
+            .unwrap_or_default()
+            .split(['_', '.'])
+            .next()
+            .unwrap_or_default()
+            .to_owned()
+    });
+    if language.starts_with("id") {
+        "id".to_owned()
+    } else {
+        "en".to_owned()
     }
 }
 
@@ -355,21 +428,67 @@ impl State {
                 }
                 continue;
             }
+            if self.local(&effect) {
+                continue;
+            }
+            let effect = match effect {
+                Effect::Receipt {
+                    token,
+                    id,
+                    generation,
+                } => {
+                    let lang = receipt_language(&self.options);
+                    let future = self.service.receipt(&token, &id, false, &lang, None);
+                    let future: MsgFuture =
+                        Box::pin(async move { Msg::ReceiptText(generation, future.await) });
+                    self.spawn_or_block(future);
+                    continue;
+                }
+                other => other,
+            };
             let Some(future) = start(self.service.as_ref(), effect) else {
                 continue;
             };
-            match &self.runner {
-                Runner::Block(handle) => push(&self.inbox, handle.block_on(future)),
-                Runner::Spawn(handle) => {
-                    let inbox = self.inbox.clone();
-                    let wake = self.wake.clone();
-                    handle.spawn(async move {
-                        push(&inbox, future.await);
-                        wake();
-                    });
-                }
+            self.spawn_or_block(future);
+        }
+    }
+
+    fn spawn_or_block(&self, future: MsgFuture) {
+        match &self.runner {
+            Runner::Block(handle) => push(&self.inbox, handle.block_on(future)),
+            Runner::Spawn(handle) => {
+                let inbox = self.inbox.clone();
+                let wake = self.wake.clone();
+                handle.spawn(async move {
+                    push(&inbox, future.await);
+                    wake();
+                });
             }
         }
+    }
+
+    /// The crash-copy file effects, done on the spot (a small local file). Errors only cost the
+    /// crash copy, never the sale. Returns whether `effect` was one of them.
+    fn local(&self, effect: &Effect) -> bool {
+        let file = self.options.cart_file.as_ref();
+        match effect {
+            Effect::SaveCart(json) => {
+                if let Some(f) = file {
+                    let _ = f.save(json);
+                }
+            }
+            Effect::DeleteCart => {
+                if let Some(f) = file {
+                    let _ = f.delete();
+                }
+            }
+            Effect::LoadCart { generation } => push(
+                &self.inbox,
+                Msg::CartFile(*generation, file.and_then(crate::crash::CartFile::load)),
+            ),
+            _ => return false,
+        }
+        true
     }
 
     fn render(&self) {
@@ -584,6 +703,297 @@ fn scan_view(scan: &ScanField, customer: Option<&Customer>, now: i64) -> ScanVie
     view
 }
 
+/// A cart line as the table shows it (spec 2.6 §2).
+fn cart_row(
+    line: &Line,
+    totals: Option<&sultan_core::sale::LineTotals>,
+    selected: bool,
+    last: bool,
+) -> CartRow {
+    let flag = if line.error.is_some() {
+        "no_price"
+    } else if line.core.is_price_label() {
+        "label"
+    } else if line.overridden() {
+        "override"
+    } else if line.item.open_price {
+        "open"
+    } else {
+        ""
+    };
+    let discount = totals.map_or(0, |t| {
+        t.line_discount.minor() + t.cart_discount_share.minor()
+    });
+    let name = if line.item.product_name.is_empty() {
+        &line.item.name
+    } else {
+        &line.item.product_name
+    };
+    CartRow {
+        name: name.as_str().into(),
+        variant: line.item.variant_label.as_str().into(),
+        qty: qty_text(line.core.qty.thousandths()).into(),
+        unit: line.item.unit_name.as_str().into(),
+        price: if line.error.is_some() {
+            SharedString::new()
+        } else {
+            rupiah(line.core.unit_price.minor()).into()
+        },
+        was: line.resolved().map(rupiah).unwrap_or_default().into(),
+        struck: line.overridden() || discount > 0,
+        discount: if discount > 0 {
+            format!("-{}", rupiah(discount)).into()
+        } else {
+            SharedString::new()
+        },
+        amount: totals
+            .map(|t| rupiah(t.amount.minor()))
+            .unwrap_or_default()
+            .into(),
+        flag: flag.into(),
+        selected,
+        last,
+    }
+}
+
+fn sell_row(label: impl Into<SharedString>, detail: impl Into<SharedString>) -> SellRow {
+    SellRow {
+        label: label.into(),
+        detail: detail.into(),
+    }
+}
+
+/// The sell screen: cart rows, totals, the open dialog, the payment panel and the posted sale.
+#[allow(clippy::too_many_lines)] // one block per part of the screen
+fn render_sell(
+    ui: &MainWindow,
+    sell: &Sell,
+    c: &Controller,
+    notice: Option<&Notice>,
+    now: i64,
+    models: &Models,
+) {
+    let totals = sell.cart.totals().ok();
+    let rows = sell
+        .cart
+        .lines
+        .iter()
+        .enumerate()
+        .map(|(i, l)| {
+            cart_row(
+                l,
+                totals.as_ref().and_then(|t| t.lines.get(i)),
+                sell.focus == Some(i),
+                sell.last == Some(i),
+            )
+        })
+        .collect();
+    sync(&models.cart_rows, rows);
+    let money = |f: fn(&sultan_core::sale::CartTotals) -> i64| {
+        totals.as_ref().map(f).map(rupiah).unwrap_or_default()
+    };
+    let mut view = SellView {
+        lines_focus: sell.focus.is_some(),
+        check: sell.check,
+        pricing: sell.cart.quoting.is_some(),
+        empty: sell.cart.is_empty(),
+        subtotal: money(|t| t.subtotal.minor()).into(),
+        discount: money(|t| t.line_discount.minor() + t.cart_discount.minor()).into(),
+        tax: if sell.cart.settings.tax.inclusive {
+            SharedString::new()
+        } else {
+            money(|t| t.tax.minor()).into()
+        },
+        total: money(|t| t.total.minor()).into(),
+        items: sell.cart.item_count().to_string().into(),
+        tax_invoice: sell.cart.tax_invoice,
+        ..SellView::default()
+    };
+    let mut list = Vec::new();
+    if let Some(modal) = &sell.modal {
+        let (kind, title) = match modal {
+            Modal::Entry(e) => {
+                view.modal_value = e.text.as_str().into();
+                view.modal_pct = e.pct;
+                let (title, line) = match &e.kind {
+                    EntryKind::Qty(i) => ("qty", Some(*i)),
+                    EntryKind::Price(i) => ("price", Some(*i)),
+                    EntryKind::OpenPrice(item, _) => {
+                        view.modal_name = item.name.as_str().into();
+                        view.modal_hint = item.unit_price.map(rupiah).unwrap_or_default().into();
+                        ("open_price", None)
+                    }
+                    EntryKind::LineDiscount(i) => ("line_discount", Some(*i)),
+                    EntryKind::CartDiscount => ("cart_discount", None),
+                };
+                if let Some(l) = line.and_then(|i| sell.cart.lines.get(i)) {
+                    view.modal_name = format!(
+                        "{} · {} {} · {}",
+                        l.item.name,
+                        qty_text(l.core.qty.thousandths()),
+                        l.item.unit_name,
+                        rupiah(l.core.unit_price.minor())
+                    )
+                    .into();
+                }
+                ("entry", title)
+            }
+            Modal::Reason(r) => {
+                view.modal_cursor = index(r.cursor);
+                view.modal_text = r.text.as_str().into();
+                list = VOID_REASONS.iter().map(|k| sell_row(*k, "")).collect();
+                match r.target {
+                    VoidTarget::Line(i) => {
+                        view.modal_name = sell
+                            .cart
+                            .lines
+                            .get(i)
+                            .map(|l| l.item.name.clone())
+                            .unwrap_or_default()
+                            .into();
+                        ("reason", "reason_line")
+                    }
+                    VoidTarget::Cart => ("reason", "reason_cart"),
+                }
+            }
+            Modal::Units { line, cursor } => {
+                view.modal_cursor = index(*cursor);
+                if let Some(l) = sell.cart.lines.get(*line) {
+                    view.modal_name = l.item.name.as_str().into();
+                    list = l
+                        .item
+                        .units
+                        .iter()
+                        .map(|u| sell_row(u.name.as_str(), ""))
+                        .collect();
+                }
+                ("units", "units")
+            }
+            Modal::Search(search) => {
+                view.modal_value = search.query.as_str().into();
+                view.modal_cursor = index(search.cursor);
+                list = search
+                    .results
+                    .iter()
+                    .map(|h| sell_row(h.name.as_str(), h.sku.as_str()))
+                    .collect();
+                ("search", "search")
+            }
+            Modal::Help => {
+                list = c
+                    .home_actions()
+                    .iter()
+                    .map(|s| sell_row(s.key.label(), s.label))
+                    .chain(
+                        [
+                            ("Ctrl+↑ ↑ ↓", "to_lines"),
+                            ("Enter", "edit_qty"),
+                            ("Del", "void_line"),
+                            ("+ −", "more"),
+                            ("U", "unit"),
+                            ("P", "price"),
+                            ("D", "discount"),
+                            ("Ctrl+N · Ctrl+Del", "void_cart"),
+                            ("F8", "save_change"),
+                        ]
+                        .map(|(k, l)| sell_row(k, l)),
+                    )
+                    .collect();
+                ("help", "help")
+            }
+        };
+        view.modal = kind.into();
+        view.modal_title = title.into();
+    }
+    sync(&models.sell_rows, list);
+    let mut paid = Vec::new();
+    let mut tenders = Vec::new();
+    if let Some(pay) = &sell.pay {
+        view.pay_open = true;
+        view.pay_step = match pay.step {
+            PayStep::Cash => "cash",
+            PayStep::Pick(_) => "pick",
+            PayStep::Amount(_) => "amount",
+            PayStep::Reference(..) => "reference",
+            PayStep::Ready => "ready",
+            PayStep::Save => "save",
+        }
+        .into();
+        view.pay_total = rupiah(pay.payment.total().minor()).into();
+        view.pay_rest = rupiah(pay.rest()).into();
+        view.pay_change = rupiah(pay.change() - pay.saved()).into();
+        view.pay_saved = Some(pay.saved())
+            .filter(|s| *s > 0)
+            .map(rupiah)
+            .unwrap_or_default()
+            .into();
+        let rounding = pay.payment.cash_rounding().minor();
+        view.pay_rounding = if rounding == 0 {
+            SharedString::new()
+        } else {
+            crate::amount::signed_rupiah(rounding).into()
+        };
+        view.pay_balance = pay.balance.map(rupiah).unwrap_or_default().into();
+        view.pay_text = pay.text.as_str().into();
+        view.pay_input = if pay.digits.is_empty() {
+            SharedString::new()
+        } else {
+            rupiah(pay.digits.value()).into()
+        };
+        view.pay_note = note(notice, now);
+        let others = pay.others();
+        match pay.step {
+            PayStep::Cash => view.pay_due = rupiah(pay.cash_due()).into(),
+            PayStep::Pick(i) => {
+                view.pay_cursor = index(others.iter().position(|x| *x == i).unwrap_or(0));
+            }
+            PayStep::Amount(i) | PayStep::Reference(i, _) => {
+                view.pay_tender = pay.types[i].name.as_str().into();
+                view.pay_due = rupiah(pay.default_amount(i)).into();
+            }
+            _ => {}
+        }
+        paid = pay
+            .rows()
+            .into_iter()
+            .map(|(name, amount, reference)| {
+                let label = if reference.is_empty() {
+                    name
+                } else {
+                    format!("{name} · {}", sultan_core::sale::mask_reference(&reference))
+                };
+                sell_row(label, rupiah(amount))
+            })
+            .collect();
+        tenders = others
+            .iter()
+            .map(|&i| {
+                let t = &pay.types[i];
+                let detail = if t.kind == "customer_balance" {
+                    pay.balance.map(rupiah).unwrap_or_default()
+                } else {
+                    String::new()
+                };
+                sell_row(t.name.as_str(), detail)
+            })
+            .collect();
+    }
+    sync(&models.pay_rows, paid);
+    sync(&models.tender_rows, tenders);
+    let mut receipt = Vec::new();
+    if let Some(done) = &sell.done {
+        let s = &done.sale.summary;
+        view.done = true;
+        view.done_number = s.number.as_str().into();
+        view.done_change = rupiah(s.change_given).into();
+        view.done_total = rupiah(s.paid).into();
+        view.done_drawer = done.drawer;
+        receipt = done.receipt.iter().map(|l| l.as_str().into()).collect();
+    }
+    sync(&models.receipt_lines, receipt);
+    ui.set_sell(view);
+}
+
 /// A name-search result: the name and `K7QH-29XM · 0812****789 · Toko Siti · Gold`.
 fn customer_row(c: &Customer) -> CustomerRow {
     let tier = c
@@ -686,8 +1096,23 @@ fn render(ui: &MainWindow, c: &Controller, now: i64, models: &Models, options: &
             .unwrap_or_default()
             .into(),
     );
-    sync(&models.chips, chips(&c.shortcuts()));
-    sync(&models.actions, chips(&c.home_actions()));
+    // The bar shows the keys that are not buttons of the session home.
+    let buttons = c.home_actions();
+    // The barcode field has its own Enter and Esc buttons.
+    let idle = c.dialog.is_none()
+        && c.approval.is_none()
+        && c.sell().is_some_and(|s| {
+            s.modal.is_none() && s.pay.is_none() && s.done.is_none() && s.focus.is_none()
+        });
+    let bar: Vec<_> = c
+        .shortcuts()
+        .into_iter()
+        .filter(|s| !idle || (!buttons.contains(s) && !matches!(s.key, Key::Enter | Key::Escape)))
+        .collect();
+    sync(&models.chips, chips(&bar));
+    let half = buttons.len().div_ceil(2);
+    sync(&models.actions, chips(&buttons[..half]));
+    sync(&models.actions_b, chips(&buttons[half..]));
     sync(
         &models.users,
         c.users.iter().map(|u| tile(&u.display_name)).collect(),
@@ -766,6 +1191,7 @@ fn render(ui: &MainWindow, c: &Controller, now: i64, models: &Models, options: &
                     .into(),
             });
             ui.set_scan(scan_view(&h.scan, c.customer.as_ref(), now));
+            render_sell(ui, &h.sell, c, h.notice.as_ref(), now, models);
         }
         Screen::Close(close) => {
             sync(&models.denoms, denominations(&close.form));
@@ -793,6 +1219,10 @@ fn render(ui: &MainWindow, c: &Controller, now: i64, models: &Models, options: &
     if !matches!(c.screen, Screen::Report(_)) {
         sync(&models.report_lines, Vec::new());
         sync(&models.report_tenders, Vec::new());
+    }
+    if !matches!(c.screen, Screen::Home(_)) {
+        ui.set_sell(SellView::default());
+        sync(&models.cart_rows, Vec::new());
     }
 
     let dialog = c.dialog.as_ref();
@@ -900,6 +1330,12 @@ pub fn build_app(
         report_lines: Rc::default(),
         report_tenders: Rc::default(),
         customers: Rc::default(),
+        cart_rows: Rc::default(),
+        actions_b: Rc::default(),
+        sell_rows: Rc::default(),
+        pay_rows: Rc::default(),
+        tender_rows: Rc::default(),
+        receipt_lines: Rc::default(),
     };
     ui.set_users(ModelRc::from(models.users.clone()));
     ui.set_managers(ModelRc::from(models.managers.clone()));
@@ -909,6 +1345,12 @@ pub fn build_app(
     ui.set_report_lines(ModelRc::from(models.report_lines.clone()));
     ui.set_report_tenders(ModelRc::from(models.report_tenders.clone()));
     ui.set_customers(ModelRc::from(models.customers.clone()));
+    ui.set_cart_rows(ModelRc::from(models.cart_rows.clone()));
+    ui.set_actions_b(ModelRc::from(models.actions_b.clone()));
+    ui.set_sell_rows(ModelRc::from(models.sell_rows.clone()));
+    ui.set_pay_rows(ModelRc::from(models.pay_rows.clone()));
+    ui.set_tender_rows(ModelRc::from(models.tender_rows.clone()));
+    ui.set_receipt_lines(ModelRc::from(models.receipt_lines.clone()));
     ui.set_columns(index(TILE_COLUMNS));
 
     let wake: Wake = match &runner {

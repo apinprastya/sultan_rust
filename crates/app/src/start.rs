@@ -267,6 +267,7 @@ pub fn run(
                 device_token: device_token.to_owned(),
                 language,
                 start: true,
+                cart_file: Some(crate::register::cart_path(config_path)),
             })?,
             Some(Choice::BackOffice) => (windows.open_backoffice)(BackofficeUi {
                 server: register.server.clone(),

@@ -761,6 +761,23 @@ pub struct Lookup {
     /// when no list prices it (spec 2.3 §10).
     #[serde(default)]
     pub unit_price: Option<i64>,
+    /// The product's active sellable units (the register's unit change, spec 2.6 §2); empty
+    /// from an older server.
+    #[serde(default)]
+    pub units: Vec<LookupUnit>,
+}
+
+/// A unit a looked-up item can be sold in.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LookupUnit {
+    /// The unit.
+    pub id: String,
+    /// Its name.
+    pub name: String,
+    /// `integer` or `decimal`.
+    pub kind: String,
+    /// Base units per unit, thousandths.
+    pub factor_thousandths: i64,
 }
 
 #[cfg(test)]

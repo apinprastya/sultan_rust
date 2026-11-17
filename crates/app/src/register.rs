@@ -33,6 +33,12 @@ pub fn token_path(config: &Path) -> PathBuf {
     config::config_dir(config).join(TOKEN_FILE)
 }
 
+/// The register's crash copy of the cart (spec 2.6 D2), next to the token.
+#[must_use]
+pub fn cart_path(config: &Path) -> PathBuf {
+    config::config_dir(config).join(sultan_ui::crash::CART_FILE)
+}
+
 pub use sultan_client::api_base;
 
 /// The server URL without the API suffix, as stored in `sultan.toml`.

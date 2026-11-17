@@ -767,14 +767,17 @@ impl State {
         })
     }
 
-    fn search(
+    pub(in crate::fake) fn search(
         &self,
         token: &str,
         q: &str,
         limit: u32,
         after: Option<&str>,
     ) -> Result<SearchPage, ClientError> {
-        self.bo_user(token)?;
+        // The register searches too (F2), with its PIN session.
+        if self.caller(token).is_err() {
+            self.bo_user(token)?;
+        }
         let q = q.trim().to_lowercase();
         if q.is_empty() {
             return Ok(SearchPage::default());

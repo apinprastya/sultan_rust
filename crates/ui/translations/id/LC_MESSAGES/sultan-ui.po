@@ -186,9 +186,6 @@ msgstr "Jumlah uang kertas dan koin"
 msgid "TENDERS"
 msgstr "PEMBAYARAN"
 
-msgid "Test override"
-msgstr "Uji persetujuan"
-
 msgid "That amount is not valid."
 msgstr "Jumlah tersebut tidak valid."
 
@@ -2249,3 +2246,348 @@ msgstr "Berakhir"
 
 msgid "Pricing"
 msgstr "Harga"
+
+msgid "Help"
+msgstr "Bantuan"
+
+msgid "Search product"
+msgstr "Cari produk"
+
+msgid "Customer by name"
+msgstr "Pelanggan per nama"
+
+msgid "Tax invoice"
+msgstr "Faktur pajak"
+
+msgid "Pay cash"
+msgstr "Bayar tunai"
+
+msgid "Cart lines"
+msgstr "Baris keranjang"
+
+msgid "Void cart"
+msgstr "Batalkan keranjang"
+
+msgid "Price check"
+msgstr "Cek harga"
+
+msgid "New sale"
+msgstr "Penjualan baru"
+
+msgid "Take cash"
+msgstr "Terima tunai"
+
+msgid "Choose"
+msgstr "Pilih"
+
+msgid "Add payment"
+msgstr "Tambah pembayaran"
+
+msgid "Confirm sale"
+msgstr "Konfirmasi penjualan"
+
+msgid "Save change"
+msgstr "Simpan kembalian"
+
+msgid "Undo payment"
+msgstr "Batalkan pembayaran"
+
+msgid "OK"
+msgstr "OK"
+
+msgid "% or Rp"
+msgstr "% atau Rp"
+
+msgid "Void"
+msgstr "Batalkan"
+
+msgid "Add item"
+msgstr "Tambah barang"
+
+msgid "Void line"
+msgstr "Batalkan baris"
+
+msgid "One more"
+msgstr "Tambah satu"
+
+msgid "One less"
+msgstr "Kurangi satu"
+
+msgid "Discount"
+msgstr "Diskon"
+
+msgid "Barcode field"
+msgstr "Kolom barcode"
+
+msgid "More than the rest to pay ({})."
+msgstr "Melebihi sisa yang harus dibayar ({})."
+
+msgid "Type the reference (approval code or last 4 digits)."
+msgstr "Ketik referensi (kode persetujuan atau 4 digit terakhir)."
+
+msgid "Saving this much goes over the balance limit."
+msgstr "Menyimpan sebanyak ini melebihi batas saldo."
+
+msgid "The cart is full ({} lines at most)."
+msgstr "Keranjang penuh (paling banyak {} baris)."
+
+msgid "Not a valid quantity for this item."
+msgstr "Jumlah tidak valid untuk barang ini."
+
+msgid "Prices changed. New total {}: pay again."
+msgstr "Harga berubah. Total baru {}: bayar lagi."
+
+msgid "This sale was already posted differently."
+msgstr "Penjualan ini sudah diposting dengan isi lain."
+
+msgid "An item in the cart is archived."
+msgstr "Ada barang di keranjang yang diarsipkan."
+
+msgid "An item is not sold at this branch."
+msgstr "Ada barang yang tidak dijual di cabang ini."
+
+msgid "Unknown customer or tender type."
+msgstr "Pelanggan atau jenis pembayaran tidak dikenal."
+
+msgid "A manager must approve this ({})."
+msgstr "Manajer harus menyetujui ini ({})."
+
+msgid "{} has no price and was not added."
+msgstr "{} belum punya harga dan tidak ditambahkan."
+
+msgid "This line cannot be changed that way."
+msgstr "Baris ini tidak bisa diubah seperti itu."
+
+msgid "A tax invoice needs a customer with a tax ID."
+msgstr "Faktur pajak butuh pelanggan dengan NPWP."
+
+msgid "No cash tender type is set up."
+msgstr "Belum ada jenis pembayaran tunai."
+
+msgid "Attach a customer first (F3)."
+msgstr "Pilih pelanggan dulu (F3)."
+
+msgid "Not a valid discount (at most 100%)."
+msgstr "Diskon tidak valid (paling banyak 100%)."
+
+msgid "Price check: scans show the price only. F7 ends it."
+msgstr "Cek harga: pindaian hanya menampilkan harga. F7 untuk selesai."
+
+msgid "Back to selling."
+msgstr "Kembali berjualan."
+
+msgid "Drawer opened (logged)."
+msgstr "Laci dibuka (dicatat)."
+
+msgid "Coming in a later version."
+msgstr "Hadir di versi berikutnya."
+
+msgid "This item has no other unit."
+msgstr "Barang ini tidak punya satuan lain."
+
+msgid "Type the reason."
+msgstr "Ketik alasannya."
+
+msgid "Nothing found."
+msgstr "Tidak ditemukan."
+
+msgid "Voided: {}."
+msgstr "Dibatalkan: {}."
+
+msgid "The cart was voided."
+msgstr "Keranjang dibatalkan."
+
+msgid "This sale is a tax invoice."
+msgstr "Penjualan ini faktur pajak."
+
+msgid "Not a tax invoice any more."
+msgstr "Bukan faktur pajak lagi."
+
+msgid "Wait until every line has a price."
+msgstr "Tunggu sampai setiap baris punya harga."
+
+msgid "Loading the tender types. Try again."
+msgstr "Memuat jenis pembayaran. Coba lagi."
+
+msgid "Finish or void the cart first."
+msgstr "Selesaikan atau batalkan keranjang dulu."
+
+msgid "The cart was restored ({} lines)."
+msgstr "Keranjang dipulihkan ({} baris)."
+
+msgid "Manual price"
+msgstr "Harga manual"
+
+msgid "Open price: type the price"
+msgstr "Harga terbuka: ketik harganya"
+
+msgid "Void the line: why?"
+msgstr "Batalkan baris: kenapa?"
+
+msgid "Void the whole cart: why?"
+msgstr "Batalkan seluruh keranjang: kenapa?"
+
+msgid "Keys"
+msgstr "Tombol"
+
+msgid "Customer changed their mind"
+msgstr "Pelanggan berubah pikiran"
+
+msgid "Wrong item"
+msgstr "Barang salah"
+
+msgid "Price dispute"
+msgstr "Keberatan harga"
+
+msgid "Other (type it)"
+msgstr "Lainnya (ketik)"
+
+msgid "Scale label"
+msgstr "Label timbangan"
+
+msgid "No price"
+msgstr "Tanpa harga"
+
+msgid "Void a line"
+msgstr "Batalkan baris"
+
+msgid "Void the cart"
+msgstr "Batalkan keranjang"
+
+msgid "was {}"
+msgstr "semula {}"
+
+msgid "Cart"
+msgstr "Keranjang"
+
+msgid "ITEM"
+msgstr "BARANG"
+
+msgid "QTY"
+msgstr "JML"
+
+msgid "PRICE"
+msgstr "HARGA"
+
+msgid "DISCOUNT"
+msgstr "DISKON"
+
+msgid "AMOUNT"
+msgstr "JUMLAH"
+
+msgid "Price check: scan an item to see its price."
+msgstr "Cek harga: pindai barang untuk melihat harganya."
+
+msgid "Scan an item to start a sale."
+msgstr "Pindai barang untuk mulai menjual."
+
+msgid "Totals"
+msgstr "Total"
+
+msgid "Subtotal"
+msgstr "Subtotal"
+
+msgid "Discounts"
+msgstr "Diskon"
+
+msgid "Tax"
+msgstr "Pajak"
+
+msgid "Total"
+msgstr "Total"
+
+msgid "{} items"
+msgstr "{} barang"
+
+msgid "Pricing…"
+msgstr "Menghitung harga…"
+
+msgid "open since {}"
+msgstr "buka sejak {}"
+
+msgid "opening cash {}"
+msgstr "kas awal {}"
+
+msgid "Type the reason"
+msgstr "Ketik alasannya"
+
+msgid "Payment"
+msgstr "Pembayaran"
+
+msgid "Change"
+msgstr "Kembalian"
+
+msgid "Rest to pay"
+msgstr "Sisa bayar"
+
+msgid "Saved to the balance"
+msgstr "Disimpan ke saldo"
+
+msgid "Customer balance"
+msgstr "Saldo pelanggan"
+
+msgid "Other tenders"
+msgstr "Pembayaran lain"
+
+msgid "Cash received (Enter alone: exactly {})"
+msgstr "Uang diterima (Enter saja: pas {})"
+
+msgid "{}: amount (Enter alone: {})"
+msgstr "{}: jumlah (Enter saja: {})"
+
+msgid "{}: reference (approval code, last 4 digits)"
+msgstr "{}: referensi (kode persetujuan, 4 digit terakhir)"
+
+msgid "Change to save to the balance (0 gives it all back)"
+msgstr "Kembalian yang disimpan ke saldo (0 = kembalikan semua)"
+
+msgid "Payment entry"
+msgstr "Isian pembayaran"
+
+msgid "Paid. Enter confirms the sale."
+msgstr "Lunas. Enter mengonfirmasi penjualan."
+
+msgid "Sale posted"
+msgstr "Penjualan tercatat"
+
+msgid "Sale {} posted"
+msgstr "Penjualan {} tercatat"
+
+msgid "CHANGE DUE"
+msgstr "KEMBALIAN"
+
+msgid "Change due"
+msgstr "Kembalian"
+
+msgid "Total paid {}"
+msgstr "Total dibayar {}"
+
+msgid "The drawer opens."
+msgstr "Laci terbuka."
+
+msgid "Receipt"
+msgstr "Struk"
+
+msgid "PRICE CHECK · BARCODE · SKU · PLU"
+msgstr "CEK HARGA · BARCODE · SKU · PLU"
+
+msgid "BARCODE · SKU · PLU · 3* SETS THE QTY"
+msgstr "BARCODE · SKU · PLU · 3* MENGATUR JUMLAH"
+
+msgid "F7 again goes back to selling."
+msgstr "F7 lagi untuk kembali berjualan."
+
+msgid "Drawer"
+msgstr "Laci"
+
+msgid "Non-cash"
+msgstr "Nontunai"
+
+msgid "Receipts"
+msgstr "Struk"
+
+msgid "Returns"
+msgstr "Retur"
+
+msgid "Hold"
+msgstr "Tahan"

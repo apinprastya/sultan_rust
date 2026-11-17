@@ -18,6 +18,9 @@ sultan-client = { path = "../client" }
 # product thumbnail (already in the tree via Slint, pinned in the workspace).
 sultan-core = { path = "../core" }
 image.workspace = true
+# The cart's crash copy (spec 2.6 D2) is JSON.
+serde.workspace = true
+serde_json.workspace = true
 tokio = { workspace = true, features = ["rt"] }
 uuid.workspace = true
 

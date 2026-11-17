@@ -166,6 +166,102 @@ export global Strings {
         if (code == "paid_out") {
             return @tr("Paid out {} in cash.", arg);
         }
+        if (code == "tender_over_rest") {
+            return @tr("More than the rest to pay ({}).", arg);
+        }
+        if (code == "tender_reference_required") {
+            return @tr("Type the reference (approval code or last 4 digits).");
+        }
+        if (code == "balance_limit") {
+            return @tr("Saving this much goes over the balance limit.");
+        }
+        if (code == "cart_too_large") {
+            return @tr("The cart is full ({} lines at most).", arg);
+        }
+        if (code == "invalid_qty") {
+            return @tr("Not a valid quantity for this item.");
+        }
+        if (code == "cart_stale") {
+            return @tr("Prices changed. New total {}: pay again.", arg);
+        }
+        if (code == "conflict") {
+            return @tr("This sale was already posted differently.");
+        }
+        if (code == "archived") {
+            return @tr("An item in the cart is archived.");
+        }
+        if (code == "not_sold_here") {
+            return @tr("An item is not sold at this branch.");
+        }
+        if (code == "invalid_reference") {
+            return @tr("Unknown customer or tender type.");
+        }
+        if (code == "needs_override") {
+            return @tr("A manager must approve this ({}).", arg);
+        }
+        if (code == "no_price_item") {
+            return @tr("{} has no price and was not added.", arg);
+        }
+        if (code == "line_fixed") {
+            return @tr("This line cannot be changed that way.");
+        }
+        if (code == "tax_invoice_needs_tax_id") {
+            return @tr("A tax invoice needs a customer with a tax ID.");
+        }
+        if (code == "no_cash_tender") {
+            return @tr("No cash tender type is set up.");
+        }
+        if (code == "needs_customer") {
+            return @tr("Attach a customer first (F3).");
+        }
+        if (code == "invalid_discount") {
+            return @tr("Not a valid discount (at most 100%).");
+        }
+        if (code == "price_check_on") {
+            return @tr("Price check: scans show the price only. F7 ends it.");
+        }
+        if (code == "price_check_off") {
+            return @tr("Back to selling.");
+        }
+        if (code == "drawer_opened") {
+            return @tr("Drawer opened (logged).");
+        }
+        if (code == "coming_soon") {
+            return @tr("Coming in a later version.");
+        }
+        if (code == "no_other_unit") {
+            return @tr("This item has no other unit.");
+        }
+        if (code == "reason_text_required") {
+            return @tr("Type the reason.");
+        }
+        if (code == "nothing_found") {
+            return @tr("Nothing found.");
+        }
+        if (code == "line_voided") {
+            return @tr("Voided: {}.", arg);
+        }
+        if (code == "cart_voided") {
+            return @tr("The cart was voided.");
+        }
+        if (code == "tax_invoice_on") {
+            return @tr("This sale is a tax invoice.");
+        }
+        if (code == "tax_invoice_off") {
+            return @tr("Not a tax invoice any more.");
+        }
+        if (code == "cart_not_priced") {
+            return @tr("Wait until every line has a price.");
+        }
+        if (code == "no_tender_types") {
+            return @tr("Loading the tender types. Try again.");
+        }
+        if (code == "cart_not_empty") {
+            return @tr("Finish or void the cart first.");
+        }
+        if (code == "cart_restored") {
+            return @tr("The cart was restored ({} lines).", arg);
+        }
         return @tr("Something went wrong ({}).", arg);
     }
 
@@ -197,9 +293,6 @@ export global Strings {
         }
         if (code == "lock") {
             return @tr("Lock");
-        }
-        if (code == "test_override") {
-            return @tr("Test override");
         }
         if (code == "close_session") {
             return @tr("Close session");
@@ -268,6 +361,108 @@ export global Strings {
         if (code == "show_that_customer") {
             return @tr("Show that customer");
         }
+        if (code == "help") {
+            return @tr("Help");
+        }
+        if (code == "search") {
+            return @tr("Search");
+        }
+        if (code == "name_search") {
+            return @tr("Customer by name");
+        }
+        if (code == "tax_invoice") {
+            return @tr("Tax invoice");
+        }
+        if (code == "pay_cash") {
+            return @tr("Pay cash");
+        }
+        if (code == "pay_other") {
+            return @tr("Non-cash");
+        }
+        if (code == "to_lines") {
+            return @tr("Cart lines");
+        }
+        if (code == "cart_discount") {
+            return @tr("Cart discount");
+        }
+        if (code == "void_cart") {
+            return @tr("Void cart");
+        }
+        if (code == "drawer") {
+            return @tr("Drawer");
+        }
+        if (code == "price_check") {
+            return @tr("Price check");
+        }
+        if (code == "receipts_soon") {
+            return @tr("Receipts");
+        }
+        if (code == "returns_soon") {
+            return @tr("Returns");
+        }
+        if (code == "hold_soon") {
+            return @tr("Hold");
+        }
+        if (code == "new_sale") {
+            return @tr("New sale");
+        }
+        if (code == "take_cash") {
+            return @tr("Take cash");
+        }
+        if (code == "choose") {
+            return @tr("Choose");
+        }
+        if (code == "add_tender") {
+            return @tr("Add payment");
+        }
+        if (code == "confirm_sale") {
+            return @tr("Confirm sale");
+        }
+        if (code == "save_change") {
+            return @tr("Save change");
+        }
+        if (code == "undo_tender") {
+            return @tr("Undo payment");
+        }
+        if (code == "save") {
+            return @tr("Save");
+        }
+        if (code == "ok") {
+            return @tr("OK");
+        }
+        if (code == "pct_or_rp") {
+            return @tr("% or Rp");
+        }
+        if (code == "void") {
+            return @tr("Void");
+        }
+        if (code == "add_item") {
+            return @tr("Add item");
+        }
+        if (code == "edit_qty") {
+            return @tr("Quantity");
+        }
+        if (code == "void_line") {
+            return @tr("Void line");
+        }
+        if (code == "more") {
+            return @tr("One more");
+        }
+        if (code == "less") {
+            return @tr("One less");
+        }
+        if (code == "unit") {
+            return @tr("Unit");
+        }
+        if (code == "price") {
+            return @tr("Price");
+        }
+        if (code == "discount") {
+            return @tr("Discount");
+        }
+        if (code == "to_scan") {
+            return @tr("Barcode field");
+        }
         return code;
     }
 
@@ -284,6 +479,15 @@ export global Strings {
         }
         if (code == "cash.out") {
             return @tr("Cash out");
+        }
+        if (code == "price.override") {
+            return @tr("Manual price");
+        }
+        if (code == "sale.void_line") {
+            return @tr("Void a line");
+        }
+        if (code == "sale.void") {
+            return @tr("Void the cart");
         }
         return code;
     }
@@ -330,6 +534,75 @@ export global Strings {
             return @tr("Default store price");
         }
         return kind;
+    }
+
+    // Titles of the sell dialogs (`crates/ui/src/app.rs` `sell_view`).
+    public pure function sell-title(code: string) -> string {
+        if (code == "qty") {
+            return @tr("Quantity");
+        }
+        if (code == "price") {
+            return @tr("Manual price");
+        }
+        if (code == "open_price") {
+            return @tr("Open price: type the price");
+        }
+        if (code == "line_discount") {
+            return @tr("Line discount");
+        }
+        if (code == "cart_discount") {
+            return @tr("Cart discount");
+        }
+        if (code == "reason_line") {
+            return @tr("Void the line: why?");
+        }
+        if (code == "reason_cart") {
+            return @tr("Void the whole cart: why?");
+        }
+        if (code == "units") {
+            return @tr("Unit");
+        }
+        if (code == "search") {
+            return @tr("Search product");
+        }
+        if (code == "help") {
+            return @tr("Keys");
+        }
+        return code;
+    }
+
+    // Void reasons (spec 2.6 §3).
+    public pure function void-reason(code: string) -> string {
+        if (code == "customer_changed_mind") {
+            return @tr("Customer changed their mind");
+        }
+        if (code == "wrong_item") {
+            return @tr("Wrong item");
+        }
+        if (code == "price_dispute") {
+            return @tr("Price dispute");
+        }
+        if (code == "other") {
+            return @tr("Other (type it)");
+        }
+        return code;
+    }
+
+    // How a cart line is priced (`crates/ui/src/app.rs` `cart_rows`).
+    public pure function line-flag(code: string) -> string {
+        if (code == "override") {
+            return @tr("Manual price");
+        }
+        if (code == "open") {
+            return @tr("Open price");
+        }
+        if (code == "label") {
+            return @tr("Scale label");
+        }
+        if (code == "no_price") {
+            return @tr("No price");
+        }
+        return code;
     }
 
     // Product types (spec 2.2 §5).

@@ -255,7 +255,10 @@ async fn flow(
         .unwrap();
     assert_eq!(page.items.len(), 2);
     // Receipts: the last of the session reprints freely; the older one needs a manager.
-    let receipt = register.receipt(cashier, &id, true, None).await.unwrap();
+    let receipt = register
+        .receipt(cashier, &id, true, "en", None)
+        .await
+        .unwrap();
     assert!(
         receipt.copy && receipt.text.contains("COPY"),
         "{}",
@@ -263,7 +266,7 @@ async fn flow(
     );
     let older_id = older.summary.id.clone();
     assert_eq!(
-        code_of(register.receipt(cashier, &older_id, true, None).await),
+        code_of(register.receipt(cashier, &older_id, true, "en", None).await),
         (403, "needs_override".to_owned())
     );
     let grant = |action: &str, context: &str, value: Option<i64>| OverrideRequest {
@@ -279,7 +282,7 @@ async fn flow(
         .unwrap()
         .token;
     let receipt = register
-        .receipt(cashier, &older_id, true, Some(&t))
+        .receipt(cashier, &older_id, true, "id", Some(&t))
         .await
         .unwrap();
     assert!(receipt.copy);
