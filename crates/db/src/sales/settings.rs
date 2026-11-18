@@ -127,7 +127,14 @@ pub async fn put_sales_settings(
             message: format!("must be 0 to {MAX_RETURN_DAYS}"),
         });
     }
+    let mut seen = std::collections::HashSet::new();
     for (branch, width) in &settings.receipt_widths {
+        if !seen.insert(*branch) {
+            return Err(SaleDbError::Invalid {
+                field: "receipt_width",
+                message: "lists a branch twice".into(),
+            });
+        }
         if !RECEIPT_WIDTHS.contains(width) {
             return Err(SaleDbError::Invalid {
                 field: "receipt_width",

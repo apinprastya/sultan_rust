@@ -115,7 +115,12 @@ pub fn start_sales(service: &dyn BackOffice, token: &str, call: &Call, lang: &st
                 append, seq, r
             ))
         }
-        Call::SaleReturns(query) => call!(service.returns(token, query), Reply::SaleReturns),
+        Call::SaleReturns(id, query) => {
+            let id = id.clone();
+            call!(service.returns(token, query), move |r| Reply::SaleReturns(
+                id, r
+            ))
+        }
         Call::History(id, before, seq) => {
             let (append, seq) = (before.is_some(), *seq);
             call!(
@@ -147,10 +152,15 @@ pub fn start_sales(service: &dyn BackOffice, token: &str, call: &Call, lang: &st
             Reply::Settings(true, r)
         }),
         Call::FindCustomer(text) => {
+            let typed = text.clone();
             if let Ok(code) = sultan_core::customer::CustomerCode::parse(text) {
-                call!(service.customer_by_code(token, code.as_str()), Reply::Found)
+                call!(service.customer_by_code(token, code.as_str()), move |r| {
+                    Reply::Found(typed, r)
+                })
             } else {
-                call!(service.customer_by_phone(token, text), Reply::Found)
+                call!(service.customer_by_phone(token, text), move |r| {
+                    Reply::Found(typed, r)
+                })
             }
         }
     }

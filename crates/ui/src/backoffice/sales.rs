@@ -97,7 +97,7 @@ pub enum Call {
     /// `sale_return`.
     Return(String),
     /// `returns` after a sale (its branch, from its posting): the sale detail's returns.
-    SaleReturns(DocQuery),
+    SaleReturns(String, DocQuery),
     /// `receipt` of a sale in the window language.
     SaleReceipt(String),
     /// `return_receipt` in the window language.
@@ -135,7 +135,7 @@ pub enum Reply {
     /// [`Call::Return`].
     Return(Box<Result<SaleReturn, ClientError>>),
     /// [`Call::SaleReturns`].
-    SaleReturns(Result<ReturnPage, ClientError>),
+    SaleReturns(String, Result<ReturnPage, ClientError>),
     /// [`Call::SaleReceipt`] or [`Call::ReturnReceipt`].
     Receipt(Result<Receipt, ClientError>),
     /// [`Call::TenderTypes`].
@@ -145,7 +145,7 @@ pub enum Reply {
     /// [`Call::Settings`] or [`Call::PutSettings`] (true).
     Settings(bool, Result<SalesSettings, ClientError>),
     /// [`Call::FindCustomer`].
-    Found(Result<Customer, ClientError>),
+    Found(String, Result<Customer, ClientError>),
 }
 
 /// The list filters (shared by sales and returns).
@@ -996,7 +996,11 @@ impl Controller {
             ("sales-filter", "until") => self.sales.filters.until = value,
             ("sales-filter", "customer") => {
                 self.sales.filters.customer = value;
-                self.sales.filters.customer_id = None;
+                if self.sales.filters.customer_id.take().is_some() {
+                    // The rows belong to the old customer: no next page of another filter.
+                    self.sales.sales.next = None;
+                    self.sales.returns.next = None;
+                }
             }
             ("sales-filter", "number") => self.sales.filters.number = value,
             ("tender", "name") => self.sales.editor.name = value,
@@ -1190,8 +1194,9 @@ impl Controller {
                                 limit: Some(200),
                                 ..DocQuery::default()
                             };
+                            let id = sale.summary.id.clone();
                             self.sales.detail.sale = Some(Box::new(sale));
-                            return vec![self.sales_call(Call::SaleReturns(query))];
+                            return vec![self.sales_call(Call::SaleReturns(id, query))];
                         }
                     }
                     self.sales.detail.links = links;
@@ -1211,7 +1216,8 @@ impl Controller {
                 }
                 Err(e) => self.sales.detail.notice = self.sales_failed(&e),
             },
-            Reply::SaleReturns(result) => match result {
+            Reply::SaleReturns(id, _) if id != self.sales.detail.id => {}
+            Reply::SaleReturns(_, result) => match result {
                 Ok(page) => {
                     if let Some(sale) = &self.sales.detail.sale {
                         self.sales.detail.links = Self::detail_links_of_sale(sale, &page.items);
@@ -1326,7 +1332,8 @@ impl Controller {
                     self.sales.settings.notice = self.sales_failed(&e);
                 }
             },
-            Reply::Found(result) => match result {
+            Reply::Found(typed, _) if typed != self.sales.filters.customer.trim() => {}
+            Reply::Found(_, result) => match result {
                 Ok(c) => {
                     self.sales.filters.customer_id = Some(c.id);
                     return self.reload_docs();

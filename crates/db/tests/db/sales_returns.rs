@@ -1189,6 +1189,13 @@ async fn sales_settings_round_trip(db: &Db) {
             },
             "receipt_width",
         ),
+        (
+            sales::SalesSettings {
+                return_days: 30,
+                receipt_widths: vec![(till.o.jkt.id, 32), (till.o.jkt.id, 48)],
+            },
+            "receipt_width",
+        ),
     ] {
         match put(bad).await {
             Err(SaleDbError::Invalid { field: f, .. }) => assert_eq!(f, field),
