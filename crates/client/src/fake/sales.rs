@@ -248,6 +248,18 @@ impl State {
         Ok(())
     }
 
+    /// The saved receipt width of a branch (32 columns when none is saved).
+    fn receipt_width(&self, branch_id: &str) -> sultan_core::sale::ReceiptWidth {
+        use sultan_core::sale::ReceiptWidth as W;
+        self.sales
+            .settings
+            .receipt_widths
+            .iter()
+            .find(|w| w.branch_id == branch_id)
+            .and_then(|w| W::from_cols(usize::from(w.receipt_width)))
+            .unwrap_or_default()
+    }
+
     /// Whether a sale posted at `at` is outside the return window (core's check, §19 item 13).
     fn outside_window(&self, at: i64) -> bool {
         use sultan_core::time::Timestamp;
@@ -640,8 +652,8 @@ impl State {
     ) -> Result<Receipt, ClientError> {
         use sultan_core::customer::{Phone, ReceiptCustomer};
         use sultan_core::sale::{
-            Label, ReceiptHeader, ReceiptWidth, ReturnReceiptInput, ReturnReceiptLine,
-            ReturnReceiptTender, build_return_receipt,
+            Label, ReceiptHeader, ReturnReceiptInput, ReturnReceiptLine, ReturnReceiptTender,
+            build_return_receipt,
         };
         self.any_caller(token)?;
         let ret = self
@@ -727,7 +739,7 @@ impl State {
             .unwrap_or_default();
         let footer = ["Terima kasih".to_owned()];
         let input = ReturnReceiptInput {
-            width: ReceiptWidth::Cols32,
+            width: self.receipt_width(&s.branch_id),
             header: ReceiptHeader {
                 lines: &[],
                 branch_name: "Toko Jakarta",
@@ -827,7 +839,7 @@ impl State {
         use sultan_core::customer::{Phone, ReceiptCustomer};
         use sultan_core::sale::{
             Label, ReceiptCustomerBlock, ReceiptHeader, ReceiptInput, ReceiptLine, ReceiptSaved,
-            ReceiptTender, ReceiptTotals, ReceiptWidth, TaxInvoiceBlock, TaxLine, build_receipt,
+            ReceiptTender, ReceiptTotals, TaxInvoiceBlock, TaxLine, build_receipt,
         };
         let s = &sale.summary;
         let cashier = s
@@ -906,7 +918,7 @@ impl State {
         });
         let footer = ["Terima kasih".to_owned()];
         let input = ReceiptInput {
-            width: ReceiptWidth::Cols32,
+            width: self.receipt_width(&s.branch_id),
             header: ReceiptHeader {
                 lines: &[],
                 branch_name: "Toko Jakarta",

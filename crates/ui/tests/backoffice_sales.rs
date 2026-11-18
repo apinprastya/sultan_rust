@@ -13,7 +13,7 @@ use i_slint_backend_testing::{AccessibleRole, ElementHandle};
 use slint::platform::{Key, PointerEventButton, WindowEvent};
 use slint::{ComponentHandle, LogicalSize, Model, SharedString};
 use sultan_client::fake::{FakeService, SalesDemo};
-use sultan_client::{BackOffice, Problem};
+use sultan_client::{BackOffice, Problem, Service};
 use sultan_ui::{BackOfficeApp, BackOfficeOptions, Note, Runner, build_backoffice};
 
 struct Office {
@@ -445,6 +445,20 @@ fn tender_types_crud_and_settings() {
         .unwrap();
     assert_eq!(stored.return_days, 0);
     assert_eq!(stored.receipt_widths[0].receipt_width, 48);
+    // The receipts follow the saved width.
+    let sale = o.demo.sales[0].summary.id.clone();
+    let receipt = o
+        .runtime
+        .block_on(o.fake.receipt(&o.owner(), &sale, false, "en", None))
+        .unwrap();
+    assert!(receipt.lines.iter().any(|l| l.chars().count() == 48));
+    assert!(receipt.lines.iter().all(|l| l.chars().count() <= 48));
+    let ret = o.demo.sale_return.summary.id.clone();
+    let receipt = o
+        .runtime
+        .block_on(o.fake.return_receipt(&o.owner(), &ret, false, "en", None))
+        .unwrap();
+    assert!(receipt.lines.iter().any(|l| l.chars().count() == 48));
 
     // A branch node refuses writes: the screens turn read-only and say why.
     o.ctrl("3");

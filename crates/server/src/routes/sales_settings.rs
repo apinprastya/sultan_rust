@@ -25,7 +25,7 @@ use super::parse_id;
 use super::sales::{Fail, run};
 use crate::access::Caller;
 use crate::error::ApiError;
-use crate::extract::{ApiJson, RequireHq, UserSession};
+use crate::extract::{ApiJson, CatalogReader, RequireHq, UserSession};
 use crate::state::AppState;
 
 /// The receipt width of one branch.
@@ -75,7 +75,7 @@ async fn load(state: &AppState) -> Result<SalesSettingsDto, ApiError> {
     responses((status = 200, body = SalesSettingsDto), (status = 401, body = crate::openapi::Problem)))]
 pub async fn get(
     State(state): State<AppState>,
-    _session: UserSession,
+    _reader: CatalogReader,
 ) -> Result<Json<SalesSettingsDto>, ApiError> {
     Ok(Json(load(&state).await?))
 }

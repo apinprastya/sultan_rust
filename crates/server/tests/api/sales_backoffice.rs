@@ -196,6 +196,16 @@ async fn sales_settings_drive_the_window_and_width(h: &Harness) {
     let widths = r.body["receipt_widths"].as_array().unwrap();
     assert!(!widths.is_empty());
     assert!(widths.iter().all(|w| w["receipt_width"] == 32));
+    // A register may read them with its device token alone.
+    let r = Harness::send_to(
+        router(h.state(NodeRole::Hq)),
+        Method::GET,
+        "/api/v1/settings/sales",
+        &[("x-register-token", h.jkt_device.as_str())],
+        None,
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
     let jkt = h.jkt.id.to_string();
     let body = json!({
         "return_days": 0,
