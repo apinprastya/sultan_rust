@@ -78,6 +78,8 @@ pub enum Call {
         query: DocQuery,
         /// Next page.
         append: bool,
+        /// The list's request number when sent (stale answers are dropped).
+        seq: u64,
     },
     /// `returns`; appended when `append`.
     Returns {
@@ -85,9 +87,11 @@ pub enum Call {
         query: DocQuery,
         /// Next page.
         append: bool,
+        /// The list's request number when sent (stale answers are dropped).
+        seq: u64,
     },
     /// `customer_history` (customer, cursor).
-    History(String, Option<String>),
+    History(String, Option<String>, u64),
     /// `sale`.
     Sale(String),
     /// `sale_return`.
@@ -121,11 +125,11 @@ pub enum Call {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Reply {
     /// [`Call::Sales`] (append).
-    Sales(bool, Result<SalePage, ClientError>),
+    Sales(bool, u64, Result<SalePage, ClientError>),
     /// [`Call::Returns`] (append).
-    Returns(bool, Result<ReturnPage, ClientError>),
+    Returns(bool, u64, Result<ReturnPage, ClientError>),
     /// [`Call::History`] (append).
-    History(bool, Result<HistoryPage, ClientError>),
+    History(bool, u64, Result<HistoryPage, ClientError>),
     /// [`Call::Sale`].
     Sale(Result<Sale, ClientError>),
     /// [`Call::Return`].
@@ -182,6 +186,8 @@ pub struct DocList<T> {
     pub loaded: bool,
     /// Errors.
     pub notice: Option<Notice>,
+    /// The number of the latest fresh request (an answer of an older one is stale).
+    pub seq: u64,
 }
 
 impl<T> Default for DocList<T> {
@@ -193,11 +199,22 @@ impl<T> Default for DocList<T> {
             loading: false,
             loaded: false,
             notice: None,
+            seq: 0,
         }
     }
 }
 
 impl<T> DocList<T> {
+    /// Marks a request as started and returns its number: a fresh one (not `append`)
+    /// supersedes every request in flight.
+    fn begin(&mut self, append: bool) -> u64 {
+        if !append {
+            self.seq += 1;
+        }
+        self.loading = true;
+        self.seq
+    }
+
     fn take(&mut self, append: bool, rows: Vec<T>, next: Option<String>) {
         if append {
             self.rows.extend(rows);
@@ -440,16 +457,18 @@ impl Controller {
             return Vec::new();
         };
         if sales {
-            self.sales.sales.loading = true;
+            let seq = self.sales.sales.begin(false);
             vec![self.sales_call(Call::Sales {
                 query,
                 append: false,
+                seq,
             })]
         } else {
-            self.sales.returns.loading = true;
+            let seq = self.sales.returns.begin(false);
             vec![self.sales_call(Call::Returns {
                 query,
                 append: false,
+                seq,
             })]
         }
     }
@@ -465,10 +484,11 @@ impl Controller {
                 let Some(query) = self.doc_query(Some(next), true) else {
                     return Vec::new();
                 };
-                self.sales.sales.loading = true;
+                let seq = self.sales.sales.begin(true);
                 vec![self.sales_call(Call::Sales {
                     query,
                     append: true,
+                    seq,
                 })]
             }
             Screen::Returns => {
@@ -479,10 +499,11 @@ impl Controller {
                 let Some(query) = self.doc_query(Some(next), false) else {
                     return Vec::new();
                 };
-                self.sales.returns.loading = true;
+                let seq = self.sales.returns.begin(true);
                 vec![self.sales_call(Call::Returns {
                     query,
                     append: true,
+                    seq,
                 })]
             }
             Screen::CustomerHistory => {
@@ -493,8 +514,8 @@ impl Controller {
                 ) else {
                     return Vec::new();
                 };
-                self.sales.history.loading = true;
-                vec![self.sales_call(Call::History(id, Some(next)))]
+                let seq = self.sales.history.begin(true);
+                vec![self.sales_call(Call::History(id, Some(next), seq))]
             }
             _ => Vec::new(),
         }
@@ -563,11 +584,13 @@ impl Controller {
             return Vec::new();
         }
         self.sales.history_of = Some((id.clone(), name));
+        let seq = self.sales.history.seq + 1;
         self.sales.history = DocList {
             loading: true,
+            seq,
             ..DocList::default()
         };
-        vec![self.sales_call(Call::History(id, None))]
+        vec![self.sales_call(Call::History(id, None, seq))]
     }
 
     /// Opens a sale or return detail; Esc goes back to `back`.
@@ -1107,7 +1130,8 @@ impl Controller {
             return Vec::new();
         }
         match reply {
-            Reply::Sales(append, result) => match result {
+            Reply::Sales(_, seq, _) if seq != self.sales.sales.seq => {}
+            Reply::Sales(append, _, result) => match result {
                 Ok(page) => {
                     let rows: Vec<(Option<String>, String)> = page
                         .items
@@ -1124,7 +1148,8 @@ impl Controller {
                     self.sales.sales.notice = self.sales_failed(&e);
                 }
             },
-            Reply::Returns(append, result) => match result {
+            Reply::Returns(_, seq, _) if seq != self.sales.returns.seq => {}
+            Reply::Returns(append, _, result) => match result {
                 Ok(page) => {
                     let rows: Vec<(String, String)> = page
                         .items
@@ -1141,7 +1166,8 @@ impl Controller {
                     self.sales.returns.notice = self.sales_failed(&e);
                 }
             },
-            Reply::History(append, result) => match result {
+            Reply::History(_, seq, _) if seq != self.sales.history.seq => {}
+            Reply::History(append, _, result) => match result {
                 Ok(page) => self
                     .sales
                     .history
@@ -1330,5 +1356,20 @@ impl Controller {
             return Some(Self::denied_sales());
         }
         self.failed(e)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::DocList;
+
+    #[test]
+    fn a_fresh_request_supersedes_the_ones_in_flight() {
+        let mut list = DocList::<u8>::default();
+        let first = list.begin(false);
+        let second = list.begin(false);
+        assert_ne!(first, second, "an older answer no longer matches");
+        assert_eq!(list.begin(true), second, "a next page keeps the number");
+        assert!(list.loading);
     }
 }

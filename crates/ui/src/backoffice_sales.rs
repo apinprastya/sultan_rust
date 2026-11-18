@@ -103,24 +103,24 @@ pub fn start_sales(service: &dyn BackOffice, token: &str, call: &Call, lang: &st
         }};
     }
     match call {
-        Call::Sales { query, append } => {
-            let append = *append;
+        Call::Sales { query, append, seq } => {
+            let (append, seq) = (*append, *seq);
             call!(service.sales(token, query), move |r| Reply::Sales(
-                append, r
+                append, seq, r
             ))
         }
-        Call::Returns { query, append } => {
-            let append = *append;
+        Call::Returns { query, append, seq } => {
+            let (append, seq) = (*append, *seq);
             call!(service.returns(token, query), move |r| Reply::Returns(
-                append, r
+                append, seq, r
             ))
         }
         Call::SaleReturns(query) => call!(service.returns(token, query), Reply::SaleReturns),
-        Call::History(id, before) => {
-            let append = before.is_some();
+        Call::History(id, before, seq) => {
+            let (append, seq) = (before.is_some(), *seq);
             call!(
                 service.customer_history(token, id, before.as_deref()),
-                move |r| Reply::History(append, r)
+                move |r| Reply::History(append, seq, r)
             )
         }
         Call::Sale(id) => call!(service.sale(token, id), Reply::Sale),

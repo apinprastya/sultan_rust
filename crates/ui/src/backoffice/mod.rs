@@ -1269,7 +1269,10 @@ impl Controller {
     fn go(&mut self, target: Screen) -> Vec<Effect> {
         let dirty = match self.screen() {
             Screen::Form => self.form.as_ref().is_some_and(|f| f.form.is_dirty()),
-            Screen::CustomerForm => self
+            Screen::CustomerForm
+            | Screen::CustomerHistory
+            | Screen::SaleDetail
+            | Screen::ReturnDetail => self
                 .customers
                 .form
                 .as_ref()

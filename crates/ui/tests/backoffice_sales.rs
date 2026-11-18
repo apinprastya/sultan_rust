@@ -514,6 +514,29 @@ fn customer_purchase_history_tab() {
 }
 
 #[test]
+fn leaving_the_history_asks_before_dropping_customer_edits() {
+    let o = office(3, "en");
+    o.login("owner");
+    o.press(&["F6"]);
+    let row = o
+        .app
+        .ui
+        .get_customer_rows()
+        .iter()
+        .position(|r| r.name == "Ibu Emas")
+        .unwrap();
+    o.app
+        .ui
+        .invoke_pick("customer-open".into(), i32::try_from(row).unwrap(), 0);
+    o.edit("customer", "name", "Ibu Emas Baru");
+    o.ctrl("h");
+    assert_eq!(o.screen(), "customer-history");
+    o.press(&["F8"]);
+    assert_eq!(o.app.ui.get_confirm(), "discard");
+    assert_eq!(o.screen(), "customer-history");
+}
+
+#[test]
 fn indonesian_texts() {
     let o = office(3, "id");
     o.login("owner");

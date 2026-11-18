@@ -136,9 +136,6 @@ fn rule(error: &sultan_core::sale::SaleError) -> ClientError {
     p.into()
 }
 
-/// The return window of §8 (no stored setting yet, §19 item 39).
-const RETURN_DAYS: u32 = 30;
-
 /// A purchase history page.
 const HISTORY_PAGE: usize = 10;
 
@@ -258,7 +255,7 @@ impl State {
             Timestamp::from_unix_millis(at),
             Timestamp::from_unix_millis(self.now),
             sultan_core::doc_number::BranchTimeZone::default(),
-            RETURN_DAYS,
+            self.sales.settings.return_days,
         )
         .is_err()
     }
@@ -277,7 +274,7 @@ impl State {
         }
         Err(
             Problem::new(403, "return_window", "outside the return window")
-                .with("days", RETURN_DAYS)
+                .with("days", self.sales.settings.return_days)
                 .with("permission", "refund.with_receipt")
                 .into(),
         )
