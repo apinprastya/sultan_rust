@@ -46,8 +46,8 @@ use super::{BRANCH_ID, FakeService, REGISTER_ID, State, api, ready};
 use crate::sales::{
     CartVoid, CartVoidRequest, Discount, DocQuery, HeldCart, HistoryItem, HistoryPage, HoldRequest,
     Receipt, RefundTender, ReturnLine, ReturnPage, ReturnRequest, ReturnSummary, Sale, SaleLine,
-    SalePage, SaleRequest, SaleReturn, SaleSummary, SaleTender, SaleTotals, SaleVoid, TenderType,
-    TenderTypeBody, VoidRequest,
+    SalePage, SaleRequest, SaleReturn, SaleSummary, SaleTender, SaleTotals, SaleVoid,
+    SalesSettings, TenderType, TenderTypeBody, VoidRequest,
 };
 use crate::{ClientError, Problem, QuoteLine, QuoteRequest};
 
@@ -72,6 +72,8 @@ pub(super) struct Sales {
     keyed: HashMap<String, Sale>,
     /// A line void needs a manager too (as a cashier without `sale.void_line` would).
     pub(super) line_void_override: bool,
+    /// The sales settings (phase S6).
+    settings: SalesSettings,
 }
 
 impl Default for Sales {
@@ -106,6 +108,16 @@ impl Default for Sales {
             drawer: Vec::new(),
             keyed: HashMap::new(),
             line_void_override: false,
+            settings: SalesSettings {
+                return_days: 30,
+                receipt_widths: [BRANCH_ID, super::OTHER_BRANCH_ID]
+                    .into_iter()
+                    .map(|b| crate::BranchWidth {
+                        branch_id: b.to_owned(),
+                        receipt_width: 32,
+                    })
+                    .collect(),
+            },
         }
     }
 }
@@ -507,6 +519,10 @@ impl State {
             cashier_session_id: Some(session),
             user_id: Some(user.id),
             customer_id: body.customer_id.clone(),
+            customer_name: self.customer_name(body.customer_id.as_deref()),
+            customer_code: self.customer_code(body.customer_id.as_deref()),
+            cashier_name: Some(user.name.clone()),
+            register_code: Some("R1".to_owned()),
             tax_invoice: body.tax_invoice,
             tax_inclusive: tax.inclusive,
             subtotal: fresh.subtotal,
@@ -571,7 +587,7 @@ impl State {
     }
 
     fn list_sales(&self, query: &DocQuery) -> SalePage {
-        let items: Vec<SaleSummary> = self
+        let all: Vec<SaleSummary> = self
             .sales
             .sales
             .iter()
@@ -587,12 +603,170 @@ impl State {
                         .as_ref()
                         .is_none_or(|q| s.customer_id.as_ref() == Some(q))
                     && query.number.as_ref().is_none_or(|q| &s.number == q)
+                    && query.status.as_ref().is_none_or(|q| &s.status == q)
+                    && query.branch_id.as_ref().is_none_or(|q| &s.branch_id == q)
+                    && query
+                        .register_id
+                        .as_ref()
+                        .is_none_or(|q| s.register_id.as_ref() == Some(q))
+                    && query.from.is_none_or(|f| s.posted_at >= f)
+                    && query.until.is_none_or(|u| s.posted_at < u)
             })
             .collect();
+        let (items, next_before_id) = page_of(all, query, |s| &s.id);
         SalePage {
             items,
-            next_before_id: None,
+            next_before_id,
         }
+    }
+
+    /// The name of customer `id`, as the server joins it into lists.
+    fn customer_name(&self, id: Option<&str>) -> Option<String> {
+        id.and_then(|c| self.customer_record(c))
+            .map(|c| c.name.clone())
+    }
+
+    /// The member code of customer `id`.
+    fn customer_code(&self, id: Option<&str>) -> Option<String> {
+        id.and_then(|c| self.customer_record(c))
+            .map(|c| c.code.clone())
+    }
+
+    #[allow(clippy::too_many_lines)] // every block of `ReturnReceiptInput`, as the server builds it
+    fn return_receipt(
+        &mut self,
+        token: &str,
+        id: &str,
+        copy: bool,
+        lang: &str,
+        override_token: Option<&str>,
+    ) -> Result<Receipt, ClientError> {
+        use sultan_core::customer::{Phone, ReceiptCustomer};
+        use sultan_core::sale::{
+            Label, ReceiptHeader, ReceiptWidth, ReturnReceiptInput, ReturnReceiptLine,
+            ReturnReceiptTender, build_return_receipt,
+        };
+        self.any_caller(token)?;
+        let ret = self
+            .sales
+            .returns
+            .iter()
+            .find(|(_, r)| r.summary.id == id)
+            .map(|(_, r)| r.clone())
+            .ok_or_else(|| api(404, "not_found"))?;
+        if copy {
+            let user = self.caller(token).ok();
+            let last = user.as_ref().is_some_and(|u| {
+                self.session
+                    .as_ref()
+                    .filter(|s| s.user_id == u.id)
+                    .and_then(|s| {
+                        self.sales
+                            .returns
+                            .iter()
+                            .rev()
+                            .find(|(_, x)| x.summary.cashier_session_id == s.id)
+                    })
+                    .is_some_and(|(_, x)| x.summary.id == id)
+            });
+            match user {
+                Some(u) if !last => {
+                    self.manager_or_override(&u, "sale.reprint", None, id, override_token)?;
+                }
+                _ => {}
+            }
+        }
+        let s = &ret.summary;
+        let units: Vec<String> = ret
+            .lines
+            .iter()
+            .map(|l| {
+                self.line_names(&l.variant_id, &l.unit_id)
+                    .map(|(_, unit)| unit)
+                    .unwrap_or_default()
+            })
+            .collect();
+        let lines: Vec<ReturnReceiptLine<'_>> = ret
+            .lines
+            .iter()
+            .zip(&units)
+            .map(|(l, unit)| ReturnReceiptLine {
+                name: &l.name,
+                qty: Qty::from_thousandths(l.qty_thousandths),
+                unit,
+                refund: Money::from_minor(l.refund),
+                write_off: l.disposition == "write_off",
+            })
+            .collect();
+        let exchange = Label::Exchange.text(lang).to_owned();
+        let tenders: Vec<ReturnReceiptTender<'_>> = ret
+            .tenders
+            .iter()
+            .map(|t| ReturnReceiptTender {
+                name: t
+                    .tender_type_id
+                    .as_deref()
+                    .and_then(|id| self.tender(id).ok())
+                    .map_or(exchange.as_str(), |tt| tt.name.as_str()),
+                amount: Money::from_minor(t.amount),
+            })
+            .collect();
+        let customer = s
+            .customer_id
+            .as_deref()
+            .and_then(|c| self.customer_record(c));
+        let phone = customer
+            .and_then(|c| c.phone.as_deref())
+            .and_then(|p| Phone::parse(p).ok());
+        let number_of = |id: Option<&String>| {
+            id.and_then(|id| self.sale_index(id).ok())
+                .map(|i| self.sales.sales[i].1.summary.number.clone())
+        };
+        let sale_number = number_of(s.sale_id.as_ref());
+        let exchange_number = number_of(s.exchange_sale_id.as_ref());
+        let cashier = self
+            .user(&s.user_id)
+            .map(|u| u.name.clone())
+            .unwrap_or_default();
+        let footer = ["Terima kasih".to_owned()];
+        let input = ReturnReceiptInput {
+            width: ReceiptWidth::Cols32,
+            header: ReceiptHeader {
+                lines: &[],
+                branch_name: "Toko Jakarta",
+                address: "Jl. Contoh No. 1, Jakarta",
+                tax_id: None,
+            },
+            number: &s.number,
+            posted_at: sultan_core::time::Timestamp::from_unix_millis(s.posted_at),
+            tz: sultan_core::doc_number::BranchTimeZone::default(),
+            register: "R1",
+            cashier: &cashier,
+            customer: customer.map(|c| ReceiptCustomer {
+                name: &c.name,
+                company_name: c.company_name.as_deref(),
+                phone: phone.as_ref(),
+                tier_name: None,
+            }),
+            sale_number: sale_number.as_deref(),
+            lines: &lines,
+            cash_rounding: Money::from_minor(s.cash_rounding),
+            refund: Money::from_minor(s.refund),
+            tenders: &tenders,
+            exchange_number: exchange_number.as_deref(),
+            footer: &footer,
+            copy,
+        };
+        let built = build_return_receipt(&input, &|l| l.text(lang).to_owned());
+        Ok(Receipt {
+            return_id: s.id.clone(),
+            number: s.number.clone(),
+            copy,
+            text: built.text(),
+            lines: built.lines,
+            barcode: built.barcode,
+            ..Receipt::default()
+        })
     }
 
     fn receipt(
@@ -603,9 +777,12 @@ impl State {
         lang: &str,
         override_token: Option<&str>,
     ) -> Result<Receipt, ClientError> {
-        let user = self.caller(token)?;
         let sale = self.sales.sales[self.sale_index(id)?].1.clone();
-        if copy {
+        if copy && self.caller(token).is_err() {
+            // The back office reprints with `sale.reprint` (its manager users).
+            self.any_caller(token)?;
+        } else if copy {
+            let user = self.caller(token)?;
             let last = self
                 .session
                 .as_ref()
@@ -622,6 +799,7 @@ impl State {
                 self.manager_or_override(&user, "sale.reprint", None, id, override_token)?;
             }
         }
+        self.any_caller(token)?;
         let voided = sale.summary.status == "voided";
         let built = self.build_receipt(&sale, copy, voided, lang);
         let (text, lines) = (built.text(), built.lines);
@@ -633,6 +811,7 @@ impl State {
             lines,
             text,
             barcode: built.barcode,
+            return_id: String::new(),
         })
     }
 
@@ -1017,6 +1196,10 @@ impl State {
                 register_id: REGISTER_ID.to_owned(),
                 cashier_session_id: session,
                 user_id: user.id,
+                customer_name: self.customer_name(customer.as_deref()),
+                customer_code: self.customer_code(customer.as_deref()),
+                cashier_name: Some(user.name.clone()),
+                register_code: Some("R1".to_owned()),
                 customer_id: customer,
                 reason: body.reason.clone(),
                 refund,
@@ -1032,7 +1215,9 @@ impl State {
                     sale_line_no: l.sale_line_no,
                     variant_id: l.variant_id.clone(),
                     unit_id: l.unit_id.clone(),
-                    name: l.variant_id.clone(),
+                    name: self
+                        .line_names(&l.variant_id, &l.unit_id)
+                        .map_or_else(|| l.variant_id.clone(), |(name, _)| name),
                     qty_thousandths: l.qty_thousandths,
                     refund: *r,
                     disposition: if l.write_off_reason.is_some() {
@@ -1129,6 +1314,8 @@ impl State {
                 number: s.summary.number.clone(),
                 branch_id: s.summary.branch_id.clone(),
                 customer_id: customer.to_owned(),
+                customer_name: self.customer_name(Some(customer)).unwrap_or_default(),
+                customer_code: self.customer_code(Some(customer)).unwrap_or_default(),
                 posted_at: s.summary.posted_at,
                 total: s.summary.paid,
                 voided: s.summary.status == "voided",
@@ -1144,6 +1331,8 @@ impl State {
                         number: r.summary.number.clone(),
                         branch_id: r.summary.branch_id.clone(),
                         customer_id: customer.to_owned(),
+                        customer_name: self.customer_name(Some(customer)).unwrap_or_default(),
+                        customer_code: self.customer_code(Some(customer)).unwrap_or_default(),
                         posted_at: r.summary.posted_at,
                         total: r.summary.refund,
                         voided: false,
@@ -1232,6 +1421,30 @@ impl State {
         }
         self.bo_user(token).map(|_| ())
     }
+}
+
+/// One page of `all` (newest first) after `query.before_id`, at most `query.limit` (default 50),
+/// and the next page's cursor when more follow.
+fn page_of<T>(
+    all: Vec<T>,
+    query: &DocQuery,
+    id: impl Fn(&T) -> &String,
+) -> (Vec<T>, Option<String>) {
+    let start = query
+        .before_id
+        .as_ref()
+        .and_then(|b| all.iter().position(|x| id(x) == b))
+        .map_or(0, |i| i + 1);
+    let limit = query.limit.unwrap_or(50) as usize;
+    let rest: Vec<T> = all.into_iter().skip(start).collect();
+    let more = rest.len() > limit;
+    let items: Vec<T> = rest.into_iter().take(limit).collect();
+    let next = if more {
+        items.last().map(|x| id(x).clone())
+    } else {
+        None
+    };
+    (items, next)
 }
 
 fn run<T: Send + 'static>(
@@ -1492,23 +1705,106 @@ impl FakeService {
         let detail = serde_json::to_string(query).unwrap_or_default();
         run(self, "returns", detail, |s| {
             s.any_caller(token)?;
-            Ok(ReturnPage {
-                items: s
-                    .sales
-                    .returns
-                    .iter()
-                    .rev()
-                    .map(|(_, r)| r.summary.clone())
-                    .filter(|r| {
-                        query
-                            .cashier_session_id
+            let all: Vec<ReturnSummary> = s
+                .sales
+                .returns
+                .iter()
+                .rev()
+                .map(|(_, r)| r.summary.clone())
+                .filter(|r| {
+                    query
+                        .cashier_session_id
+                        .as_ref()
+                        .is_none_or(|q| &r.cashier_session_id == q)
+                        && query
+                            .customer_id
                             .as_ref()
-                            .is_none_or(|q| &r.cashier_session_id == q)
-                    })
-                    .collect(),
-                next_before_id: None,
+                            .is_none_or(|q| r.customer_id.as_ref() == Some(q))
+                        && query.number.as_ref().is_none_or(|q| &r.number == q)
+                        && query.status.as_ref().is_none_or(|q| &r.status == q)
+                        && query.branch_id.as_ref().is_none_or(|q| &r.branch_id == q)
+                        && query
+                            .register_id
+                            .as_ref()
+                            .is_none_or(|q| &r.register_id == q)
+                        && query.from.is_none_or(|f| r.posted_at >= f)
+                        && query.until.is_none_or(|u| r.posted_at < u)
+                })
+                .collect();
+            let (items, next_before_id) = page_of(all, query, |r| &r.id);
+            Ok(ReturnPage {
+                items,
+                next_before_id,
             })
         })
+    }
+
+    pub(super) fn return_receipt_call(
+        &self,
+        token: &str,
+        id: &str,
+        copy: bool,
+        lang: &str,
+        override_token: Option<&str>,
+    ) -> crate::BoxFuture<Receipt> {
+        run(
+            self,
+            "return_receipt",
+            format!("{id} copy={copy} lang={lang}"),
+            |s| s.return_receipt(token, id, copy, lang, override_token),
+        )
+    }
+
+    pub(super) fn sales_settings_call(&self, token: &str) -> crate::BoxFuture<SalesSettings> {
+        run(self, "sales_settings", String::new(), |s| {
+            s.any_caller(token)?;
+            Ok(s.sales.settings.clone())
+        })
+    }
+
+    pub(super) fn put_sales_settings_call(
+        &self,
+        token: &str,
+        body: &SalesSettings,
+    ) -> crate::BoxFuture<SalesSettings> {
+        run(
+            self,
+            "put_sales_settings",
+            serde_json::to_string(body).unwrap_or_default(),
+            |s| {
+                if !s.bo_user(token)?.manage {
+                    return Err(Problem::new(403, "permission_denied", "denied")
+                        .with("permission", crate::sales::TENDER_MANAGE)
+                        .into());
+                }
+                let invalid = |field: &str| -> ClientError {
+                    Problem::new(422, "invalid_field", field)
+                        .with("field", field)
+                        .into()
+                };
+                if body.return_days > 3_650 {
+                    return Err(invalid("return_days"));
+                }
+                for w in &body.receipt_widths {
+                    if ![32, 42, 48].contains(&w.receipt_width) {
+                        return Err(invalid("receipt_width"));
+                    }
+                }
+                let settings = &mut s.sales.settings;
+                settings.return_days = body.return_days;
+                for w in &body.receipt_widths {
+                    match settings
+                        .receipt_widths
+                        .iter_mut()
+                        .find(|x| x.branch_id == w.branch_id)
+                    {
+                        Some(x) => x.receipt_width = w.receipt_width,
+                        None => return Err(api(404, "not_found")),
+                    }
+                }
+                Ok(settings.clone())
+            },
+        )
     }
 
     pub(super) fn return_call(&self, token: &str, id: &str) -> crate::BoxFuture<SaleReturn> {
@@ -1521,5 +1817,133 @@ impl FakeService {
                 .map(|(_, r)| r.clone())
                 .ok_or_else(|| api(404, "not_found"))
         })
+    }
+}
+
+/// What [`FakeService::seed_sales_demo`] posted.
+#[derive(Debug, Clone)]
+pub struct SalesDemo {
+    /// The posted sales, oldest first (the second is voided, the third has a customer and a
+    /// return).
+    pub sales: Vec<Sale>,
+    /// The return of the third sale.
+    pub sale_return: SaleReturn,
+    /// The customer of the third sale (a record named "Ibu Emas", code `G0LD0001`).
+    pub customer: String,
+}
+
+impl FakeService {
+    /// Posts a small sales history through the register calls (the back office's sales screens
+    /// and their screenshots, phase S6): ani opens a session and sells `count` (at least 3)
+    /// sales of Teh Botol; the second is post-voided with Budi's approval, the third is for the
+    /// Gold customer and one of its 2 items comes back by receipt. Seeds the pricing demo.
+    ///
+    /// # Panics
+    /// When a register call fails (a broken fake).
+    #[allow(clippy::too_many_lines)] // one scripted register session
+    pub async fn seed_sales_demo(&self, count: usize) -> SalesDemo {
+        use crate::{
+            OverrideRequest, ReturnLineRequest, SaleLineRequest, Service as _, TenderRequest,
+        };
+        let demo = self.seed_pricing_demo();
+        self.seed_customer(crate::Customer {
+            id: demo.gold_customer.clone(),
+            code: "G0LD0001".to_owned(),
+            display_code: "G0LD-0001".to_owned(),
+            name: "Ibu Emas".to_owned(),
+            phone: Some("+6281234500001".to_owned()),
+            ..crate::Customer::default()
+        });
+        let variant = demo.teh.variants[0].id.clone();
+        let unit = demo.teh.base_unit_id.clone();
+        let cashier = self.pin_login("u-ani", "1234").await.unwrap().token;
+        if self.current_session(&cashier).await.unwrap().is_none() {
+            self.open_session(&cashier, 0, "seed-open").await.unwrap();
+        }
+        let mut sales = Vec::new();
+        for i in 0..count.max(3) {
+            let qty = i64::try_from(i % 3 + 1).unwrap_or(1);
+            let mut body = SaleRequest {
+                lines: vec![SaleLineRequest {
+                    variant_id: variant.clone(),
+                    unit_id: unit.clone(),
+                    qty_thousandths: qty * 1000,
+                    ..SaleLineRequest::default()
+                }],
+                tenders: vec![TenderRequest {
+                    tender_type_id: TENDER_CASH.to_owned(),
+                    amount: 20_000,
+                    reference: None,
+                }],
+                ..SaleRequest::default()
+            };
+            if i == 2 {
+                body.customer_id = Some(demo.gold_customer.clone());
+            }
+            let id = format!("seed-sale-{i:03}");
+            let stale = self
+                .post_sale(&cashier, &id, &body, None)
+                .await
+                .unwrap_err();
+            body.totals = stale.problem().and_then(Problem::quote_totals).unwrap();
+            sales.push(self.post_sale(&cashier, &id, &body, None).await.unwrap());
+            let now = self.state().now;
+            self.set_now(now + 7 * 60_000);
+        }
+        let voided = sales[1].summary.id.clone();
+        let grant = self
+            .request_override(
+                &cashier,
+                &OverrideRequest {
+                    action: "sale.post_void".to_owned(),
+                    value: None,
+                    context_ref: voided.clone(),
+                    approver_id: "u-budi".to_owned(),
+                    approver_pin: "9999".to_owned(),
+                },
+            )
+            .await
+            .unwrap()
+            .token;
+        sales[1] = self
+            .void_sale(
+                &cashier,
+                &voided,
+                &VoidRequest {
+                    reason: "wrong_item".to_owned(),
+                    reason_text: None,
+                    refund: "cash".to_owned(),
+                },
+                "seed-void",
+                Some(&grant),
+            )
+            .await
+            .unwrap();
+        let sale_return = self
+            .post_return(
+                &cashier,
+                "seed-return-001",
+                &ReturnRequest {
+                    sale_id: Some(sales[2].summary.id.clone()),
+                    refund: "cash".to_owned(),
+                    lines: vec![ReturnLineRequest {
+                        sale_line_no: Some(1),
+                        variant_id: variant,
+                        unit_id: unit,
+                        qty_thousandths: 1_000,
+                        write_off_reason: None,
+                    }],
+                    ..ReturnRequest::default()
+                },
+                None,
+            )
+            .await
+            .unwrap();
+        sales[2] = self.sale(&cashier, &sales[2].summary.id).await.unwrap();
+        SalesDemo {
+            sales,
+            sale_return,
+            customer: demo.gold_customer,
+        }
     }
 }

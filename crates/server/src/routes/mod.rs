@@ -45,6 +45,7 @@ pub mod returns;
 pub mod roles;
 pub mod sale_post;
 pub mod sales;
+pub mod sales_settings;
 pub mod taxonomy;
 pub mod tender_types;
 pub mod users;

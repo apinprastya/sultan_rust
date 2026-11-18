@@ -1192,6 +1192,16 @@ impl BackOffice for FakeService {
             if u.manage || u.manage_here {
                 here.push(crate::pricing::PRICE_MANAGE.to_owned());
             }
+            // Sales (spec 2.6 S6): `tender.manage` with `catalog.manage` (HQ), and
+            // `report.sales` for the owner and the managers.
+            if u.manage {
+                everywhere.push(crate::sales::TENDER_MANAGE.to_owned());
+                everywhere.push("report.sales".to_owned());
+                here.push(crate::sales::TENDER_MANAGE.to_owned());
+            }
+            if u.manage || u.manage_here {
+                here.push("report.sales".to_owned());
+            }
             let anywhere = here.clone();
             Me {
                 user_id: u.id,
@@ -1601,5 +1611,17 @@ impl BackOffice for FakeService {
 
     fn sale_return(&self, token: &str, id: &str) -> crate::BoxFuture<crate::SaleReturn> {
         self.return_call(token, id)
+    }
+
+    fn sales_settings(&self, token: &str) -> crate::BoxFuture<crate::SalesSettings> {
+        self.sales_settings_call(token)
+    }
+
+    fn put_sales_settings(
+        &self,
+        token: &str,
+        body: &crate::SalesSettings,
+    ) -> crate::BoxFuture<crate::SalesSettings> {
+        self.put_sales_settings_call(token, body)
     }
 }

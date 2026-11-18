@@ -90,6 +90,16 @@ pub enum Label {
     Balance,
     /// The exchange tender.
     Exchange,
+    /// The title of a return receipt.
+    Return,
+    /// Before the original sale's number on a return receipt.
+    OriginalSale,
+    /// A returned line that was written off (not restocked).
+    WriteOff,
+    /// The refund total of a return.
+    Refund,
+    /// Before the exchange sale's number on a return receipt.
+    ExchangeSale,
 }
 
 impl Label {
@@ -114,6 +124,11 @@ impl Label {
             Self::SavedToBalance => "Saved to balance",
             Self::Balance => "Balance",
             Self::Exchange => "Exchange",
+            Self::Return => "RETURN",
+            Self::OriginalSale => "Sale",
+            Self::WriteOff => "write-off",
+            Self::Refund => "REFUND",
+            Self::ExchangeSale => "Exchange sale",
         }
     }
 
@@ -138,6 +153,11 @@ impl Label {
             Self::SavedToBalance => "Disimpan ke saldo",
             Self::Balance => "Saldo",
             Self::Exchange => "Tukar barang",
+            Self::Return => "RETUR",
+            Self::OriginalSale => "Nota",
+            Self::WriteOff => "dihapusbukukan",
+            Self::Refund => "PENGEMBALIAN",
+            Self::ExchangeSale => "Nota tukar",
         }
     }
 
@@ -488,6 +508,147 @@ pub fn build_receipt(input: &ReceiptInput<'_>, label: &dyn Fn(Label) -> String) 
     }
     if input.voided {
         p.center(&format!("*** {} ***", label(Label::Void)));
+    }
+    Receipt {
+        lines: p.lines,
+        barcode: input.number.to_owned(),
+    }
+}
+
+/// One returned line of a return receipt.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ReturnReceiptLine<'a> {
+    /// The receipt name.
+    pub name: &'a str,
+    /// The returned quantity.
+    pub qty: Qty,
+    /// The unit's short name.
+    pub unit: &'a str,
+    /// The refund of the line.
+    pub refund: Money,
+    /// Written off instead of restocked.
+    pub write_off: bool,
+}
+
+/// A refund tender of a return receipt (cash, customer balance, or the exchange).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ReturnReceiptTender<'a> {
+    /// The tender type's name (or the translated exchange label).
+    pub name: &'a str,
+    /// The amount paid back.
+    pub amount: Money,
+}
+
+/// Everything a return receipt prints (spec 2.6 §8, §9; phase S6).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReturnReceiptInput<'a> {
+    /// Columns.
+    pub width: ReceiptWidth,
+    /// The branch block.
+    pub header: ReceiptHeader<'a>,
+    /// The return number.
+    pub number: &'a str,
+    /// When it was posted.
+    pub posted_at: Timestamp,
+    /// The branch's time zone.
+    pub tz: BranchTimeZone,
+    /// The register code.
+    pub register: &'a str,
+    /// The cashier's name.
+    pub cashier: &'a str,
+    /// The customer line (2.5 §10).
+    pub customer: Option<ReceiptCustomer<'a>>,
+    /// The original sale's number (a return by receipt).
+    pub sale_number: Option<&'a str>,
+    /// The returned lines.
+    pub lines: &'a [ReturnReceiptLine<'a>],
+    /// Cash rounding of the cash part (+/−).
+    pub cash_rounding: Money,
+    /// Σ refunds of the lines.
+    pub refund: Money,
+    /// How it was paid back.
+    pub tenders: &'a [ReturnReceiptTender<'a>],
+    /// The exchange sale's number.
+    pub exchange_number: Option<&'a str>,
+    /// The branch footer lines.
+    pub footer: &'a [String],
+    /// A reprint.
+    pub copy: bool,
+}
+
+/// Builds a return receipt in the style of [`build_receipt`]: branch header, COPY marker, the
+/// RETURN title, number, local date and time, register and cashier, customer line, the original
+/// sale's number, lines (name, qty, refund, a write-off mark), the refund total, cash rounding,
+/// the refund tenders, the exchange sale's number and the footer. The return number is the
+/// barcode payload.
+#[must_use]
+pub fn build_return_receipt(
+    input: &ReturnReceiptInput<'_>,
+    label: &dyn Fn(Label) -> String,
+) -> Receipt {
+    let mut p = Page {
+        width: input.width.cols(),
+        lines: Vec::new(),
+    };
+    for line in input.header.lines {
+        p.center(line);
+    }
+    p.center(input.header.branch_name);
+    p.center(input.header.address);
+    if let Some(tax_id) = input.header.tax_id {
+        p.center(&format!("{} {tax_id}", label(Label::TaxId)));
+    }
+    if input.copy {
+        p.center(&format!("*** {} ***", label(Label::Copy)));
+    }
+    p.center(&format!("*** {} ***", label(Label::Return)));
+    p.rule();
+    p.left(input.number);
+    p.left(
+        &input
+            .tz
+            .local_datetime(input.posted_at)
+            .format("%d/%m/%Y %H:%M")
+            .to_string(),
+    );
+    p.pair(
+        &format!("{} {}", label(Label::Register), input.register),
+        &format!("{} {}", label(Label::Cashier), input.cashier),
+    );
+    if let Some(c) = input.customer {
+        p.left(&c.line());
+    }
+    if let Some(sale) = input.sale_number {
+        p.left(&format!("{}: {sale}", label(Label::OriginalSale)));
+    }
+    p.rule();
+    for line in input.lines {
+        p.left(line.name);
+        p.money(
+            &format!("  {} {}", format_qty(line.qty), line.unit),
+            line.refund,
+        );
+        if line.write_off {
+            p.left(&format!("  ({})", label(Label::WriteOff)));
+        }
+    }
+    p.rule();
+    p.money(&label(Label::Refund), input.refund);
+    if input.cash_rounding != Money::ZERO {
+        p.money(&label(Label::Rounding), input.cash_rounding);
+    }
+    p.rule();
+    for tender in input.tenders {
+        p.money(tender.name, tender.amount);
+    }
+    if let Some(number) = input.exchange_number {
+        p.left(&format!("{}: {number}", label(Label::ExchangeSale)));
+    }
+    if !input.footer.is_empty() {
+        p.rule();
+        for line in input.footer {
+            p.center(line);
+        }
     }
     Receipt {
         lines: p.lines,
@@ -973,6 +1134,11 @@ mod tests {
             SavedToBalance,
             Balance,
             Exchange,
+            Return,
+            OriginalSale,
+            WriteOff,
+            Refund,
+            ExchangeSale,
         ] {
             assert!(!l.english().is_empty());
             assert!(!l.indonesian().is_empty());
@@ -980,5 +1146,113 @@ mod tests {
             assert_eq!(l.text("id"), l.indonesian());
         }
         assert_eq!(Label::Change.text("id-ID"), "Kembali");
+    }
+
+    #[allow(clippy::too_many_lines)] // one table of cases
+    #[test]
+    fn return_receipt_cases() {
+        let header = vec!["Selamat datang".to_owned()];
+        let footer = vec!["Terima kasih".to_owned()];
+        let lines = [
+            ReturnReceiptLine {
+                name: "Kopi Susu 250 ml",
+                qty: Qty::from_thousandths(2_000),
+                unit: "pcs",
+                refund: m(30_000),
+                write_off: false,
+            },
+            ReturnReceiptLine {
+                name: "Beras",
+                qty: Qty::from_thousandths(1_250),
+                unit: "kg",
+                refund: m(18_750),
+                write_off: true,
+            },
+        ];
+        let tenders = [
+            ReturnReceiptTender {
+                name: "Tunai",
+                amount: m(48_700),
+            },
+            ReturnReceiptTender {
+                name: "Saldo pelanggan",
+                amount: m(0),
+            },
+        ];
+        let phone = Phone::parse("+628123456789").unwrap();
+        let input = ReturnReceiptInput {
+            width: ReceiptWidth::Cols32,
+            header: ReceiptHeader {
+                lines: &header,
+                branch_name: "Toko Sultan",
+                address: "Jl. Kemang 1",
+                tax_id: Some("01.234"),
+            },
+            number: "JKT01-R1-RT-261116-0001",
+            posted_at: Timestamp::from_unix_millis(1_763_276_700_000),
+            tz: BranchTimeZone::default(),
+            register: "R1",
+            cashier: "Sari",
+            customer: Some(ReceiptCustomer {
+                name: "Budi Santoso",
+                company_name: None,
+                phone: Some(&phone),
+                tier_name: None,
+            }),
+            sale_number: Some("JKT01-R1-261116-0007"),
+            lines: &lines,
+            cash_rounding: m(-50),
+            refund: m(48_750),
+            tenders: &tenders,
+            exchange_number: Some("JKT01-R1-261116-0008"),
+            footer: &footer,
+            copy: true,
+        };
+        let r = build_return_receipt(&input, &english);
+        assert_eq!(r.barcode, "JKT01-R1-RT-261116-0001");
+        assert!(r.lines.iter().all(|l| l.chars().count() <= 32), "{r:?}");
+        let text = r.text();
+        for want in [
+            "*** COPY ***",
+            "*** RETURN ***",
+            "Sale: JKT01-R1-261116-0007",
+            "Budi S. · 0812****789",
+            "  2 pcs",
+            "30.000",
+            "  1,25 kg",
+            "  (write-off)",
+            "REFUND",
+            "48.750",
+            "Rounding",
+            "-50",
+            "Tunai",
+            "48.700",
+            "Exchange sale:",
+            "JKT01-R1-261116-0008",
+            "Terima kasih",
+            "NPWP 01.234",
+        ] {
+            assert!(text.contains(want), "missing {want:?} in\n{text}");
+        }
+        // Indonesian, no copy, no rounding, without receipt or exchange.
+        let plain = ReturnReceiptInput {
+            copy: false,
+            cash_rounding: Money::ZERO,
+            sale_number: None,
+            exchange_number: None,
+            customer: None,
+            footer: &[],
+            width: ReceiptWidth::Cols48,
+            ..input
+        };
+        let r = build_return_receipt(&plain, &|l| l.indonesian().to_owned());
+        let text = r.text();
+        assert!(text.contains("*** RETUR ***"));
+        assert!(text.contains("PENGEMBALIAN"));
+        assert!(text.contains("(dihapusbukukan)"));
+        for absent in ["SALINAN", "Pembulatan", "Nota", "Terima kasih"] {
+            assert!(!text.contains(absent), "{absent:?} in\n{text}");
+        }
+        assert!(r.lines.iter().all(|l| l.chars().count() <= 48));
     }
 }

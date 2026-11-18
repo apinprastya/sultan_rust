@@ -639,7 +639,7 @@ impl Controller {
                         || matches!(s.modal, Some(Modal::Receipt(_)))
                         || matches!(&s.modal, Some(Modal::Return(r))
                             if r.step == crate::after::ReturnStep::Lines
-                                && !r.no_receipt
+                                && (!r.no_receipt || r.text.is_empty())
                                 && r.write_off.is_none())
                 }) =>
             {

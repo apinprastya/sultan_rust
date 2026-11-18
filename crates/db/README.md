@@ -36,6 +36,16 @@ Persistence for Sultan POS: sqlx migrations and repositories for SQLite and MySQ
 - **Balance kind `refund`:** SQLite cannot change a `CHECK`, so `20261117000002_balance_refund.sql`
   rebuilds `customer_balance_entry` (copy, drop, rename, recreate the index and the append-only
   triggers); MySQL drops and re-adds the two named checks.
+- **Sales settings (phase S6, `20261118000001_sales_settings.sql`, `src/sales/settings.rs`):**
+  `sales_settings` is one company row (`id = 1`) with `return_days` (default 30, `0` = no return
+  window, at most 3650), like `pricing_settings` and `customer_balance_settings`;
+  `branch_sales_settings` holds the receipt width per branch (`CHECK` 32, 42 or 48; a branch
+  without a row prints 32). `put_sales_settings` writes both with one audit row and one outbox
+  row `sales_settings.put` (nothing when unchanged).
+- **Names in lists (S6):** sale and return headers join the customer's `name` / `code`, the
+  cashier's `display_name` and the register's `code` (a derived table, so the callers' `WHERE`
+  clauses stay unqualified; no query per row); the purchase history joins the name and code of the
+  customer each document was posted for. `DocFilter.status` filters by `posted` / `voided`.
 
 ## Tests
 

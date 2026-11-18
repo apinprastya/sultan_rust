@@ -41,6 +41,7 @@ mod held;
 mod history;
 mod returns;
 mod sale;
+mod settings;
 mod stock;
 mod tender_types;
 
@@ -78,6 +79,10 @@ pub use sale::{
     DocFilter, MAX_DOC_PAGE, NewSale, NewSaleVoid, Sale, SaleHeader, SaleLine, SaleTotals,
     SaleVoid, StoredSaleLine, get_sale, get_sale_by_number, list_sales, post_sale, replayed_sale,
     void_sale,
+};
+pub use settings::{
+    DEFAULT_RECEIPT_WIDTH, DEFAULT_RETURN_DAYS, MAX_RETURN_DAYS, RECEIPT_WIDTHS, SalesSettings,
+    get_sales_settings, put_sales_settings, receipt_width, return_days,
 };
 pub use stock::{StockMovementRecord, document_movements, stock_on_hand};
 pub use tender_types::{

@@ -6987,6 +6987,105 @@
           }
         },
         {
+          "name": "139a Return receipt (in Indonesian)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 with the RETUR title and the sale number', () => {",
+                  "    pm.response.to.have.status(200);",
+                  "    const r = pm.response.json();",
+                  "    pm.expect(r.return_id).to.eql(pm.collectionVariables.get('slReturn'));",
+                  "    pm.expect(r.text).to.include('*** RETUR ***');",
+                  "    pm.expect(r.copy).to.eql(false);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerPinToken}}"
+              },
+              {
+                "key": "X-Register-Token",
+                "value": "{{deviceToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/returns/{{slReturn}}/receipt?lang=id",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "returns",
+                "{{slReturn}}",
+                "receipt"
+              ],
+              "query": [
+                {
+                  "key": "lang",
+                  "value": "id"
+                }
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "139b Reprint the last return (COPY, free in its session)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 marked COPY', () => {",
+                  "    pm.response.to.have.status(200);",
+                  "    pm.expect(pm.response.json().text).to.include('COPY');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerPinToken}}"
+              },
+              {
+                "key": "X-Register-Token",
+                "value": "{{deviceToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/returns/{{slReturn}}/receipt?copy=true",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "returns",
+                "{{slReturn}}",
+                "receipt"
+              ],
+              "query": [
+                {
+                  "key": "copy",
+                  "value": "true"
+                }
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
           "name": "140 A sale with a return cannot be voided",
           "event": [
             {
@@ -7293,6 +7392,284 @@
               ]
             },
             "description": ""
+          }
+        },
+        {
+          "name": "145a Sales list names the customer and filters by status",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200; posted only; names joined', () => {",
+                  "    pm.response.to.have.status(200);",
+                  "    const items = pm.response.json().items;",
+                  "    pm.expect(items.every((s) => s.status === 'posted')).to.eql(true);",
+                  "    pm.expect(items.every((s) => 'customer_name' in s && 'cashier_name' in s && 'register_code' in s)).to.eql(true);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/sales?branch_id={{branchId}}&status=posted",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "sales"
+              ],
+              "query": [
+                {
+                  "key": "branch_id",
+                  "value": "{{branchId}}"
+                },
+                {
+                  "key": "status",
+                  "value": "posted"
+                }
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "145b An unknown status is rejected",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('422 invalid_field', () => {",
+                  "    pm.response.to.have.status(422);",
+                  "    pm.expect(pm.response.json().field).to.eql('status');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/sales?status=held",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "sales"
+              ],
+              "query": [
+                {
+                  "key": "status",
+                  "value": "held"
+                }
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "145c Sales settings (defaults)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 with return_days 30 and a width per branch', () => {",
+                  "    pm.response.to.have.status(200);",
+                  "    const s = pm.response.json();",
+                  "    pm.expect(s.return_days).to.eql(30);",
+                  "    pm.expect(s.receipt_widths.length).to.be.above(0);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/settings/sales",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "settings",
+                "sales"
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "145d Set return_days 0 and the branch's receipt width to 48",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 stored', () => {",
+                  "    pm.response.to.have.status(200);",
+                  "    const s = pm.response.json();",
+                  "    pm.expect(s.return_days).to.eql(0);",
+                  "    pm.expect(s.receipt_widths.find((w) => w.branch_id === pm.collectionVariables.get('branchId')).receipt_width).to.eql(48);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/settings/sales",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "settings",
+                "sales"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"return_days\": 0,\n  \"receipt_widths\": [{ \"branch_id\": \"{{branchId}}\", \"receipt_width\": 48 }]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "145e A width of 40 is rejected",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('422 invalid_field', () => {",
+                  "    pm.response.to.have.status(422);",
+                  "    pm.expect(pm.response.json().field).to.eql('receipt_width');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/settings/sales",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "settings",
+                "sales"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"return_days\": 30,\n  \"receipt_widths\": [{ \"branch_id\": \"{{branchId}}\", \"receipt_width\": 40 }]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "145f Back to the defaults",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/settings/sales",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "settings",
+                "sales"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"return_days\": 30,\n  \"receipt_widths\": [{ \"branch_id\": \"{{branchId}}\", \"receipt_width\": 32 }]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
           }
         },
         {

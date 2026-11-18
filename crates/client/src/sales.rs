@@ -274,6 +274,14 @@ pub struct SaleSummary {
     pub user_id: Option<String>,
     /// Customer.
     pub customer_id: Option<String>,
+    /// The customer's name (lists, phase S6).
+    pub customer_name: Option<String>,
+    /// The customer's member code.
+    pub customer_code: Option<String>,
+    /// The cashier's display name (phase S6).
+    pub cashier_name: Option<String>,
+    /// The register's code (phase S6).
+    pub register_code: Option<String>,
     /// Tax invoice.
     pub tax_invoice: bool,
     /// Tax-inclusive prices.
@@ -369,6 +377,9 @@ pub struct DocQuery {
     /// Number.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub number: Option<String>,
+    /// `posted` or `voided` (sales; phase S6).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub status: Option<String>,
     /// Page cursor.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub before_id: Option<String>,
@@ -377,12 +388,14 @@ pub struct DocQuery {
     pub limit: Option<u32>,
 }
 
-/// A receipt (`GET /sales/{id}/receipt`).
+/// A receipt (`GET /sales/{id}/receipt`, or `GET /returns/{id}/receipt` since phase S6).
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Receipt {
-    /// The sale.
+    /// The sale (empty for a return receipt).
     pub sale_id: String,
+    /// The return (a return receipt).
+    pub return_id: String,
     /// Its number.
     pub number: String,
     /// A reprint.
@@ -545,6 +558,14 @@ pub struct ReturnSummary {
     pub user_id: String,
     /// Customer.
     pub customer_id: Option<String>,
+    /// The customer's name (lists, phase S6).
+    pub customer_name: Option<String>,
+    /// The customer's member code.
+    pub customer_code: Option<String>,
+    /// The cashier's display name (phase S6).
+    pub cashier_name: Option<String>,
+    /// The register's code (phase S6).
+    pub register_code: Option<String>,
     /// The note.
     pub reason: Option<String>,
     /// Σ refunds.
@@ -639,6 +660,10 @@ pub struct HistoryItem {
     pub branch_id: String,
     /// The customer it was posted for.
     pub customer_id: String,
+    /// That customer's name (phase S6).
+    pub customer_name: String,
+    /// That customer's member code.
+    pub customer_code: String,
     /// Posted (unix ms).
     pub posted_at: i64,
     /// Paid (sale) or refunded (return).
@@ -655,6 +680,25 @@ pub struct HistoryPage {
     pub items: Vec<HistoryItem>,
     /// The next page's `before`.
     pub next_before_id: Option<String>,
+}
+
+/// The receipt width of one branch (`GET /settings/sales`).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BranchWidth {
+    /// The branch.
+    pub branch_id: String,
+    /// 32, 42 or 48 columns.
+    pub receipt_width: u16,
+}
+
+/// The sales settings (`GET|PUT /settings/sales`, spec 2.6 phase S6).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct SalesSettings {
+    /// The return window in days (default 30; `0` = no limit).
+    pub return_days: u32,
+    /// The receipt width of each branch (a `PUT` changes only the listed ones).
+    pub receipt_widths: Vec<BranchWidth>,
 }
 
 /// Body of `POST /drawer/open` (`drawer.open`, spec 2.6 §13 F5).

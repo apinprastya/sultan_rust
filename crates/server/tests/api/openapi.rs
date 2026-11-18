@@ -86,6 +86,8 @@ async fn openapi_lists_the_routes(h: &Harness) {
         ("/api/v1/drawer/open", "post"),
         ("/api/v1/returns", "get"),
         ("/api/v1/returns/{id}", "get"), ("/api/v1/returns/{id}", "put"),
+        ("/api/v1/returns/{id}/receipt", "get"),
+        ("/api/v1/settings/sales", "get"), ("/api/v1/settings/sales", "put"),
         ("/api/v1/held-carts", "get"),
         ("/api/v1/held-carts/{id}", "put"), ("/api/v1/held-carts/{id}", "delete"),
         ("/api/v1/held-carts/{id}/take", "post"),

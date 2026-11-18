@@ -302,6 +302,28 @@ export global BoStrings {
         if (code == "invalid_amount") {
             return @tr("Type an amount in Rupiah, 0 or more.");
         }
+        // Sales (spec 2.6, S6).
+        if (code == "sales_denied") {
+            return @tr("Reading sales needs the permission {}. Ask the owner.", arg);
+        }
+        if (code == "tender_read_only") {
+            return @tr("Read-only: changing tender types and the sales settings needs the permission {} at HQ.", arg);
+        }
+        if (code == "invalid_tender_name") {
+            return @tr("Type a name (1 to 40 characters).");
+        }
+        if (code == "invalid_sort") {
+            return @tr("Type the position as a whole number, 0 or more.");
+        }
+        if (code == "invalid_return_days") {
+            return @tr("Type the days as a whole number from 0 to 3650.");
+        }
+        if (code == "tender_archived") {
+            return @tr("Tender type archived.");
+        }
+        if (code == "customer_not_found") {
+            return @tr("No customer has this member code or phone.");
+        }
         // Pricing (spec 2.3, R4).
         if (code == "price_read_only") {
             return @tr("Read-only: changing prices needs the permission price.manage. Ask the owner.");
@@ -380,6 +402,93 @@ export global BoStrings {
 
     // Labels for codes (types, empty choices).
     public pure function label(code: string) -> string {
+        if (code == "posted_at") {
+            return @tr("Posted");
+        }
+        if (code == "place") {
+            return @tr("Branch / register");
+        }
+        if (code == "cashier") {
+            return @tr("Cashier");
+        }
+        if (code == "customer") {
+            return @tr("Customer");
+        }
+        if (code == "tax_invoice") {
+            return @tr("Tax invoice");
+        }
+        if (code == "subtotal") {
+            return @tr("Subtotal");
+        }
+        if (code == "line_discount") {
+            return @tr("Line discounts");
+        }
+        if (code == "cart_discount") {
+            return @tr("Cart discount");
+        }
+        if (code == "tax") {
+            return @tr("Tax (PPN)");
+        }
+        if (code == "tax_included") {
+            return @tr("Incl. tax (PPN)");
+        }
+        if (code == "cash_rounding") {
+            return @tr("Cash rounding");
+        }
+        if (code == "paid") {
+            return @tr("Paid");
+        }
+        if (code == "change") {
+            return @tr("Change");
+        }
+        if (code == "saved_change") {
+            return @tr("Saved to balance");
+        }
+        if (code == "voided_at") {
+            return @tr("Voided");
+        }
+        if (code == "void_reason") {
+            return @tr("Void reason");
+        }
+        if (code == "refund_cash") {
+            return @tr("Paid back in cash");
+        }
+        if (code == "refund_balance") {
+            return @tr("Back to the balance");
+        }
+        if (code == "no_receipt") {
+            return @tr("Without receipt");
+        }
+        if (code == "return_reason") {
+            return @tr("Note");
+        }
+        if (code == "refund") {
+            return @tr("Refund");
+        }
+        if (code == "exchange") {
+            return @tr("Exchange");
+        }
+        if (code == "tender_cash") {
+            return @tr("Cash");
+        }
+        if (code == "tender_card") {
+            return @tr("Card");
+        }
+        if (code == "tender_qris") {
+            return @tr("QRIS");
+        }
+        if (code == "tender_transfer") {
+            return @tr("Transfer");
+        }
+        if (code == "tender_ewallet") {
+            return @tr("E-wallet");
+        }
+        if (code == "tender_customer_balance") {
+            return @tr("Customer balance");
+        }
+        if (code == "tender_other") {
+            return @tr("Other");
+        }
         if (code == "stock") {
             return @tr("Stock");
         }

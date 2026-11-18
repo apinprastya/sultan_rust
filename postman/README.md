@@ -6,7 +6,7 @@ of the catalog, spec 2.2 (`docs/spec/2.2-catalog.md`), of pricing, spec 2.3
 spec 2.6 (`docs/spec/2.6-sales.md`), against a running node. Requests and bodies follow the OpenAPI document served at
 `GET /api/v1/openapi.json` (import that URL into Postman to browse every endpoint).
 
-Flow (149 requests, each with test scripts). Spec 2.1 (requests 01–35):
+Flow (157 requests, each with test scripts). Spec 2.1 (requests 01–35):
 password login → OpenAPI document → create branch (`PUT`, client UUIDv7, time zone
 `Asia/Makassar`) → replay the same `PUT` (idempotent) → a time zone that is not IANA (`WIB`) is
 rejected (`invalid_field`) → create register → issue pairing code → pair (the answer names the branch: `branch_code`,
@@ -134,6 +134,8 @@ postman collection run postman/sultan-api.postman_collection.json --working-dir 
 
 S5 (2026-11-18) ran the whole collection against `sultan serve` on a fresh SQLite database
 (149/149 requests passed).
+S6 (2026-11-18) added the return receipt (139a–b), the names and `status` filter of `GET /sales`
+and the sales settings (145a–f), and ran it again the same way (157/157 requests passed).
 
 The run needs no Postman login; it only prints a note that results are not published to the cloud.
 

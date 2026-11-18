@@ -356,6 +356,20 @@ async fn flow(
         .await
         .unwrap();
     assert_eq!(r.summary.refund, price);
+    // The return receipt (phase S6); the last return of the session is reprinted for free.
+    let slip = register
+        .return_receipt(cashier, &r.summary.id, false, "id", None)
+        .await
+        .unwrap();
+    assert!(slip.text.contains("RETUR"), "{}", slip.text);
+    assert_eq!(slip.return_id, r.summary.id);
+    assert_eq!(slip.barcode, r.summary.number);
+    let copy = register
+        .return_receipt(cashier, &r.summary.id, true, "en", None)
+        .await
+        .unwrap();
+    assert!(copy.copy && copy.text.contains("COPY"), "{}", copy.text);
+    let first_return = r.summary.id.clone();
     let mut exchange = ret(1);
     let mut new_sale = sale(variant, unit, 1, cash_type, 0);
     new_sale.tenders.clear();
@@ -370,6 +384,15 @@ async fn flow(
         .unwrap();
     assert_eq!(r.tenders[0].kind, "exchange");
     assert_eq!(r.exchange_sale.unwrap().summary.total, price);
+    // An older return's copy needs `sale.reprint`.
+    assert_eq!(
+        code_of(
+            register
+                .return_receipt(cashier, &first_return, true, "en", None)
+                .await
+        ),
+        (403, "needs_override".to_owned())
+    );
     // A sale with returns cannot be voided; the older one can, with a manager.
     let void = VoidRequest {
         reason: "wrong_item".to_owned(),
@@ -491,6 +514,7 @@ async fn sales_over_http() {
         .await
         .unwrap();
     assert_eq!(history.items.len(), 1);
+    assert_eq!(history.items[0].customer_name, "Bu Sari");
     assert!(
         register
             .customer_history(&cashier, &customer, Some("nope"))
@@ -530,6 +554,71 @@ async fn sales_over_http() {
         code_of(office.sale_return(&owner, &new_id()).await),
         (404, "not_found".to_owned())
     );
+    settings_and_lists(&office, &owner, &customer).await;
+}
+
+/// Phase S6: the sales settings, the status filter and the names in the lists.
+async fn settings_and_lists(office: &dyn BackOffice, owner: &str, customer: &str) {
+    let mut settings = office.sales_settings(owner).await.unwrap();
+    assert_eq!(settings.return_days, 30);
+    assert!(!settings.receipt_widths.is_empty());
+    settings.return_days = 0;
+    settings.receipt_widths.truncate(1);
+    settings.receipt_widths[0].receipt_width = 42;
+    let stored = office.put_sales_settings(owner, &settings).await.unwrap();
+    assert_eq!(stored.return_days, 0);
+    assert_eq!(stored.receipt_widths[0].receipt_width, 42);
+    settings.receipt_widths[0].receipt_width = 40;
+    assert_eq!(
+        code_of(office.put_sales_settings(owner, &settings).await).1,
+        "invalid_field"
+    );
+    let voided = office
+        .sales(
+            owner,
+            &DocQuery {
+                status: Some("voided".to_owned()),
+                ..DocQuery::default()
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(voided.items.len(), 1);
+    let named = office
+        .sales(
+            owner,
+            &DocQuery {
+                customer_id: Some(customer.to_owned()),
+                ..DocQuery::default()
+            },
+        )
+        .await
+        .unwrap();
+    assert!(named.items[0].customer_name.is_some());
+    assert!(named.items[0].customer_code.is_some());
+    let page = office
+        .sales(
+            owner,
+            &DocQuery {
+                limit: Some(1),
+                ..DocQuery::default()
+            },
+        )
+        .await
+        .unwrap();
+    let next = page.next_before_id.clone().unwrap();
+    let more = office
+        .sales(
+            owner,
+            &DocQuery {
+                limit: Some(1),
+                before_id: Some(next),
+                ..DocQuery::default()
+            },
+        )
+        .await
+        .unwrap();
+    assert_ne!(more.items[0].id, page.items[0].id);
 }
 
 #[tokio::test]
@@ -539,6 +628,13 @@ async fn sales_in_the_fake() {
     let variant = demo.teh.variants[0].id.clone();
     let unit = demo.teh.base_unit_id.clone();
     let cashier = fake.pin_login("u-ani", "1234").await.unwrap().token;
+    // The pricing customer gets a record, so lists can name it.
+    fake.seed_customer(sultan_client::Customer {
+        id: demo.gold_customer.clone(),
+        code: "G0LD0001".to_owned(),
+        name: "Ibu Emas".to_owned(),
+        ..sultan_client::Customer::default()
+    });
     // The fake's Teh costs 5 000: a sale of 2 is 10 000.
     flow_fake(&fake, &cashier, (&variant, &unit), &demo.gold_customer).await;
     let owner = fake
@@ -592,6 +688,15 @@ async fn sales_in_the_fake() {
     );
     let returns = fake.returns(&owner, &DocQuery::default()).await.unwrap();
     assert!(!returns.items.is_empty());
+    settings_and_lists(&fake, &owner, &demo.gold_customer).await;
+    assert_eq!(
+        code_of(
+            fake.put_sales_settings(&budi, &fake.sales_settings(&owner).await.unwrap())
+                .await
+        )
+        .1,
+        "permission_denied"
+    );
     let one = fake
         .sale_return(&owner, &returns.items[0].id)
         .await

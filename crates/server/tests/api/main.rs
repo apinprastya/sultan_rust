@@ -29,6 +29,7 @@ mod pricing_quote;
 mod registers;
 mod roles;
 mod sales;
+mod sales_backoffice;
 mod sales_returns;
 mod session_history;
 mod users;

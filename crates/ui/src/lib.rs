@@ -34,6 +34,7 @@ pub mod amount;
 pub mod app;
 pub mod backoffice;
 pub mod backoffice_app;
+pub mod backoffice_sales;
 pub mod controller;
 pub mod count;
 pub mod crash;

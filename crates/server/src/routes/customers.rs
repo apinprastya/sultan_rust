@@ -940,6 +940,10 @@ pub struct HistoryItemDto {
     pub branch_id: String,
     /// The customer it was posted for (this one, or one merged into it).
     pub customer_id: String,
+    /// That customer's name.
+    pub customer_name: String,
+    /// That customer's member code.
+    pub customer_code: String,
     /// When it was posted (unix ms).
     pub posted_at: i64,
     /// A sale: what was paid (`total + cash_rounding`); a return: its refund. Minor units.
@@ -1024,6 +1028,8 @@ pub async fn history(
                 number: e.number.clone(),
                 branch_id: e.branch.to_string(),
                 customer_id: e.customer.to_string(),
+                customer_name: e.customer_name.clone(),
+                customer_code: e.customer_code.clone(),
                 posted_at: e.posted_at.unix_millis(),
                 total: e.amount.minor(),
                 voided: e.voided,

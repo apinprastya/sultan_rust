@@ -43,7 +43,7 @@ use crate::{
 pub use backoffice::{BackOfficeUser, EXEMPT_TAX_CLASS, OTHER_BRANCH_ID, STANDARD_TAX_CLASS};
 pub use backoffice::{PriceCustomer, PricingDemo};
 pub use customers::{ERASED_NAME, SEED_BUDI, SEED_GOLD, SEED_GROUP, SEED_SILVER, SEED_SITI};
-pub use sales::{TENDER_BALANCE, TENDER_CARD, TENDER_CASH, TENDER_QRIS};
+pub use sales::{SalesDemo, TENDER_BALANCE, TENDER_CARD, TENDER_CASH, TENDER_QRIS};
 
 /// Failures before a lockout (spec 2.1 §4).
 pub const MAX_FAILURES: u32 = 5;
@@ -795,6 +795,17 @@ impl Service for FakeService {
         override_token: Option<&str>,
     ) -> crate::BoxFuture<crate::Receipt> {
         self.receipt_call(token, id, copy, lang, override_token)
+    }
+
+    fn return_receipt(
+        &self,
+        token: &str,
+        id: &str,
+        copy: bool,
+        lang: &str,
+        override_token: Option<&str>,
+    ) -> crate::BoxFuture<crate::Receipt> {
+        self.return_receipt_call(token, id, copy, lang, override_token)
     }
 
     fn void_sale(

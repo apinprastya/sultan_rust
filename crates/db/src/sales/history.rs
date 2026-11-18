@@ -38,6 +38,10 @@ pub struct HistoryEntry {
     pub branch: BranchId,
     /// The customer it was posted for (the customer asked about, or one merged into it).
     pub customer: CustomerId,
+    /// That customer's name (joined when read; phase S6).
+    pub customer_name: String,
+    /// That customer's member code.
+    pub customer_code: String,
     /// When it was posted.
     pub posted_at: Timestamp,
     /// A sale: what was paid (`total + cash_rounding`); a return: the refund.
@@ -90,21 +94,23 @@ pub async fn purchase_history<'c>(
     let cursor = match before {
         Some(c) => {
             values.extend(args![c.posted_at, c.posted_at, c.id]);
-            " WHERE posted_at < ? OR (posted_at = ? AND id < ?)"
+            " WHERE h.posted_at < ? OR (h.posted_at = ? AND h.id < ?)"
         }
         None => "",
     };
     values.push(clamp_limit(limit, 20, MAX_HISTORY_PAGE).into());
     let sql = format!(
-        "SELECT doc, id, number, branch_id, customer_id, posted_at, amount, voided FROM (\
+        "SELECT h.doc, h.id, h.number, h.branch_id, h.customer_id, h.posted_at, h.amount, \
+         h.voided, c.name AS customer_name, c.code AS customer_code FROM (\
          SELECT 1 AS doc, id, number, branch_id, customer_id, posted_at, \
          total + cash_rounding AS amount, \
          CASE WHEN status = 'voided' THEN 1 ELSE 0 END AS voided \
          FROM sale WHERE {CUSTOMERS} \
          UNION ALL \
          SELECT 2 AS doc, id, number, branch_id, customer_id, posted_at, refund AS amount, \
-         0 AS voided FROM sale_return WHERE status = 'posted' AND {CUSTOMERS}) h{cursor} \
-         ORDER BY posted_at DESC, id DESC LIMIT ?"
+         0 AS voided FROM sale_return WHERE status = 'posted' AND {CUSTOMERS}) h \
+         JOIN customer c ON c.id = h.customer_id{cursor} \
+         ORDER BY h.posted_at DESC, h.id DESC LIMIT ?"
     );
     sql::fetch_all(conn.into(), &sql, values, |row| {
         Ok(HistoryEntry {
@@ -116,6 +122,8 @@ pub async fn purchase_history<'c>(
             number: row.text("number")?,
             branch: sql::id(row, "branch_id")?,
             customer: sql::id(row, "customer_id")?,
+            customer_name: row.text("customer_name")?,
+            customer_code: row.text("customer_code")?,
             posted_at: sql::ts(row, "posted_at")?,
             amount: sql::money(row, "amount")?,
             voided: row.i64("voided")? != 0,
