@@ -362,8 +362,9 @@ Where we are, so any session can pick up from here. Update this section at the e
   sales settings turn read-only only after the first refused write (`read_only_replica`); the
   register filter offers the registers seen in the loaded rows (there is no register list call
   in the back office); the sale detail's returns come from a list of the branch's returns since
-  the sale (at most 200); the header's buttons are tight at 1024 px in Indonesian (Keluar is cut
-  by a few pixels).
+  the sale (at most 200); the receipt pane (400 px, monospace 12 px) is only screenshotted at
+  32 columns: a 48-column receipt should just fit (about 350 px) but is unchecked; at 1024 px the
+  header elides the server address to a few characters.
 - Each sub-agent worktree builds its own `target/` (20–40 GB with coverage); clear finished ones.
 
 **Next**
