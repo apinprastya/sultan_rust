@@ -1273,11 +1273,12 @@ impl Controller {
                         .and_then(|id| self.sales.tenders.iter().position(|t| t.id == id))
                         .unwrap_or(self.sales.editor.cursor);
                     let notice = self.sales.editor.notice.take();
-                    if self.sales.editor.id.is_some() || !self.sales.editor.name.is_empty() {
+                    if self.sales.editor.id.is_some() {
                         self.select_tender(row.min(self.sales.tenders.len().saturating_sub(1)));
-                    } else {
+                    } else if self.sales.editor.name.is_empty() {
                         self.select_tender(0);
                     }
+                    // else: a new tender type being typed is kept as it is.
                     self.sales.editor.notice = notice;
                 }
                 Err(e) => self.sales.editor.notice = self.sales_failed(&e),
