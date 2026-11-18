@@ -135,8 +135,9 @@ pub enum Call {
     },
     /// `GET /catalog/lookup` of an item returned without a receipt.
     Lookup(String),
-    /// `POST /pricing/quote` of the items returned without a receipt.
-    Quote(QuoteRequest),
+    /// `POST /pricing/quote` of the items returned without a receipt, numbered by
+    /// [`Return::quote_seq`] so only the latest answer is applied.
+    Quote(u64, QuoteRequest),
     /// `POST /drawer/open`.
     Drawer {
         /// Idempotency key.
@@ -175,8 +176,8 @@ pub enum Reply {
     History(Result<HistoryPage, ClientError>),
     /// [`Call::Lookup`].
     Looked(Result<Lookup, ClientError>),
-    /// [`Call::Quote`].
-    Quoted(Result<Quote, ClientError>),
+    /// [`Call::Quote`], with its number.
+    Quoted(u64, Result<Quote, ClientError>),
     /// [`Call::Drawer`].
     Drawer(Result<DrawerOpen, ClientError>),
 }
@@ -193,7 +194,7 @@ impl Reply {
             Self::Recent(r) => r.as_ref().err(),
             Self::History(r) => r.as_ref().err(),
             Self::Looked(r) => r.as_ref().err(),
-            Self::Quoted(r) => r.as_ref().err(),
+            Self::Quoted(_, r) => r.as_ref().err(),
             Self::Drawer(r) => r.as_ref().err(),
         }
     }
@@ -306,6 +307,10 @@ pub struct PostVoid {
     pub back: Option<Box<Docs>>,
 }
 
+/// What is left of a line returned without a receipt: no cap, but small enough that `+` never
+/// overflows. Never a quantity itself (`*` is not offered without a receipt).
+const NO_RECEIPT_LEFT: i64 = i64::MAX / 4;
+
 /// A returned line.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ReturnLine {
@@ -321,7 +326,7 @@ pub struct ReturnLine {
     pub unit: String,
     /// Sold (by receipt), thousandths.
     pub sold: i64,
-    /// What can still be returned, thousandths (`i64::MAX` without a receipt).
+    /// What can still be returned, thousandths ([`NO_RECEIPT_LEFT`] without a receipt).
     pub left: i64,
     /// The quantity returned now, thousandths.
     pub qty: i64,
@@ -378,6 +383,8 @@ pub struct Return {
     pub result: Option<Box<SaleReturn>>,
     /// A quote is running.
     pub quoting: bool,
+    /// The number of the latest quote: an older answer is ignored (it arrives after a newer one).
+    pub quote_seq: u64,
     /// The attached customer when the return started.
     pub customer: Option<String>,
 }
@@ -475,10 +482,14 @@ impl Return {
         }
     }
 
-    /// Changes the quantity of line `i` by one unit (`up`), or to all that is left (`all`).
-    /// Returns whether a quote is needed (no receipt).
+    /// Changes the quantity of line `i` by one unit (`up`), or to all that is left (`None`, by
+    /// receipt only: without one nothing is "left"). Returns whether a quote is needed (no
+    /// receipt).
     fn bump(&mut self, i: usize, up: Option<bool>) -> bool {
         let no_receipt = self.no_receipt;
+        if no_receipt && up.is_none() {
+            return false;
+        }
         let Some(l) = self.lines.get_mut(i) else {
             return false;
         };
@@ -763,7 +774,9 @@ impl Controller {
                         }
                         keys.push(s(Key::Char('+'), Action::More, "more"));
                         keys.push(s(Key::Char('-'), Action::Less, "less"));
-                        keys.push(s(Key::Char('*'), Action::All, "return_all"));
+                        if !r.no_receipt {
+                            keys.push(s(Key::Char('*'), Action::All, "return_all"));
+                        }
                         keys.push(s(Key::Delete, Action::WriteOff, "write_off"));
                     }
                     if r.refund_customer().is_some() {
@@ -1075,6 +1088,12 @@ impl Controller {
         }
     }
 
+    /// Whether quote `seq` is the open return's latest (a stale answer, or one for a closed
+    /// dialog, is dropped).
+    fn latest_quote(&self, seq: u64) -> bool {
+        matches!(self.modal(), Some(Modal::Return(r)) if r.quote_seq == seq)
+    }
+
     fn return_quote(&mut self, quote: Option<QuoteRequest>) -> Vec<Effect> {
         let Some(request) = quote else {
             return Vec::new();
@@ -1082,10 +1101,13 @@ impl Controller {
         if request.lines.is_empty() {
             return Vec::new();
         }
-        if let Some(Modal::Return(r)) = self.modal_mut() {
-            r.quoting = true;
-        }
-        self.quiet(Call::Quote(request))
+        let Some(Modal::Return(r)) = self.modal_mut() else {
+            return Vec::new();
+        };
+        r.quoting = true;
+        r.quote_seq += 1;
+        let seq = r.quote_seq;
+        self.quiet(Call::Quote(seq, request))
     }
 
     /// F10 or T: a return of `sale`, or the Find step (an empty cart only).
@@ -1409,7 +1431,7 @@ impl Controller {
         if let Reply::Exchanged(result) = reply {
             return self.exchanged(generation, result);
         }
-        if !matches!(reply, Reply::Quoted(_) | Reply::Recent(_)) {
+        if !matches!(reply, Reply::Quoted(..) | Reply::Recent(_)) {
             self.busy = false;
         }
         if let Some(e) = reply.error()
@@ -1576,7 +1598,7 @@ impl Controller {
                                 unit_id: item.unit_id.clone(),
                                 name: item.name.clone(),
                                 unit: item.unit_name.clone(),
-                                left: i64::MAX / 4,
+                                left: NO_RECEIPT_LEFT,
                                 ..ReturnLine::default()
                             });
                             r.lines.len() - 1
@@ -1590,7 +1612,8 @@ impl Controller {
                 };
                 self.return_quote(quote)
             }
-            Reply::Quoted(Ok(quote)) => {
+            Reply::Quoted(seq, _) if !self.latest_quote(seq) => Vec::new(),
+            Reply::Quoted(_, Ok(quote)) => {
                 if let Some(Modal::Return(r)) = self.modal_mut() {
                     r.quoting = false;
                     for (l, q) in r.lines.iter_mut().zip(&quote.lines) {
@@ -1609,7 +1632,7 @@ impl Controller {
                 self.set_notice(Notice::new("drawer_opened", "", Tone::Neutral));
                 Vec::new()
             }
-            Reply::Quoted(Err(e)) => {
+            Reply::Quoted(_, Err(e)) => {
                 if let Some(Modal::Return(r)) = self.modal_mut() {
                     r.quoting = false;
                 }
@@ -1804,6 +1827,129 @@ mod tests {
         r.no_receipt = true;
         assert!(r.bump(0, Some(true)));
         assert_eq!(r.quote().lines[0].qty_thousandths, 1_000);
+    }
+
+    #[test]
+    fn all_is_not_offered_without_a_receipt() {
+        let mut r = Return {
+            no_receipt: true,
+            step: ReturnStep::Lines,
+            lines: vec![ReturnLine {
+                left: NO_RECEIPT_LEFT,
+                qty: 2_000,
+                ..ReturnLine::default()
+            }],
+            ..Return::default()
+        };
+        // `*` leaves the quantity alone and asks for no quote; `+` still counts up.
+        assert!(!r.bump(0, None));
+        assert_eq!(r.lines[0].qty, 2_000);
+        assert!(r.bump(0, Some(true)));
+        assert_eq!(r.lines[0].qty, 3_000);
+        let mut c = at_return(r);
+        let keys = |c: &Controller| -> Vec<&'static str> {
+            c.after_shortcuts()
+                .unwrap()
+                .iter()
+                .map(|k| k.label)
+                .collect()
+        };
+        assert!(!keys(&c).contains(&"return_all"));
+        assert!(c.after_action(Action::All).is_empty());
+        let Some(Modal::Return(r)) = c.modal() else {
+            panic!("return")
+        };
+        assert_eq!(r.lines[0].qty, 3_000);
+    }
+
+    /// A controller at home with the return dialog `r` open.
+    fn at_return(r: Return) -> Controller {
+        let (mut c, _) = Controller::new();
+        c.login = Some(sultan_client::Login {
+            token: "t".into(),
+            user_id: "u".into(),
+            display_name: "U".into(),
+            branch_id: "b".into(),
+            register_id: None,
+            expires_at: 0,
+        });
+        let mut h = crate::controller::HomeScreen::default();
+        h.sell.modal = Some(Modal::Return(Box::new(r)));
+        c.screen = Screen::Home(Box::new(h));
+        c
+    }
+
+    #[test]
+    fn only_the_latest_return_quote_is_applied() {
+        let r = Return {
+            no_receipt: true,
+            step: ReturnStep::Lines,
+            lines: vec![ReturnLine {
+                variant_id: "v".into(),
+                unit_id: "u".into(),
+                left: NO_RECEIPT_LEFT,
+                qty: 1_000,
+                ..ReturnLine::default()
+            }],
+            ..Return::default()
+        };
+        let mut c = at_return(r);
+        let seq = |effects: &[Effect]| match effects {
+            [
+                Effect::After {
+                    call: Call::Quote(seq, _),
+                    ..
+                },
+            ] => *seq,
+            other => panic!("{other:?}"),
+        };
+        let first = seq(&c.after_action(Action::More));
+        let second = seq(&c.after_action(Action::More));
+        assert_eq!((first, second), (1, 2));
+        let quote = |total: i64| -> Quote {
+            Quote {
+                branch_id: "b".into(),
+                date: "2027-01-15".into(),
+                customer_id: None,
+                tax_inclusive: true,
+                tax_registered: true,
+                cash_rounding: "none".into(),
+                lines: vec![
+                    serde_json::from_value(json!({
+                        "variant_id": "v", "unit_id": "u", "qty_thousandths": 1000,
+                        "mode": "fixed",
+                        "tax": {"tax_class_id": "t", "rate_bp": 0, "tax": 0, "net": total,
+                                "total": total}
+                    }))
+                    .unwrap(),
+                ],
+                totals: sultan_client::QuoteTotals::default(),
+            }
+        };
+        let refund = |c: &Controller| match c.modal() {
+            Some(Modal::Return(r)) => (r.refund(), r.quoting),
+            _ => panic!("return"),
+        };
+        // The newer answer lands first; the older one, arriving last, is dropped.
+        c.after_reply(c.generation, Reply::Quoted(second, Ok(quote(15_000))));
+        assert_eq!(refund(&c), (15_000, false));
+        c.after_reply(c.generation, Reply::Quoted(first, Ok(quote(10_000))));
+        assert_eq!(refund(&c), (15_000, false));
+        // A stale error does not end the running quote either.
+        let third = seq(&c.after_action(Action::Less));
+        c.after_reply(
+            c.generation,
+            Reply::Quoted(second, Err(Problem::new(500, "x", "x").into())),
+        );
+        assert!(refund(&c).1, "quote {third} still running");
+        // With the dialog closed, an answer changes nothing.
+        if let Screen::Home(h) = &mut c.screen {
+            h.sell.modal = None;
+        }
+        assert!(
+            c.after_reply(c.generation, Reply::Quoted(third, Ok(quote(5_000))))
+                .is_empty()
+        );
     }
 
     #[test]

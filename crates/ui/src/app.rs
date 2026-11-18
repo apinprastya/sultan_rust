@@ -347,7 +347,10 @@ fn after_call(
             AfterReply::History
         ),
         AfterCall::Lookup(code) => reply!(service.lookup(token, &code), AfterReply::Looked),
-        AfterCall::Quote(request) => reply!(service.quote(token, &request), AfterReply::Quoted),
+        AfterCall::Quote(seq, request) => {
+            let future = service.quote(token, &request);
+            Box::pin(async move { AfterReply::Quoted(seq, future.await) })
+        }
         AfterCall::Drawer {
             key,
             override_token,
