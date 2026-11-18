@@ -11,7 +11,8 @@
 //!    a click open one); without it the option is hidden. F6 opens the sign-up (`customer.create`).
 //! 2. **Shown** — name, member code, masked phone, group, tier (a warning when it no longer
 //!    applies), balance, the receipt line (§10) and the recent receipts (empty until 2.6). Enter
-//!    attaches the customer; F7 pays the balance out (`customer.balance_payout`, balance above 0).
+//!    attaches the customer; F7 pays the balance out (`customer.balance_payout`, balance above 0);
+//!    F9 closes the dialog and shows the purchase history (spec 2.6 S5, [`crate::after`]).
 //! 3. **Sign-up** — name and phone (optional); the client draws the `UUIDv7` once per dialog, so
 //!    a retried sign-up sends the same id. `phone_taken` names the other customer and F8 shows
 //!    them, so the cashier can attach them instead.
@@ -279,6 +280,8 @@ pub enum Outcome {
     Call(Call),
     /// Attach this customer and close the dialog.
     Attach(Box<Customer>),
+    /// Close the dialog and show this customer's purchase history (spec 2.6 S5).
+    History(Box<Customer>),
 }
 
 /// The customer dialog; see the module docs.
@@ -362,6 +365,7 @@ impl Dialog {
                 if self.can_pay_out(perms) {
                     keys.push(s(Key::F(7), Action::PayOut, "pay_out"));
                 }
+                keys.push(s(Key::F(9), Action::History, "history"));
                 keys.push(s(Key::Escape, Action::Back, "back"));
             }
             Page::SignUp => {
@@ -516,6 +520,11 @@ impl Dialog {
                 self.page = Page::Payout;
             }
             Action::NextField => self.sign_up.field = 1 - self.sign_up.field,
+            Action::History => {
+                if let Some(c) = &self.shown {
+                    return Outcome::History(Box::new(c.clone()));
+                }
+            }
             Action::ShowTaken => {
                 if let Some(code) = self.sign_up.taken.clone() {
                     self.asked = Some(Lookup::Code(code.clone()));
@@ -795,8 +804,8 @@ mod tests {
         );
         d.reply(Reply::Found(Ok(budi())));
         assert_eq!((d.page, d.notice.as_ref()), (Page::Shown, None));
-        assert_eq!(labels(&d, Perms::default()), ["attach", "back"]);
-        assert_eq!(labels(&d, ALL), ["attach", "pay_out", "back"]);
+        assert_eq!(labels(&d, Perms::default()), ["attach", "history", "back"]);
+        assert_eq!(labels(&d, ALL), ["attach", "pay_out", "history", "back"]);
         assert!(!d.edit(Key::Digit(1)), "nothing to type on the Shown page");
         assert_eq!(d.act(Action::Confirm), Outcome::Attach(Box::new(budi())));
         assert_eq!(d.act(Action::Back), Outcome::Stay);
@@ -977,7 +986,7 @@ mod tests {
         let mut empty = Dialog::new(Some(&broke));
         assert_eq!(
             labels(&empty, ALL),
-            ["attach", "back"],
+            ["attach", "history", "back"],
             "nothing to pay out"
         );
         empty.act(Action::Back);

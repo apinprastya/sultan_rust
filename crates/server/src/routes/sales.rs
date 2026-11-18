@@ -17,8 +17,8 @@
 //!   `until` (posting time, unix ms), `number`. Needs `report.sales` at `branch_id` (or
 //!   everywhere when no branch is given), except for a list of the caller's own cashier session
 //!   (`cashier_session_id`), which the till's last receipts use (F6).
-//! - `GET /sales/{id}/receipt?copy=&width=`: the receipt text (`core::sale::build_receipt`,
-//!   32/42/48 columns, default 32; English labels). A voided sale prints VOID. `copy=true` prints
+//! - `GET /sales/{id}/receipt?copy=&width=&lang=`: the receipt text (`core::sale::build_receipt`,
+//!   32/42/48 columns, default 32; English labels, Indonesian with `lang=id`). A voided sale prints VOID. `copy=true` prints
 //!   COPY and is audited (`sale.reprint`): the last sale of the caller's open session on this
 //!   register needs no permission, any other needs `sale.reprint` (overridable at the till).
 //! - `POST /sales/{id}/void {reason, reason_text?, refund}` with `Idempotency-Key`: the post-void
@@ -686,6 +686,9 @@ pub struct ReceiptQuery {
     pub copy: bool,
     /// 32, 42 or 48 columns (default 32).
     pub width: Option<usize>,
+    /// The label language: `id` (Indonesian) or `en` (default); the register sends its window
+    /// language (spec 2.6 §19 from S4).
+    pub lang: Option<String>,
 }
 
 /// The receipt of a sale.
@@ -714,6 +717,7 @@ async fn receipt(
     sale: &Sale,
     width: ReceiptWidth,
     copy: bool,
+    lang: &str,
 ) -> Result<ReceiptDto, ApiError> {
     let h = &sale.header;
     let branch = org::get_branch(&state.db, h.branch)
@@ -849,7 +853,7 @@ async fn receipt(
         copy,
         voided: h.status == SaleStatus::Voided,
     };
-    let built = build_receipt(&input, &|l| l.english().to_owned());
+    let built = build_receipt(&input, &|l| l.text(lang).to_owned());
     Ok(ReceiptDto {
         sale_id: h.id.to_string(),
         number: h.number.clone(),
@@ -887,7 +891,7 @@ async fn last_of_own_session(
     Ok(last.first().is_some_and(|h| h.id == sale.header.id))
 }
 
-/// `GET /api/v1/sales/{id}/receipt?copy=&width=` (see the module docs).
+/// `GET /api/v1/sales/{id}/receipt?copy=&width=&lang=` (see the module docs).
 ///
 /// # Errors
 /// `401`, `403 permission_denied` / `needs_override` / `invalid_override`, `404 not_found`,
@@ -909,7 +913,14 @@ pub async fn get_receipt(
     let width = ReceiptWidth::from_cols(query.width.unwrap_or(32))
         .ok_or_else(|| ApiError::invalid_field("width", "`width` must be 32, 42 or 48"))?;
     let sale = readable(&state, &caller, sales::get_sale(&state.db, id).await?).await?;
-    let dto = receipt(&state, &sale, width, query.copy).await?;
+    let dto = receipt(
+        &state,
+        &sale,
+        width,
+        query.copy,
+        query.lang.as_deref().unwrap_or("en"),
+    )
+    .await?;
     if !query.copy {
         return Ok(Json(dto));
     }

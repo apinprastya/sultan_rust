@@ -15,8 +15,18 @@
 //! voided (`has_returns`), a held cart is taken once (`cart_taken`). Cash taken and paid back
 //! moves the session's expected cash.
 //!
-//! **Simplified:** no stock, no cash rounding, refunds go to cash only, the receipt text is
-//! short (number, lines, TOTAL, COPY / VOID), the return window is not checked.
+//! Receipts are built with `core::sale::build_receipt` like the server's (32 columns, labels in
+//! the asked language, the catalog's product and variant names, the tender type names).
+//!
+//! Refunds (post-void, return) go to cash or to the customer balance (the balance part of the sale
+//! goes back first on a post-void); returns and post-voids take only sales of the fake's branch
+//! (`invalid_field`, `sale`); a return by receipt older than 30 days answers `403 return_window`
+//! unless a token approves `refund.with_receipt` for the return. `POST /drawer/open` needs the
+//! caller's open session and, for a cashier, a `drawer.open` token for that session. The purchase
+//! history pages by 10.
+//!
+//! **Simplified:** no stock, no cash rounding, the receipt's branch block and footer are fixed demo
+//! text and it prints no tier name.
 
 use std::collections::HashMap;
 
@@ -58,7 +68,10 @@ pub(super) struct Sales {
     returns: Vec<(ReturnRequest, SaleReturn)>,
     held: Vec<HeldCart>,
     voids: Vec<CartVoid>,
+    drawer: Vec<crate::DrawerOpen>,
     keyed: HashMap<String, Sale>,
+    /// A line void needs a manager too (as a cashier without `sale.void_line` would).
+    pub(super) line_void_override: bool,
 }
 
 impl Default for Sales {
@@ -90,7 +103,9 @@ impl Default for Sales {
             returns: Vec::new(),
             held: Vec::new(),
             voids: Vec::new(),
+            drawer: Vec::new(),
             keyed: HashMap::new(),
+            line_void_override: false,
         }
     }
 }
@@ -107,6 +122,18 @@ fn rule(error: &sultan_core::sale::SaleError) -> ClientError {
         p.status = 409;
     }
     p.into()
+}
+
+/// The return window of §8 (no stored setting yet, §19 item 39).
+const RETURN_DAYS: u32 = 30;
+
+/// A purchase history page.
+const HISTORY_PAGE: usize = 10;
+
+fn invalid(field: &str) -> ClientError {
+    Problem::new(422, "invalid_field", field)
+        .with("field", field)
+        .into()
 }
 
 fn core_discount(d: Option<&Discount>) -> Option<CoreDiscount> {
@@ -157,6 +184,117 @@ impl State {
         Err(api(403, "invalid_override"))
     }
 
+    /// Every check above the caller's limit takes one matching token (the server's
+    /// `authorize_all`): none for the first unmatched check → `needs_override` (with `permission`
+    /// and `limit`), or `invalid_override` when tokens were sent and none matched yet.
+    fn authorize_all(
+        &mut self,
+        user: &super::FakeUser,
+        checks: &[(&str, i64)],
+        context: &str,
+        header: Option<&str>,
+    ) -> Result<(), ClientError> {
+        if user.reports {
+            return Ok(());
+        }
+        let mut left: Vec<String> = header
+            .map(|h| {
+                h.split(',')
+                    .map(str::trim)
+                    .filter(|t| !t.is_empty())
+                    .map(str::to_owned)
+                    .collect()
+            })
+            .unwrap_or_default();
+        let sent = !left.is_empty();
+        let mut used_any = false;
+        let mut matched = Vec::new();
+        for (action, value) in checks {
+            if *value <= user.discount_limit {
+                continue;
+            }
+            let found = left.iter().position(|t| {
+                self.overrides
+                    .get(t)
+                    .is_some_and(|(a, v, c, _)| a == action && c == context && *v == Some(*value))
+            });
+            match found {
+                Some(i) => {
+                    matched.push(left.remove(i));
+                    used_any = true;
+                }
+                None if sent && !used_any => return Err(api(403, "invalid_override")),
+                None => {
+                    return Err(Problem::new(403, "needs_override", "needs override")
+                        .with("permission", *action)
+                        .with("limit", user.discount_limit)
+                        .into());
+                }
+            }
+        }
+        // Only a sale that goes through uses its tokens up (like the server's transaction).
+        for t in matched {
+            self.overrides.remove(&t);
+        }
+        Ok(())
+    }
+
+    /// Whether a sale posted at `at` is outside the return window (core's check, §19 item 13).
+    fn outside_window(&self, at: i64) -> bool {
+        use sultan_core::time::Timestamp;
+        sultan_core::sale::check_return_window(
+            Timestamp::from_unix_millis(at),
+            Timestamp::from_unix_millis(self.now),
+            sultan_core::doc_number::BranchTimeZone::default(),
+            RETURN_DAYS,
+        )
+        .is_err()
+    }
+
+    /// A return outside the window: `403 return_window` unless a token approves
+    /// `refund.with_receipt` for the return (§19 item 39).
+    fn window_override(&mut self, return_id: &str, token: Option<&str>) -> Result<(), ClientError> {
+        for t in token.into_iter().flat_map(|t| t.split(',')).map(str::trim) {
+            if let Some((a, _, c, _)) = self.overrides.get(t).cloned()
+                && a == "refund.with_receipt"
+                && c == return_id
+            {
+                self.overrides.remove(t);
+                return Ok(());
+            }
+        }
+        Err(
+            Problem::new(403, "return_window", "outside the return window")
+                .with("days", RETURN_DAYS)
+                .with("permission", "refund.with_receipt")
+                .into(),
+        )
+    }
+
+    fn drawer(
+        &mut self,
+        token: &str,
+        body: &crate::DrawerRequest,
+        override_token: Option<&str>,
+    ) -> Result<crate::DrawerOpen, ClientError> {
+        let (user, session) = self.own_session(token)?;
+        let approver =
+            self.manager_or_override(&user, "drawer.open", None, &session, override_token)?;
+        let open = crate::DrawerOpen {
+            cashier_session_id: session,
+            reason: body
+                .reason
+                .as_deref()
+                .map(str::trim)
+                .filter(|r| !r.is_empty())
+                .map(str::to_owned),
+            approved_by: approver,
+            opened_at: self.now,
+        };
+        self.sales.drawer.push(open.clone());
+        Ok(open)
+    }
+
     fn tender(&self, id: &str) -> Result<&TenderType, ClientError> {
         self.sales
             .tenders
@@ -171,7 +309,11 @@ impl State {
 
     fn number(&self, kind: &str) -> String {
         let n = self.sales.sales.len() + self.sales.returns.len() + 1;
-        format!("JKT01-R1-{kind}261116-{n:04}")
+        let day = sultan_core::doc_number::LocalDay::of(
+            sultan_core::time::Timestamp::from_unix_millis(self.now),
+            sultan_core::doc_number::BranchTimeZone::default(),
+        );
+        format!("JKT01-R1-{kind}{}-{n:04}", day.yymmdd())
     }
 
     /// Prices, checks and pays a sale (see the module docs); `exchange` pays it first.
@@ -238,22 +380,27 @@ impl State {
                 .with("quote", json!({ "totals": fresh }))
                 .into());
         }
-        let most = totals
-            .lines
-            .iter()
-            .map(sultan_core::sale::LineTotals::line_discount_bp)
-            .chain([totals.cart_discount_bp()])
-            .max()
-            .unwrap_or(0);
-        if i64::from(most) > user.discount_limit {
-            self.manager_or_override(
-                &user,
-                "sale.discount",
-                Some(i64::from(most)),
-                id,
-                override_token,
-            )?;
+        // Every limited check of the sale in the server's order (lines, then the cart
+        // discount), each against the caller's limit; one token per approval (§19 item 36).
+        let mut checks: Vec<(&str, i64)> = Vec::new();
+        for (q, t) in quote.lines.iter().zip(&totals.lines) {
+            if q.mode == "overridden"
+                && let (Some(resolved), Some(price)) = (q.resolved_price, q.unit_price)
+            {
+                let drop = sultan_core::sale::discount_bp(
+                    Money::from_minor(resolved),
+                    Money::from_minor((resolved - price).max(0)),
+                );
+                checks.push(("price.override", i64::from(drop)));
+            }
+            if t.line_discount > Money::ZERO {
+                checks.push(("sale.discount", i64::from(t.line_discount_bp())));
+            }
         }
+        if totals.cart_discount > Money::ZERO {
+            checks.push(("sale.cart_discount", i64::from(totals.cart_discount_bp())));
+        }
+        self.authorize_all(&user, &checks, id, override_token)?;
         let balance = body
             .customer_id
             .as_deref()
@@ -333,7 +480,9 @@ impl State {
                 line_no: u32::try_from(i + 1).unwrap_or(u32::MAX),
                 variant_id: l.variant_id.clone(),
                 unit_id: l.unit_id.clone(),
-                name: l.variant_id.clone(),
+                name: self
+                    .line_names(&l.variant_id, &l.unit_id)
+                    .map_or_else(|| l.variant_id.clone(), |(name, _)| name),
                 qty_thousandths: l.qty_thousandths,
                 unit_price: q.unit_price.unwrap_or_default(),
                 price_mode: q.mode.clone(),
@@ -451,6 +600,7 @@ impl State {
         token: &str,
         id: &str,
         copy: bool,
+        lang: &str,
         override_token: Option<&str>,
     ) -> Result<Receipt, ClientError> {
         let user = self.caller(token)?;
@@ -473,26 +623,8 @@ impl State {
             }
         }
         let voided = sale.summary.status == "voided";
-        let mut lines = Vec::new();
-        if copy {
-            lines.push("COPY".to_owned());
-        }
-        if voided {
-            lines.push("VOID".to_owned());
-        }
-        lines.push(sale.summary.number.clone());
-        for l in &sale.lines {
-            lines.push(format!("{} {}", l.name, l.total));
-        }
-        lines.push(format!("TOTAL {}", sale.summary.paid));
-        if voided {
-            lines.push("VOID".to_owned());
-        }
-        let text = lines.iter().fold(String::new(), |mut t, l| {
-            t.push_str(l);
-            t.push('\n');
-            t
-        });
+        let built = self.build_receipt(&sale, copy, voided, lang);
+        let (text, lines) = (built.text(), built.lines);
         Ok(Receipt {
             sale_id: sale.summary.id.clone(),
             number: sale.summary.number.clone(),
@@ -500,8 +632,136 @@ impl State {
             voided,
             lines,
             text,
-            barcode: sale.summary.number,
+            barcode: built.barcode,
         })
+    }
+
+    /// The receipt text of `sale` with `core::sale::build_receipt`, as the server builds it
+    /// (32 columns, labels in `lang`), from what the fake knows: the branch, the register, the
+    /// cashier, the customer, the catalog's names and the tender types.
+    #[allow(clippy::too_many_lines)] // every block of `ReceiptInput`, in the server's order
+    fn build_receipt(
+        &self,
+        sale: &Sale,
+        copy: bool,
+        voided: bool,
+        lang: &str,
+    ) -> sultan_core::sale::Receipt {
+        use std::collections::BTreeMap;
+        use sultan_core::customer::{Phone, ReceiptCustomer};
+        use sultan_core::sale::{
+            Label, ReceiptCustomerBlock, ReceiptHeader, ReceiptInput, ReceiptLine, ReceiptSaved,
+            ReceiptTender, ReceiptTotals, ReceiptWidth, TaxInvoiceBlock, TaxLine, build_receipt,
+        };
+        let s = &sale.summary;
+        let cashier = s
+            .user_id
+            .as_deref()
+            .and_then(|u| self.user(u))
+            .map(|u| u.name.clone())
+            .unwrap_or_default();
+        let units: Vec<String> = sale
+            .lines
+            .iter()
+            .map(|l| {
+                self.line_names(&l.variant_id, &l.unit_id)
+                    .map(|(_, unit)| unit)
+                    .unwrap_or_default()
+            })
+            .collect();
+        let lines: Vec<ReceiptLine<'_>> = sale
+            .lines
+            .iter()
+            .zip(&units)
+            .map(|(l, unit)| ReceiptLine {
+                name: &l.name,
+                qty: (l.qty_thousandths != 0).then(|| Qty::from_thousandths(l.qty_thousandths)),
+                unit,
+                unit_price: Money::from_minor(l.unit_price),
+                gross: Money::from_minor(l.gross),
+                discount: Money::from_minor(l.line_discount),
+            })
+            .collect();
+        let mut by_rate: BTreeMap<u16, (Money, Money)> = BTreeMap::new();
+        for l in sale.lines.iter().filter(|l| l.tax_rate_bp > 0) {
+            let e = by_rate.entry(l.tax_rate_bp).or_default();
+            e.0 = e.0.saturating_add(Money::from_minor(l.total - l.tax));
+            e.1 = e.1.saturating_add(Money::from_minor(l.tax));
+        }
+        let exchange = Label::Exchange.text(lang).to_owned();
+        let tenders: Vec<ReceiptTender<'_>> = sale
+            .tenders
+            .iter()
+            .map(|t| ReceiptTender {
+                name: t
+                    .tender_type_id
+                    .as_deref()
+                    .and_then(|id| self.tender(id).ok())
+                    .map_or(exchange.as_str(), |tt| tt.name.as_str()),
+                amount: Money::from_minor(t.amount),
+                cash_received: t.cash_received.map(Money::from_minor),
+                change_given: Money::from_minor(t.change_given),
+                reference: t.reference.as_deref(),
+            })
+            .collect();
+        let customer = s
+            .customer_id
+            .as_deref()
+            .and_then(|c| self.customer_record(c));
+        let phone = customer
+            .and_then(|c| c.phone.as_deref())
+            .and_then(|p| Phone::parse(p).ok());
+        let customer_block = customer.map(|c| match (s.tax_invoice, c.tax_id.as_deref()) {
+            (true, Some(tax_id)) => ReceiptCustomerBlock::TaxInvoice(TaxInvoiceBlock {
+                company_name: c.company_name.as_deref().unwrap_or(&c.name),
+                tax_id,
+                tax_address: c.tax_address.as_deref().unwrap_or_default(),
+            }),
+            _ => ReceiptCustomerBlock::Customer(ReceiptCustomer {
+                name: &c.name,
+                company_name: c.company_name.as_deref(),
+                phone: phone.as_ref(),
+                tier_name: None,
+            }),
+        });
+        let saved = (s.change_saved > 0).then(|| ReceiptSaved {
+            saved: Money::from_minor(s.change_saved),
+            balance: Money::from_minor(customer.map_or(0, |c| c.balance)),
+        });
+        let footer = ["Terima kasih".to_owned()];
+        let input = ReceiptInput {
+            width: ReceiptWidth::Cols32,
+            header: ReceiptHeader {
+                lines: &[],
+                branch_name: "Toko Jakarta",
+                address: "Jl. Contoh No. 1, Jakarta",
+                tax_id: None,
+            },
+            number: &s.number,
+            posted_at: sultan_core::time::Timestamp::from_unix_millis(s.posted_at),
+            tz: sultan_core::doc_number::BranchTimeZone::default(),
+            register: "R1",
+            cashier: &cashier,
+            customer: customer_block,
+            lines: &lines,
+            totals: ReceiptTotals {
+                subtotal: Money::from_minor(s.subtotal),
+                discount: Money::from_minor(s.line_discount + s.cart_discount),
+                tax: by_rate
+                    .into_iter()
+                    .map(|(rate_bp, (base, tax))| TaxLine { rate_bp, base, tax })
+                    .collect(),
+                tax_inclusive: s.tax_inclusive,
+                cash_rounding: Money::from_minor(s.cash_rounding),
+                total: Money::from_minor(s.paid),
+            },
+            tenders: &tenders,
+            saved,
+            footer: &footer,
+            copy,
+            voided,
+        };
+        build_receipt(&input, &|l| l.text(lang).to_owned())
     }
 
     fn void_sale(
@@ -513,6 +773,9 @@ impl State {
     ) -> Result<Sale, ClientError> {
         let (user, session) = self.own_session(token)?;
         let i = self.sale_index(id)?;
+        if self.sales.sales[i].1.summary.branch_id != BRANCH_ID {
+            return Err(invalid("sale"));
+        }
         let approver =
             self.manager_or_override(&user, "sale.post_void", None, id, override_token)?;
         let sale = &self.sales.sales[i].1;
@@ -523,11 +786,49 @@ impl State {
             return Err(api(409, "has_returns"));
         }
         if !matches!(body.refund.as_str(), "cash" | "balance") {
-            return Err(Problem::new(422, "invalid_field", "refund")
-                .with("field", "refund")
-                .into());
+            return Err(invalid("refund"));
+        }
+        let customer = sale.summary.customer_id.clone();
+        if body.refund == "balance" && customer.is_none() {
+            return Err(invalid("customer"));
         }
         let refund = sale.summary.paid;
+        // The balance part goes back to the balance first (§7), the rest as asked.
+        let reversed: i64 = sale
+            .tenders
+            .iter()
+            .filter(|t| t.kind == "customer_balance")
+            .map(|t| t.amount)
+            .sum();
+        let rest = refund - reversed;
+        let (cash, to_balance) = if body.refund == "balance" {
+            (0, rest)
+        } else {
+            (rest, 0)
+        };
+        if let Some(c) = &customer {
+            if reversed > 0 {
+                self.entry(c, "payment_reversed", reversed);
+            }
+            if to_balance > 0 {
+                self.entry(c, "refund", to_balance);
+            }
+        }
+        let mut tenders = Vec::new();
+        if cash > 0 {
+            tenders.push(RefundTender {
+                tender_type_id: Some(TENDER_CASH.to_owned()),
+                kind: "cash".to_owned(),
+                amount: cash,
+            });
+        }
+        if reversed + to_balance > 0 {
+            tenders.push(RefundTender {
+                tender_type_id: Some(TENDER_BALANCE.to_owned()),
+                kind: "customer_balance".to_owned(),
+                amount: reversed + to_balance,
+            });
+        }
         let now = self.now;
         let sale = &mut self.sales.sales[i].1;
         "voided".clone_into(&mut sale.summary.status);
@@ -539,17 +840,15 @@ impl State {
             reason: body.reason.clone(),
             reason_text: body.reason_text.clone(),
             refund,
-            cash: refund,
-            tenders: vec![RefundTender {
-                tender_type_id: Some(TENDER_CASH.to_owned()),
-                kind: "cash".to_owned(),
-                amount: refund,
-            }],
+            payment_reversed: reversed,
+            to_balance,
+            cash,
+            tenders,
             voided_at: now,
             ..SaleVoid::default()
         });
         let voided = sale.clone();
-        self.cash_sales -= refund;
+        self.cash_sales -= cash;
         Ok(voided)
     }
 
@@ -561,6 +860,13 @@ impl State {
     ) -> Result<CartVoid, ClientError> {
         let (user, session) = self.own_session(token)?;
         let approver = match body.kind.as_str() {
+            "line" if self.sales.line_void_override => self.manager_or_override(
+                &user,
+                "sale.void_line",
+                None,
+                &body.cart_id,
+                override_token,
+            )?,
             "line" => None,
             "cart" => {
                 self.manager_or_override(&user, "sale.void", None, &body.cart_id, override_token)?
@@ -606,6 +912,13 @@ impl State {
             if sale.summary.status == "voided" {
                 return Err(api(409, "conflict"));
             }
+            if sale.summary.branch_id != BRANCH_ID {
+                return Err(invalid("sale"));
+            }
+            if self.outside_window(sale.summary.posted_at) && !user.reports {
+                self.window_override(id, override_token)?;
+            }
+            let sale = &self.sales.sales[i].1;
             customer = sale.summary.customer_id.clone().or(customer);
             let mut so_far: HashMap<u32, (i64, i64)> = HashMap::new();
             for l in &body.lines {
@@ -676,7 +989,17 @@ impl State {
             rest -= paid_by_refund;
             exchange_sale = Some(sale);
         }
-        if rest > 0 {
+        if rest > 0 && body.refund == "balance" {
+            let Some(c) = customer.clone() else {
+                return Err(invalid("customer"));
+            };
+            self.entry(&c, "refund", rest);
+            tenders.push(RefundTender {
+                tender_type_id: Some(TENDER_BALANCE.to_owned()),
+                kind: "customer_balance".to_owned(),
+                amount: rest,
+            });
+        } else if rest > 0 {
             tenders.push(RefundTender {
                 tender_type_id: Some(TENDER_CASH.to_owned()),
                 kind: "cash".to_owned(),
@@ -794,7 +1117,7 @@ impl State {
         Ok(self.sales.held.remove(i))
     }
 
-    fn history(&self, customer: &str) -> HistoryPage {
+    fn history(&self, customer: &str, before: Option<&str>) -> HistoryPage {
         let mut items: Vec<HistoryItem> = self
             .sales
             .sales
@@ -828,9 +1151,15 @@ impl State {
             )
             .collect();
         items.sort_by(|a, b| b.posted_at.cmp(&a.posted_at).then(b.number.cmp(&a.number)));
+        let start = before
+            .and_then(|b| items.iter().position(|i| i.document_id == b))
+            .map_or(0, |i| i + 1);
+        let page: Vec<HistoryItem> = items.into_iter().skip(start).collect();
+        let next_before_id =
+            (page.len() > HISTORY_PAGE).then(|| page[HISTORY_PAGE - 1].document_id.clone());
         HistoryPage {
-            items,
-            next_before_id: None,
+            items: page.into_iter().take(HISTORY_PAGE).collect(),
+            next_before_id,
         }
     }
 
@@ -919,6 +1248,17 @@ fn run<T: Send + 'static>(
 }
 
 impl FakeService {
+    /// Makes a line void need a manager (`sale.void_line` above the cashier, spec 2.6 §3).
+    pub fn require_line_void_override(&self, on: bool) {
+        self.state().sales.line_void_override = on;
+    }
+
+    /// The posted sales with their request bodies, oldest first.
+    #[must_use]
+    pub fn posted_sales(&self) -> Vec<(SaleRequest, Sale)> {
+        self.state().sales.sales.clone()
+    }
+
     /// The cart voids recorded so far (what the close report would count).
     #[must_use]
     pub fn cart_voids(&self) -> Vec<CartVoid> {
@@ -977,11 +1317,15 @@ impl FakeService {
         token: &str,
         id: &str,
         copy: bool,
+        lang: &str,
         override_token: Option<&str>,
     ) -> crate::BoxFuture<Receipt> {
-        run(self, "receipt", format!("{id} copy={copy}"), |s| {
-            s.receipt(token, id, copy, override_token)
-        })
+        run(
+            self,
+            "receipt",
+            format!("{id} copy={copy} lang={lang}"),
+            |s| s.receipt(token, id, copy, lang, override_token),
+        )
     }
 
     pub(super) fn void_sale_call(
@@ -1012,6 +1356,32 @@ impl FakeService {
         run(self, "cart_void", format!("{} key={key}", body.kind), |s| {
             s.cart_void(token, body, override_token)
         })
+    }
+
+    pub(super) fn drawer_call(
+        &self,
+        token: &str,
+        body: &crate::DrawerRequest,
+        key: &str,
+        override_token: Option<&str>,
+    ) -> crate::BoxFuture<crate::DrawerOpen> {
+        run(self, "open_drawer", format!("key={key}"), |s| {
+            s.drawer(token, body, override_token)
+        })
+    }
+
+    /// The recorded drawer opens.
+    #[must_use]
+    pub fn drawer_opens(&self) -> Vec<crate::DrawerOpen> {
+        self.state().sales.drawer.clone()
+    }
+
+    /// Moves a posted sale to another branch (the branch rule of §19 item 40).
+    pub fn move_sale_to_branch(&self, id: &str, branch: &str) {
+        let mut s = self.state();
+        if let Some((_, sale)) = s.sales.sales.iter_mut().find(|(_, x)| x.summary.id == id) {
+            branch.clone_into(&mut sale.summary.branch_id);
+        }
     }
 
     pub(super) fn post_return_call(
@@ -1067,10 +1437,15 @@ impl FakeService {
         })
     }
 
-    pub(super) fn history_call(&self, token: &str, id: &str) -> crate::BoxFuture<HistoryPage> {
+    pub(super) fn history_call(
+        &self,
+        token: &str,
+        id: &str,
+        before: Option<&str>,
+    ) -> crate::BoxFuture<HistoryPage> {
         run(self, "customer_history", id.to_owned(), |s| {
             s.any_caller(token)?;
-            Ok(s.history(id))
+            Ok(s.history(id, before))
         })
     }
 

@@ -394,6 +394,11 @@ impl State {
         self.customers.settings
     }
 
+    /// The stored customer `id`, for the receipt's customer line (sales, spec 2.6).
+    pub(super) fn customer_record(&self, id: &str) -> Option<&Customer> {
+        self.customers.list.iter().find(|c| c.id == id)
+    }
+
     fn index(&self, id: &str) -> Option<usize> {
         self.customers.list.iter().position(|c| c.id == id)
     }

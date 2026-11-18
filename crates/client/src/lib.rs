@@ -37,6 +37,7 @@
 //!   till voids, returns and exchanges, held carts, the customer's purchase history and recent
 //!   receipts, the session's sales); the back office's on [`BackOffice`] (tender type
 //!   management, returns). Several override tokens for one request go comma separated.
+//!   [`Service::open_drawer`] records an audited drawer open (F5, phase S5).
 //!
 //! Amounts are minor units (`i64`, Rupiah minor unit = 1, `docs/plan.md` §1); times are unix ms.
 
@@ -55,8 +56,8 @@ use std::sync::Arc;
 
 pub use catalog::{
     Brand, BrandBody, CatalogSettings, Category, CategoryBody, CategoryNode, Generate, ImageInfo,
-    Lookup, Me, Product, ProductPage, ProductQuery, ProductSummary, SearchHit, SearchPage,
-    TaxClass,
+    Lookup, LookupUnit, Me, Product, ProductPage, ProductQuery, ProductSummary, SearchHit,
+    SearchPage, TaxClass,
 };
 pub use customers::{
     BalanceEntry, BalanceSettings, Customer, CustomerBalance, CustomerBody, CustomerGroup,
@@ -70,11 +71,11 @@ pub use pricing::{
     QuoteTotals, QuotedLine, TaxRate,
 };
 pub use sales::{
-    CartVoid, CartVoidRequest, Discount, DocQuery, ExchangeRequest, HeldCart, HistoryItem,
-    HistoryPage, HoldRequest, Receipt, RefundTender, ReturnLine, ReturnLineRequest, ReturnPage,
-    ReturnRequest, ReturnSummary, Sale, SaleLine, SaleLineRequest, SalePage, SaleRequest,
-    SaleReturn, SaleSummary, SaleTender, SaleTotals, SaleVoid, TenderRequest, TenderType,
-    TenderTypeBody, VoidRequest, VoidedLine,
+    CartVoid, CartVoidRequest, Discount, DocQuery, DrawerOpen, DrawerRequest, ExchangeRequest,
+    HeldCart, HistoryItem, HistoryPage, HoldRequest, Receipt, RefundTender, ReturnLine,
+    ReturnLineRequest, ReturnPage, ReturnRequest, ReturnSummary, Sale, SaleLine, SaleLineRequest,
+    SalePage, SaleRequest, SaleReturn, SaleSummary, SaleTender, SaleTotals, SaleVoid,
+    TenderRequest, TenderType, TenderTypeBody, VoidRequest, VoidedLine,
 };
 pub use types::{
     Branch, CashierSession, CloseReport, CloseRequest, Count, LockUser, Login, OverrideGrant,
@@ -145,6 +146,10 @@ pub trait Service: Send + Sync {
     /// `422 archived` / `not_sold_here` / `not_sellable` / `scale_value_zero`.
     fn lookup(&self, token: &str, code: &str) -> BoxFuture<Lookup>;
 
+    /// `GET /catalog/search?q=&limit=20`: the register's product search (F2, spec 2.6 §2): the
+    /// first page of sellable variants; the register adds a hit by looking up its SKU.
+    fn product_search(&self, token: &str, q: &str) -> BoxFuture<SearchPage>;
+
     /// `GET /customers/lookup?phone=`: the customer with this phone (any accepted form; spec 2.5
     /// §6). A merged customer's phone finds the survivor. Errors: `404 not_found`,
     /// `422 invalid_phone`.
@@ -209,13 +214,15 @@ pub trait Service: Send + Sync {
     fn sale_by_number(&self, token: &str, number: &str) -> BoxFuture<Sale>;
     /// `GET /sales?…`: one page; a cashier lists their own session (`cashier_session_id`).
     fn sales(&self, token: &str, query: &DocQuery) -> BoxFuture<SalePage>;
-    /// `GET /sales/{id}/receipt[?copy=true]`: the receipt text; a copy of another than the last
-    /// sale of the session needs `sale.reprint` (`override_token`).
+    /// `GET /sales/{id}/receipt[?copy=true]&lang=`: the receipt text with labels in `lang`
+    /// (`id` or `en`); a copy of another than the last sale of the session needs `sale.reprint`
+    /// (`override_token`).
     fn receipt(
         &self,
         token: &str,
         id: &str,
         copy: bool,
+        lang: &str,
         override_token: Option<&str>,
     ) -> BoxFuture<Receipt>;
     /// `POST /sales/{id}/void` with `Idempotency-Key: key` (spec 2.6 §7).
@@ -265,6 +272,15 @@ pub trait Service: Send + Sync {
     ) -> BoxFuture<HistoryPage>;
     /// `GET /customers/{id}/recent-receipts`: the latest posted sales, to start a return.
     fn recent_receipts(&self, token: &str, customer_id: &str) -> BoxFuture<Vec<SaleSummary>>;
+    /// `POST /drawer/open` with `Idempotency-Key: key` (`drawer.open`, overridable with the
+    /// cashier session as `context_ref`; spec 2.6 §13 F5, phase S5).
+    fn open_drawer(
+        &self,
+        token: &str,
+        body: &DrawerRequest,
+        key: &str,
+        override_token: Option<&str>,
+    ) -> BoxFuture<DrawerOpen>;
 }
 
 /// What the back office needs from the server (phase C4, spec 2.2 §12). `token` is the password

@@ -17,6 +17,7 @@ mod catalog_lookup;
 mod customer_balance;
 mod customers;
 mod delegation;
+mod drawer;
 mod events;
 mod guards;
 mod idempotency;

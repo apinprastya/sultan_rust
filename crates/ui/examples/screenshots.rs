@@ -1,13 +1,15 @@
 //! Renders the Start screen (files `0a`–`0d`, `0d` the single app's settings with terminals
-//! allowed), every register screen (with the barcode lookup of
-//! phase C5 and its prices of spec 2.3 R5, files `5a`–`5d`) and every back-office screen (phase C4,
+//! allowed), every register screen (with the price check of
+//! phase C5 and its prices of spec 2.3 R5, files `5a`–`5d`, and the sell screen of spec 2.6 S4,
+//! files `5e`–`5h` and `6`) and every back-office screen (phase C4,
 //! files `bo-*`; the customer screens of spec 2.5 M4 are `bo-10`–`bo-19`, the pricing screens of
 //! spec 2.3 R4 `bo-20`–`bo-24`) to PNG
 //! with Slint's software renderer (no display needed), driven by keys against the fake service,
-//! like the headless tests.
+//! like the headless tests. The register shots use a fixed time (`NOW`, 2027-01-15 15:00 WIB);
+//! the header clock shows it in the local time zone, so run it with `TZ=Asia/Jakarta`.
 //!
 //! ```sh
-//! cargo run -p sultan-ui --example screenshots -- docs/screenshots [WIDTHxHEIGHT] [en|id]
+//! TZ=Asia/Jakarta cargo run -p sultan-ui --example screenshots -- docs/screenshots [WIDTHxHEIGHT] [en|id]
 //! ```
 
 use std::path::{Path, PathBuf};
@@ -120,6 +122,9 @@ fn save(window: &MinimalSoftwareWindow, path: &Path) -> Result<(), Box<dyn std::
     Ok(())
 }
 
+/// The time of the register shots (the fake's default), 2027-01-15 15:00 WIB.
+const NOW: i64 = 1_800_000_000_000;
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut args = std::env::args().skip(1);
     let dir = PathBuf::from(args.next().unwrap_or_else(|| "docs/screenshots".into()));
@@ -144,6 +149,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     start(&window, &dir, (width, height), &language, &runtime)?;
 
     let fake = Arc::new(FakeService::default());
+    // One fixed time for the fake and the window's clock, so session and sale numbers match the
+    // date in the header: 2027-01-15 15:00 WIB.
+    fake.set_now(NOW);
     fake.set_cash_sales(1_250_000);
     // The register looks codes up in the same demo catalog; Aqua 600 ml is not sold here.
     let (aqua600, _) = demo_catalog(&fake);
@@ -155,6 +163,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut options = Options::new("R1 · Kasir 1");
     options.language = Some(language.clone());
     options.start = true;
+    options.clock = Arc::new(|| NOW);
     let app = build_app(
         fake.clone(),
         Runner::Block(runtime.handle().clone()),
@@ -184,14 +193,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     press(&app, Key::Return);
     shot("5-home")?;
     scans(&app, &shot)?;
-    press(&app, Key::F2);
-    press(&app, Key::DownArrow);
-    digits(&app, "5555");
-    press(&app, Key::Return);
-    digits(&app, "55");
-    shot("6-override")?;
-    press(&app, Key::Escape);
-    press(&app, Key::F10);
+    sell(&app, &shot)?;
+    after(&app, &shot)?;
+    ctrl(&app, Key::F10);
     press(&app, Key::DownArrow);
     digits(&app, "17");
     press(&app, Key::DownArrow);
@@ -224,7 +228,8 @@ type Shot = Result<(), Box<dyn std::error::Error>>;
 /// The barcode field (phase C5) with prices (spec 2.3 R5): a variant's barcode, a weight scale
 /// label, a blocked item, and the Gold price of an attached customer (detached again after).
 fn scans(app: &App, shot: &dyn Fn(&str) -> Shot) -> Shot {
-    // The barcode field (phase C5): a variant's barcode, a weight scale label, a blocked item.
+    // The price check (F7): a variant's barcode, a weight scale label, a blocked item.
+    press(app, Key::F7);
     digits(app, &ean13("8992000100000"));
     press(app, Key::Return);
     shot("5a-scan-item")?;
@@ -243,7 +248,109 @@ fn scans(app: &App, shot: &dyn Fn(&str) -> Shot) -> Shot {
     digits(app, &ean13("899100000010"));
     press(app, Key::Return);
     shot("5d-scan-customer-price")?;
+    ctrl(app, Key::F3);
+    press(app, Key::Escape);
+    press(app, Key::F7);
+    Ok(())
+}
+
+/// Ctrl + `k` on the register.
+fn ctrl(app: &App, k: impl Into<SharedString>) {
+    key(app.ui.window(), &[Key::Control.into(), k.into()]);
+}
+
+/// The sell screen (spec 2.6, phase S4): a cart, a line discount, a split payment, the manager
+/// override it needs at posting, and the posted sale with its receipt.
+fn sell(app: &App, shot: &dyn Fn(&str) -> Shot) -> Shot {
+    for code in [
+        ean13("8992000100000"),
+        ean13("8992000100000"),
+        ean13("899100000010"),
+    ] {
+        digits(app, &code);
+        press(app, Key::Return);
+    }
+    shot("5e-cart")?;
+    ctrl(app, Key::UpArrow);
+    press(app, Key::UpArrow);
+    press(app, "d");
+    digits(app, "15");
+    shot("5f-line-discount")?;
+    press(app, Key::Return);
+    press(app, Key::Escape);
+    press(app, Key::F9);
+    press(app, Key::DownArrow);
+    press(app, Key::Return);
+    digits(app, "50000");
+    press(app, Key::Return);
+    digits(app, "1234");
+    press(app, Key::Return);
+    digits(app, "110000");
+    press(app, Key::Return);
+    shot("5g-payment")?;
+    // 15% is above Ani's 10%: Citra (12%) cannot approve it.
+    press(app, Key::Return);
+    press(app, Key::DownArrow);
+    digits(app, "5555");
+    press(app, Key::Return);
+    digits(app, "99");
+    shot("6-override")?;
+    press(app, Key::Escape);
+    press(app, Key::Return);
+    digits(app, "9999");
+    press(app, Key::Return);
+    shot("5h-sale-posted")?;
+    press(app, Key::Return);
+    Ok(())
+}
+
+/// After the sale (spec 2.6, phase S5): a held cart in the resume list, the last receipts, a
+/// receipt, a return turned into an exchange and its payment, and a post-void with its refund.
+fn after(app: &App, shot: &dyn Fn(&str) -> Shot) -> Shot {
+    digits(app, &ean13("899100000010"));
+    press(app, Key::Return);
+    press(app, Key::F11);
+    digits(app, "ambil sore");
+    press(app, Key::Return);
+    key(app.ui.window(), &[Key::Shift.into(), Key::F11.into()]);
+    shot("11a-resume-list")?;
+    press(app, Key::Return);
+    // The resumed cart is held again for later.
+    press(app, Key::F11);
+    press(app, Key::Return);
+    press(app, Key::F6);
+    shot("11b-last-receipts")?;
+    press(app, Key::Return);
+    shot("11c-receipt")?;
+    // T: return one of the two shirts, then exchange it for Teh Botol.
+    press(app, "t");
+    press(app, "+");
+    shot("11d-return")?;
+    press(app, Key::F9);
+    digits(app, &ean13("899100000010"));
+    press(app, Key::Return);
     press(app, Key::F4);
+    shot("11e-exchange-payment")?;
+    press(app, Key::Return);
+    shot("11f-exchange-posted")?;
+    press(app, Key::Return);
+    // V: void the exchange sale (Budi approves), paid back in cash.
+    press(app, Key::F6);
+    press(app, Key::Return);
+    press(app, "v");
+    press(app, Key::DownArrow);
+    shot("11g-post-void")?;
+    press(app, Key::Return);
+    digits(app, "9999");
+    press(app, Key::Return);
+    shot("11h-post-voided")?;
+    press(app, Key::Escape);
+    press(app, Key::Escape);
+    // The held cart is deleted (Budi approves), so the session can close.
+    key(app.ui.window(), &[Key::Shift.into(), Key::F11.into()]);
+    press(app, Key::Delete);
+    digits(app, "9999");
+    press(app, Key::Return);
     press(app, Key::Escape);
     Ok(())
 }
@@ -277,6 +384,20 @@ fn customers(app: &App, shot: &dyn Fn(&str) -> Shot) -> Shot {
     digits(app, "0812-3456-789");
     press(app, Key::Return);
     shot("10d-customer-sign-up-taken")?;
+    // A sale for Budi, then his purchase history (F3 → F9, spec 2.6 S5).
+    press(app, Key::Escape);
+    press(app, Key::Escape);
+    digits(app, &ean13("899100000010"));
+    press(app, Key::Return);
+    press(app, Key::F4);
+    press(app, Key::Return);
+    press(app, Key::Return);
+    press(app, Key::Return);
+    press(app, Key::F3);
+    digits(app, "0812-3456-789");
+    press(app, Key::Return);
+    press(app, Key::F9);
+    shot("10e-customer-history")?;
     Ok(())
 }
 

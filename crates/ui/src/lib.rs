@@ -8,7 +8,11 @@
 //! - [`amount`], [`count`], [`input`]: Rupiah formatting, the denomination count, keys, PIN and
 //!   time texts.
 //! - [`scan`]: the session home's barcode field (phase C5) and its prices (spec 2.3, R5): typed
-//!   code, waiting lookup, shown item and the attached customer's quote.
+//!   code, waiting lookup, shown item and the attached customer's quote (the F7 price check).
+//! - [`sell`] and [`till`]: the sell screen (spec 2.6, phase S4): the cart, line actions,
+//!   payment panel, posting, receipt preview and keys; [`crash`] keeps the cart's crash copy;
+//!   [`after`] is what follows the sale (phase S5): hold and resume, the last receipts with
+//!   reprint and post-void, returns and exchanges, the purchase history and the drawer.
 //! - [`customer`]: the session home's customer step (spec 2.5, phase M5): find, sign up,
 //!   attach, balance payout.
 //! - [`setup`] and [`setup_app`]: the first-run setup wizard (single app, HQ server, branch
@@ -25,19 +29,23 @@
 //!   `translations/id/LC_MESSAGES/sultan-ui.po` and picked from the system locale or
 //!   [`app::Options::language`].
 
+pub mod after;
 pub mod amount;
 pub mod app;
 pub mod backoffice;
 pub mod backoffice_app;
 pub mod controller;
 pub mod count;
+pub mod crash;
 pub mod customer;
 pub mod input;
 pub mod scan;
+pub mod sell;
 pub mod setup;
 pub mod setup_app;
 pub mod start;
 pub mod start_app;
+pub mod till;
 
 #[allow(clippy::all, clippy::pedantic, missing_docs)]
 mod generated {

@@ -265,6 +265,7 @@ mod tests {
             amount,
             branch_id: None,
             unit_price: None,
+            units: Vec::new(),
         }
     }
 

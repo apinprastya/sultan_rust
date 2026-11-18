@@ -850,6 +850,21 @@ async fn receipts_reprints_and_lookups(h: &Harness) {
             .iter()
             .all(|l| l.as_str().unwrap().chars().count() <= 32)
     );
+    // In the register's window language (spec 2.6 §19 from S4).
+    let r = h
+        .at_register(
+            at,
+            Method::GET,
+            &receipt(&last["id"], "?lang=id"),
+            &[],
+            None,
+        )
+        .await;
+    let text = r.body["text"].as_str().unwrap();
+    assert!(
+        text.contains("Kembali") && text.contains("Petugas"),
+        "{text}"
+    );
     let r = h
         .at_register(
             at,

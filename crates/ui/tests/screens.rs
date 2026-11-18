@@ -52,6 +52,7 @@ fn till_opened(fake: FakeService, language: Option<&str>, start: bool) -> Till {
         language: language.map(str::to_owned),
         clock,
         start,
+        cart_file: None,
     };
     let app = build_app(
         fake.clone(),
@@ -460,7 +461,7 @@ fn blind_close_shows_expected_cash_only_in_the_report() {
     let ui = &t.app.ui;
     t.fake.set_cash_sales(250_000);
     t.ani_at_home();
-    t.press(&["F10"]);
+    t.press(&["Control", "F10"]);
     assert_eq!(t.screen(), "close");
     let rows: Vec<String> = ui.get_denoms().iter().map(|r| r.label.into()).collect();
     assert_eq!(rows.first().unwrap(), "Rp 100.000");
@@ -570,169 +571,12 @@ fn close_from_an_empty_count_and_back() {
     t.press(&["Esc"]);
     assert_eq!(t.screen(), "home");
     // A manager force-closed it meanwhile.
-    t.press(&["F10"]);
+    t.press(&["Control", "F10"]);
     t.fake
         .fail_next(Problem::new(409, "session_closed", "x").into());
     t.keys(&["Enter", "Enter"]);
     assert_eq!(t.screen(), "open");
     assert_eq!(t.app.ui.get_open().note.code, "session_closed");
-}
-
-#[test]
-fn override_dialog_approves_and_retries_with_the_token() {
-    let t = till();
-    let ui = &t.app.ui;
-    t.ani_at_home();
-    assert_eq!(
-        t.chips(),
-        [
-            ("F2".into(), "test_override".into()),
-            ("F3".into(), "customer".into()),
-            ("F10".into(), "close_session".into()),
-            ("F12".into(), "lock".into()),
-            ("Enter".into(), "look_up".into()),
-            ("Esc".into(), "clear".into())
-        ]
-    );
-    t.press(&["F2"]);
-    let dialog = ui.get_approval();
-    assert!(dialog.open);
-    assert_eq!(
-        (
-            dialog.action.as_str(),
-            dialog.value.as_str(),
-            dialog.limit.as_str()
-        ),
-        ("sale.discount", "15%", "10%")
-    );
-    let managers: Vec<String> = ui.get_managers().iter().map(|m| m.name.into()).collect();
-    assert_eq!(managers, ["Budi", "Citra", "Dedi"], "never the requester");
-
-    // Page shortcuts do not leak into the dialog.
-    t.press(&["F10"]);
-    t.press(&["F12"]);
-    assert_eq!(t.screen(), "home");
-    assert!(ui.get_approval().open);
-
-    t.press(&["Enter"]);
-    assert_eq!(ui.get_approval().note.code, "pin_too_short");
-    // Citra's limit (12%) is too low.
-    t.press(&["Down"]);
-    t.type_digits("5555");
-    t.press(&["Enter"]);
-    let note = ui.get_approval().note;
-    assert_eq!(
-        (note.code.as_str(), note.arg.as_str()),
-        ("override_limit_exceeded", "12%")
-    );
-    assert_eq!(t.text(note), "This manager's limit (12%) is too low.");
-    assert_eq!(ui.get_approval().pin_length, 0);
-    // Self-approval (the server's answer, shown inline).
-    t.fake
-        .fail_next(Problem::new(403, "self_approval", "x").into());
-    t.type_digits("5555");
-    t.press(&["Enter"]);
-    assert_eq!(ui.get_approval().note.code, "self_approval");
-    // Budi, wrong PIN, then right.
-    t.click("Budi");
-    assert_eq!(ui.get_approval().cursor, 0);
-    t.type_digits("0000");
-    t.press(&["Enter"]);
-    assert_eq!(ui.get_approval().note.code, "wrong_pin");
-    t.type_digits("99999");
-    t.press(&["Backspace"]);
-    t.click("Approve");
-
-    assert!(!ui.get_approval().open);
-    let protected = t.fake.calls_of("demo_protected");
-    assert_eq!(protected.len(), 2);
-    assert_eq!(protected[0], "override=-");
-    assert!(
-        protected[1].starts_with("override=override-"),
-        "retried with the token: {protected:?}"
-    );
-    let note = ui.get_home().note;
-    assert_eq!(
-        (note.code.as_str(), note.arg.as_str(), note.tone),
-        ("override_ok", "Budi", 1)
-    );
-    assert_eq!(
-        t.text(note),
-        "Approved by Budi. The action was carried out."
-    );
-}
-
-#[test]
-fn override_dialog_lockout_and_cancel() {
-    let t = till();
-    let ui = &t.app.ui;
-    t.ani_at_home();
-    t.press(&["F2"]);
-    // Dedi (last; Up wraps) types a wrong PIN five times.
-    t.press(&["Up"]);
-    assert_eq!(ui.get_approval().cursor, 2);
-    for _ in 0..5 {
-        t.type_digits("0000");
-        t.press(&["Enter"]);
-    }
-    let note = ui.get_approval().note;
-    assert_eq!(
-        (note.code.as_str(), note.arg.as_str()),
-        ("locked_out", "5:00")
-    );
-    t.advance(30_000);
-    assert_eq!(ui.get_approval().note.arg, "4:30");
-    // Esc cancels: back home, nothing approved.
-    t.press(&["Esc"]);
-    assert!(!ui.get_approval().open);
-    assert_eq!(ui.get_home().note.code, "override_cancelled");
-    assert_eq!(t.fake.calls_of("demo_protected").len(), 1);
-    // The Cancel button does the same.
-    t.press(&["F2"]);
-    t.click("Cancel");
-    assert!(!ui.get_approval().open);
-}
-
-#[test]
-fn override_not_needed_within_own_limit() {
-    let t = till_with(
-        FakeService::new(vec![
-            sultan_client::fake::FakeUser::new("u-owner", "Owner", "1234", 10_000),
-            sultan_client::fake::FakeUser::new("u-budi", "Budi", "9999", 2_000),
-        ]),
-        Some("en"),
-    );
-    t.ani_at_home();
-    t.press(&["F2"]);
-    assert!(!t.app.ui.get_approval().open);
-    assert_eq!(t.app.ui.get_home().note.code, "override_not_needed");
-    // Any other error of the action is shown on the page.
-    t.fake
-        .fail_next(Problem::new(403, "permission_denied", "x").into());
-    t.press(&["F2"]);
-    assert_eq!(t.app.ui.get_home().note.code, "permission_denied");
-}
-
-#[test]
-fn failed_retry_with_token_stays_in_the_dialog() {
-    let t = till();
-    t.ani_at_home();
-    t.press(&["F2"]);
-    t.type_digits("9999");
-    // `POST /overrides` succeeds; the retry with the token is refused (e.g. it expired).
-    t.fake.fail_on(
-        "demo_protected",
-        Problem::new(403, "invalid_override", "x").into(),
-    );
-    t.press(&["Enter"]);
-    assert_eq!(t.fake.calls_of("request_override").len(), 1);
-    assert!(t.app.ui.get_approval().open);
-    assert_eq!(t.app.ui.get_approval().note.code, "invalid_override");
-    // Approve again: works.
-    t.type_digits("9999");
-    t.press(&["Enter"]);
-    assert!(!t.app.ui.get_approval().open);
-    assert_eq!(t.app.ui.get_home().note.code, "override_ok");
 }
 
 #[test]
@@ -810,7 +654,8 @@ fn errors_on_the_way() {
     t.ani_at_home();
     t.fake
         .fail_next(Problem::new(401, "invalid_session", "x").into());
-    t.press(&["F2"]);
+    t.type_digits("123");
+    t.press(&["Enter"]);
     assert_eq!(t.screen(), "lock");
     assert_eq!(ui.get_lock().note.code, "session_ended");
     assert!(t.fake.calls_of("logout").is_empty());
@@ -829,7 +674,7 @@ fn errors_on_the_way() {
     assert_eq!(t.screen(), "home");
     t.fake
         .fail_next(Problem::new(401, "invalid_device_token", "x").into());
-    t.press(&["F10"]);
+    t.press(&["Control", "F10"]);
     t.keys(&["Enter", "Enter"]);
     assert_eq!(t.screen(), "lock");
     let note = ui.get_lock().note;

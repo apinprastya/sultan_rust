@@ -13,31 +13,32 @@
 //!    is typed as digits and shown as Rupiah; Enter opens (`Idempotency-Key`, reused only when
 //!    the answer was lost). If another user's session is open here, the screen says whose and
 //!    only offers "back to lock" (spec 2.1 §5 handover: no shared sessions).
-//! 3. **Home** — the cashier's screen: user, session start, opening cash, the **barcode field**
-//!    (phase C5, spec 2.2 §6) and the actions F2 test override, F10 close session, F12 lock
-//!    (logout; spec 2.1 §4: locking keeps the session open). Typed or scanned characters go into
+//! 3. **Home** — the sell screen (spec 2.6, phase S4; [`crate::till`], [`crate::sell`]): user,
+//!    session, customer line, the **barcode field** (phase C5, spec 2.2 §6), the cart, its totals
+//!    and the keys of spec 2.6 §13 (F12 locks: spec 2.1 §4, locking keeps the session open;
+//!    Ctrl+F10 closes the session when the cart is empty). Typed or scanned characters go into
 //!    the field ([`crate::scan::ScanField`]); Enter resolves the code through
-//!    `GET /catalog/lookup` and shows the item (or why there is none: not found, not sold at this
-//!    branch, archived, not for sale, a scale label of 0); Esc clears the field and the item. The
-//!    lookup does not block input, so the next scan can follow at once; only the newest answer is
-//!    shown. The item shows its store price (spec 2.3 R5); with a customer attached, the
-//!    customer's price is quoted too (`POST /pricing/quote`, [`Effect::Quote`]). No cart yet
-//!    (spec 2.6).
+//!    `GET /catalog/lookup` and adds the item to the cart (or says why there is none: not found,
+//!    not sold at this branch, archived, not for sale, a scale label of 0); Esc clears the field.
+//!    The lookup does not block input, so the next scan can follow at once. In price-check mode
+//!    (F7) a scan only shows the item with its store price (spec 2.3 R5) and, with a customer
+//!    attached, the customer's price (`POST /pricing/quote`, [`Effect::Quote`]).
 //! 4. **Close** — blind close (spec 2.1 §5): a counted total or per-denomination counts; expected
 //!    cash is never shown before the close. Enter asks for confirmation, Enter again closes.
 //! 5. **Report** — expected, counted, over/short and tender totals; Enter logs out to Lock.
 //!
 //! **Customer** (spec 2.5 §6–§11, phase M5; [`crate::customer`]): F3 on the session home opens
-//! the customer dialog (find by phone, member code or, with `customer.search`, name; sign up;
-//! pay a balance out). Enter on a found customer attaches them: the home shows their receipt
-//! line and balance until F4 detaches them, the user locks or the session closes (the cart and
-//! its customer come with 2.6). After login the register asks `GET /auth/me` for the user's
-//! permissions, so the dialog shows only what the user may do.
+//! the customer dialog (find by phone, member code or, with `customer.search`, name: Shift+F3;
+//! sign up; pay a balance out). Enter on a found customer attaches them to the cart (it is
+//! quoted again): the home shows their receipt line and balance until Ctrl+F3 detaches them,
+//! the sale is posted, the user locks or the session closes. After login the register asks
+//! `GET /auth/me` for the user's permissions, so the dialog shows only what the user may do.
 //!
-//! **Manager override** ([`Approval`], spec 2.1 §6): an action answered with `403 needs_override`
-//! opens a dialog over the current screen with the action, the value and the cashier's limit; the
-//! manager is picked with ↑/↓ (or a click) and types their PIN; Enter asks `POST /overrides` and
-//! the original action is retried with the token as `X-Override`. Esc cancels. Self-approval, a
+//! **Manager override** ([`Approval`], spec 2.1 §6): a void or a sale answered with
+//! `403 needs_override` opens a dialog over the current screen with the action, the value and the
+//! cashier's limit; the manager is picked with ↑/↓ (or a click) and types their PIN; Enter asks
+//! `POST /overrides` and the void or sale is retried with the token(s) as `X-Override`
+//! ([`crate::till::Retry`]). Esc cancels. Self-approval, a
 //! wrong PIN, a lockout and `override_limit_exceeded` are shown in the dialog.
 //!
 //! **Events** (spec 2.1 §4): after login the glue watches `GET /events`; `session.revoked` for
@@ -52,9 +53,9 @@
 //! twice.
 
 use sultan_client::{
-    Branch, CashierSession, ClientError, CloseReport, CloseRequest, Customer, LockUser, Login,
-    Lookup, OverrideGrant, OverrideRequest, ProtectedAction, ProtectedResult, Quote, QuoteRequest,
-    ServerEvent,
+    Branch, CartVoid, CartVoidRequest, CashierSession, ClientError, CloseReport, CloseRequest,
+    Customer, LockUser, Login, Lookup, OverrideGrant, OverrideRequest, ProtectedAction, Quote,
+    QuoteRequest, Receipt, Sale, SaleRequest, SearchPage, ServerEvent, TenderType,
 };
 
 use crate::amount::{Digits, percent, rupiah};
@@ -62,12 +63,7 @@ use crate::count::{CountForm, wrap};
 use crate::customer::{Call, Dialog, Outcome, Perms, Reply};
 use crate::input::{Key, Pin};
 use crate::scan::ScanField;
-
-/// The action the "test override" button asks for: a 15% line discount, above the seeded
-/// Cashier limit (10%) and within the Manager limit (20%).
-pub const DEMO_ACTION: &str = "sale.discount";
-/// The requested value of [`DEMO_ACTION`] (basis points).
-pub const DEMO_VALUE: i64 = 1_500;
+use crate::till::{Retry, Sell};
 /// Lock-screen tiles per row (the arrow keys move by this much vertically).
 pub const TILE_COLUMNS: usize = 4;
 
@@ -159,7 +155,10 @@ impl Notice {
 
 /// Whether an action's value is a percentage (basis points) rather than an amount.
 fn is_percentage(action: &str) -> bool {
-    matches!(action, "sale.discount" | "sale.cart_discount")
+    matches!(
+        action,
+        "sale.discount" | "sale.cart_discount" | "price.override"
+    )
 }
 
 /// A requested value or limit of `action` as text: `15%` or `Rp 50.000`.
@@ -171,6 +170,21 @@ pub fn value_text(action: &str, value: Option<i64>) -> String {
         Some(v) => rupiah(v),
     }
 }
+
+/// API codes shown with a message of the same code (spec 2.6: the sale's rules).
+const PLAIN_CODES: [&str; 11] = [
+    "tender_reference_required",
+    "insufficient_balance",
+    "balance_limit",
+    "cart_too_large",
+    "invalid_qty",
+    "no_price",
+    "cart_stale",
+    "conflict",
+    "archived",
+    "not_sold_here",
+    "invalid_reference",
+];
 
 /// The message for a failed call (codes of `crates/server/src/error.rs`).
 #[must_use]
@@ -201,6 +215,28 @@ pub fn notice_for(error: &ClientError) -> Notice {
         "session_closed" => Notice::bad("session_closed"),
         "no_open_session" => Notice::bad("no_open_session"),
         "invalid_field" | "amount_overflow" => Notice::bad("invalid_amount"),
+        "tender_over_rest" => Notice::new(
+            "tender_over_rest",
+            problem
+                .extra
+                .get("rest")
+                .and_then(serde_json::Value::as_i64)
+                .map(rupiah)
+                .unwrap_or_default(),
+            Tone::Bad,
+        ),
+        "needs_override" => Notice::new(
+            "needs_override",
+            problem.permission().unwrap_or_default().to_owned(),
+            Tone::Bad,
+        ),
+        code if PLAIN_CODES.contains(&code) => Notice::bad(
+            PLAIN_CODES
+                .iter()
+                .find(|c| **c == code)
+                .copied()
+                .unwrap_or("error"),
+        ),
         other => Notice::new("error", other.to_owned(), Tone::Bad),
     }
 }
@@ -243,7 +279,7 @@ pub fn quote_notice(error: &ClientError) -> Notice {
 }
 
 /// Whether the error means the login (or the device) is no longer valid.
-fn ends_login(error: &ClientError) -> bool {
+pub(crate) fn ends_login(error: &ClientError) -> bool {
     matches!(
         error.code(),
         Some("invalid_session" | "invalid_device_token")
@@ -258,7 +294,7 @@ pub(crate) fn new_key() -> String {
 /// What a key chip or button does.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Action {
-    /// Enter: log in, open, confirm, approve, done.
+    /// Enter: log in, open, confirm, approve, done, add the scanned item.
     Confirm,
     /// Esc: close the pad, cancel the dialog, back.
     Back,
@@ -266,15 +302,13 @@ pub enum Action {
     Retry,
     /// Log out to the lock screen (the cashier session stays open).
     Lock,
-    /// Start the blind close.
+    /// Start the blind close (Ctrl+F10, an empty cart only).
     CloseSession,
-    /// Run the demo action protected by an override.
-    TestOverride,
     /// Leave the register for the Start screen (lock screen only, when opened from it).
     Start,
     /// Open the customer dialog.
     Customer,
-    /// Detach the attached customer.
+    /// Detach the attached customer (Ctrl+F3).
     Detach,
     /// Customer dialog: phone or code ↔ name search.
     SwitchMode,
@@ -286,16 +320,87 @@ pub enum Action {
     ShowTaken,
     /// Customer dialog: the sign-up's next field.
     NextField,
+    /// F1: the key list.
+    Help,
+    /// F2: product search.
+    Search,
+    /// Shift+F3: the customer dialog's name search.
+    NameSearch,
+    /// F4: pay, starting with cash.
+    PayCash,
+    /// F5: open the drawer.
+    Drawer,
+    /// F7: price check on / off.
+    PriceCheck,
+    /// F8: save change (payment panel).
+    SaveChange,
+    /// F9: pay, starting with a non-cash tender.
+    PayOther,
+    /// Ctrl+↑: to the cart lines.
+    Lines,
+    /// Ctrl+↓ / Esc: back to the barcode field.
+    Scan,
+    /// Enter on a line: its quantity.
+    EditQty,
+    /// Del on a line: void it.
+    VoidLine,
+    /// `+` on a line.
+    More,
+    /// `−` on a line.
+    Less,
+    /// U on a line: its unit.
+    Unit,
+    /// P on a line: a manual price.
+    Price,
+    /// D on a line: a line discount.
+    Discount,
+    /// Ctrl+D: the cart discount.
+    CartDiscount,
+    /// Ctrl+N / Ctrl+Del: void the cart.
+    VoidCart,
+    /// Ctrl+T: the tax-invoice switch (D13).
+    TaxInvoice,
+    /// `%` in a discount: percent ↔ Rupiah.
+    Percent,
+    /// F11: hold the cart.
+    Hold,
+    /// Shift+F11: the resume list.
+    Resume,
+    /// F6: the last receipts.
+    Receipts,
+    /// F10: return / exchange (or cancel the exchange).
+    Return,
+    /// Del in the resume list: drop the held cart.
+    DeleteHeld,
+    /// F8: the next history page.
+    MorePage,
+    /// R on a receipt: reprint (COPY).
+    Reprint,
+    /// V on a receipt: post-void.
+    PostVoid,
+    /// T on a receipt: return it.
+    StartReturn,
+    /// Cash or the customer balance.
+    RefundMethod,
+    /// F2 in the return: without a receipt.
+    NoReceipt,
+    /// `*` on a returned line: all or nothing.
+    All,
+    /// Del on a returned line: write off (with a reason).
+    WriteOff,
+    /// F9 in the return: exchange.
+    Exchange,
+    /// F9 in the customer dialog: purchase history.
+    History,
 }
 
 impl Action {
-    const ALL: [Self; 14] = [
+    const ALL: [Self; 49] = [
         Self::Confirm,
         Self::Back,
         Self::Retry,
         Self::Lock,
         Self::CloseSession,
-        Self::TestOverride,
         Self::Start,
         Self::Customer,
         Self::Detach,
@@ -304,6 +409,42 @@ impl Action {
         Self::PayOut,
         Self::ShowTaken,
         Self::NextField,
+        Self::Help,
+        Self::Search,
+        Self::NameSearch,
+        Self::PayCash,
+        Self::Drawer,
+        Self::PriceCheck,
+        Self::SaveChange,
+        Self::PayOther,
+        Self::Lines,
+        Self::Scan,
+        Self::EditQty,
+        Self::VoidLine,
+        Self::More,
+        Self::Less,
+        Self::Unit,
+        Self::Price,
+        Self::Discount,
+        Self::CartDiscount,
+        Self::VoidCart,
+        Self::TaxInvoice,
+        Self::Percent,
+        Self::Hold,
+        Self::Resume,
+        Self::Receipts,
+        Self::Return,
+        Self::DeleteHeld,
+        Self::MorePage,
+        Self::Reprint,
+        Self::PostVoid,
+        Self::StartReturn,
+        Self::RefundMethod,
+        Self::NoReceipt,
+        Self::All,
+        Self::WriteOff,
+        Self::Exchange,
+        Self::History,
     ];
 
     /// The ID used by the UI.
@@ -315,7 +456,6 @@ impl Action {
             Self::Retry => "retry",
             Self::Lock => "lock",
             Self::CloseSession => "close-session",
-            Self::TestOverride => "test-override",
             Self::Start => "start",
             Self::Customer => "customer",
             Self::Detach => "detach-customer",
@@ -324,6 +464,42 @@ impl Action {
             Self::PayOut => "pay-out",
             Self::ShowTaken => "show-taken",
             Self::NextField => "next-field",
+            Self::Help => "help",
+            Self::Search => "search",
+            Self::NameSearch => "name-search",
+            Self::PayCash => "pay-cash",
+            Self::Drawer => "drawer",
+            Self::PriceCheck => "price-check",
+            Self::SaveChange => "save-change",
+            Self::PayOther => "pay-other",
+            Self::Lines => "lines",
+            Self::Scan => "scan",
+            Self::EditQty => "edit-qty",
+            Self::VoidLine => "void-line",
+            Self::More => "more",
+            Self::Less => "less",
+            Self::Unit => "unit",
+            Self::Price => "price",
+            Self::Discount => "discount",
+            Self::CartDiscount => "cart-discount",
+            Self::VoidCart => "void-cart",
+            Self::TaxInvoice => "tax-invoice",
+            Self::Percent => "percent",
+            Self::Hold => "hold",
+            Self::Resume => "resume",
+            Self::Receipts => "receipts",
+            Self::Return => "return",
+            Self::DeleteHeld => "delete-held",
+            Self::MorePage => "more-page",
+            Self::Reprint => "reprint",
+            Self::PostVoid => "post-void",
+            Self::StartReturn => "start-return",
+            Self::RefundMethod => "refund-method",
+            Self::NoReceipt => "no-receipt",
+            Self::All => "return-all",
+            Self::WriteOff => "write-off",
+            Self::Exchange => "exchange",
+            Self::History => "history",
         }
     }
 
@@ -395,8 +571,10 @@ impl OpenScreen {
 pub struct HomeScreen {
     /// Result of the last action.
     pub notice: Option<Notice>,
-    /// The barcode field and the item it found.
+    /// The barcode field and the item it found (price check, F7).
     pub scan: ScanField,
+    /// The cart, its dialogs and the payment panel (spec 2.6, [`crate::till`]).
+    pub sell: Sell,
 }
 
 /// Blind-close screen state.
@@ -418,8 +596,8 @@ pub enum Screen {
     Lock(LockScreen),
     /// Opening cash.
     Open(OpenScreen),
-    /// Session home.
-    Home(HomeScreen),
+    /// Session home (boxed: the cart is by far the largest screen).
+    Home(Box<HomeScreen>),
     /// Blind close.
     Close(CloseScreen),
     /// The close report.
@@ -506,15 +684,6 @@ pub enum Effect {
         /// The request.
         body: OverrideRequest,
     },
-    /// [`sultan_client::Service::demo_protected`].
-    Protected {
-        /// Session token.
-        token: String,
-        /// The action.
-        body: ProtectedAction,
-        /// `X-Override`.
-        override_token: Option<String>,
-    },
     /// [`sultan_client::Service::logout`].
     Logout {
         /// Session token.
@@ -563,6 +732,87 @@ pub enum Effect {
     },
     /// Close the window: back to the Start screen ([`Action::Start`]).
     Exit,
+    /// [`sultan_client::Service::quote`] of the whole cart; the answer comes back as
+    /// [`Msg::CartQuoted`] with `seq`.
+    QuoteCart {
+        /// Session token.
+        token: String,
+        /// The cart's lines with the customer.
+        request: QuoteRequest,
+        /// The quote's sequence number.
+        seq: u64,
+        /// The login generation.
+        generation: u64,
+    },
+    /// [`sultan_client::Service::product_search`] (F2).
+    Search {
+        /// Session token.
+        token: String,
+        /// The text.
+        q: String,
+        /// The login generation.
+        generation: u64,
+    },
+    /// [`sultan_client::Service::cart_void`].
+    CartVoid {
+        /// Session token.
+        token: String,
+        /// The void.
+        body: CartVoidRequest,
+        /// Idempotency key.
+        key: String,
+        /// `X-Override`.
+        override_token: Option<String>,
+        /// The login generation.
+        generation: u64,
+    },
+    /// [`sultan_client::Service::tender_types`].
+    TenderTypes {
+        /// Session token.
+        token: String,
+        /// The login generation.
+        generation: u64,
+    },
+    /// [`sultan_client::Service::post_sale`].
+    PostSale {
+        /// Session token.
+        token: String,
+        /// The sale (cart) ID.
+        id: String,
+        /// The body.
+        body: Box<SaleRequest>,
+        /// `X-Override` (comma separated).
+        override_token: Option<String>,
+        /// The login generation.
+        generation: u64,
+    },
+    /// [`sultan_client::Service::receipt`] of the posted sale, in the window language.
+    Receipt {
+        /// Session token.
+        token: String,
+        /// The sale.
+        id: String,
+        /// The login generation.
+        generation: u64,
+    },
+    /// Write the crash copy (D2, JSON of [`crate::sell::Saved`]).
+    SaveCart(String),
+    /// Delete the crash copy.
+    DeleteCart,
+    /// Read the crash copy; it comes back as [`Msg::CartFile`].
+    LoadCart {
+        /// The login generation.
+        generation: u64,
+    },
+    /// A call of [`crate::after`]; the answer comes back as [`Msg::After`].
+    After {
+        /// Session token.
+        token: String,
+        /// The call.
+        call: crate::after::Call,
+        /// The login generation.
+        generation: u64,
+    },
 }
 
 /// Input for [`Controller::update`].
@@ -592,8 +842,6 @@ pub enum Msg {
     Closed(Result<Box<CloseReport>, ClientError>),
     /// Result of [`Effect::RequestOverride`].
     Approved(Result<OverrideGrant, ClientError>),
-    /// Result of [`Effect::Protected`].
-    Protected(Result<ProtectedResult, ClientError>),
     /// Result of [`Effect::Logout`].
     LoggedOut(Result<(), ClientError>),
     /// An event of the login `generation`.
@@ -610,6 +858,24 @@ pub enum Msg {
     PickCustomer(usize),
     /// A click on a sign-up field in the customer dialog.
     PickField(usize),
+    /// A click on a row of the sell screen: `line`, `item` (a dialog's list) or `tender`.
+    PickSell(&'static str, usize),
+    /// Result of [`Effect::QuoteCart`]: generation, number.
+    CartQuoted(u64, u64, Result<Quote, ClientError>),
+    /// Result of [`Effect::Search`].
+    Searched(u64, Result<SearchPage, ClientError>),
+    /// Result of [`Effect::CartVoid`].
+    CartVoided(u64, Result<CartVoid, ClientError>),
+    /// Result of [`Effect::TenderTypes`].
+    Tenders(u64, Result<Vec<TenderType>, ClientError>),
+    /// Result of [`Effect::PostSale`] (boxed: a sale is large).
+    Posted(u64, Box<Result<Sale, ClientError>>),
+    /// Result of [`Effect::Receipt`].
+    ReceiptText(u64, Result<Receipt, ClientError>),
+    /// Result of [`Effect::LoadCart`]: the file's contents.
+    CartFile(u64, Option<String>),
+    /// Result of [`Effect::After`] of the login `generation`.
+    After(u64, Box<crate::after::Reply>),
 }
 
 /// What [`Controller::update`] did.
@@ -647,13 +913,17 @@ pub struct Controller {
     pub approval: Option<Approval>,
     /// A call is running; input is ignored.
     pub busy: bool,
-    /// The protected action waiting for a result.
-    pending: Option<ProtectedAction>,
+    /// What an approved override retries.
+    pub(crate) retry: Option<Retry>,
     /// The lock-screen message is from a failed user list (cleared once it loads).
     users_failed: bool,
-    generation: u64,
+    pub(crate) generation: u64,
     /// Sequence number of the last lookup.
-    lookups: u64,
+    pub(crate) lookups: u64,
+    /// Sequence number of the last cart quote.
+    pub(crate) cart_quotes: u64,
+    /// The active tender types (loaded after login).
+    pub tenders: Vec<TenderType>,
     /// Sequence number of the last quote.
     quotes: u64,
     /// The window was opened from the Start screen: the lock screen offers F9 to go back.
@@ -664,6 +934,8 @@ pub struct Controller {
     pub dialog: Option<Dialog>,
     /// The logged-in user's customer permissions.
     pub perms: Perms,
+    /// The register's name (stored with a held cart for the resume list).
+    pub register_label: String,
 }
 
 impl Controller {
@@ -678,15 +950,18 @@ impl Controller {
             screen: Screen::Lock(LockScreen::default()),
             approval: None,
             busy: false,
-            pending: None,
+            retry: None,
             users_failed: false,
             generation: 0,
             lookups: 0,
+            cart_quotes: 0,
+            tenders: Vec::new(),
             quotes: 0,
             start: false,
             customer: None,
             dialog: None,
             perms: Perms::default(),
+            register_label: String::new(),
         };
         (controller, vec![Effect::LoadUsers])
     }
@@ -709,33 +984,6 @@ impl Controller {
             .iter()
             .filter(|u| Some(u.id.as_str()) != me)
             .collect()
-    }
-
-    /// The actions of the session home (also shown as large buttons there). F4 detaches the
-    /// customer, when one is attached.
-    #[must_use]
-    pub fn home_actions(&self) -> Vec<Shortcut> {
-        let s = |key, action, label| Shortcut { key, action, label };
-        let mut keys = vec![
-            s(Key::F(2), Action::TestOverride, "test_override"),
-            s(Key::F(3), Action::Customer, "customer"),
-        ];
-        if self.customer.is_some() {
-            keys.push(s(Key::F(4), Action::Detach, "detach_customer"));
-        }
-        keys.push(s(Key::F(10), Action::CloseSession, "close_session"));
-        keys.push(s(Key::F(12), Action::Lock, "lock"));
-        keys
-    }
-
-    /// The keys of the barcode field (shown next to it): Enter looks up, Esc clears.
-    #[must_use]
-    pub fn scan_actions() -> Vec<Shortcut> {
-        let s = |key, action, label| Shortcut { key, action, label };
-        vec![
-            s(Key::Enter, Action::Confirm, "look_up"),
-            s(Key::Escape, Action::Back, "clear"),
-        ]
     }
 
     /// The key chips of the current screen or dialog.
@@ -774,11 +1022,7 @@ impl Controller {
                 s(Key::Enter, Confirm, "open_session"),
                 s(Key::Escape, Lock, "lock"),
             ],
-            Screen::Home(_) => {
-                let mut keys = self.home_actions();
-                keys.extend(Self::scan_actions());
-                keys
-            }
+            Screen::Home(_) => self.sell_shortcuts(),
             Screen::Close(c) if c.confirm => vec![
                 s(Key::Enter, Confirm, "confirm_close"),
                 s(Key::Escape, Back, "edit_count"),
@@ -819,6 +1063,10 @@ impl Controller {
                 }
                 Step::default()
             }
+            Msg::PickSell(kind, i) => {
+                self.pick_sell(kind, i);
+                Step::default()
+            }
             Msg::PickRow(i) => {
                 if let Screen::Close(c) = &mut self.screen
                     && !c.confirm
@@ -841,6 +1089,7 @@ impl Controller {
                 handled: key != Key::Other,
             };
         }
+        let key = self.sell_key(key);
         if self.edit(key) {
             return Step::handled(Vec::new());
         }
@@ -892,15 +1141,7 @@ impl Controller {
                 }
                 _ => false,
             },
-            Screen::Home(h) => match key {
-                Key::Digit(d) => h.scan.push(char::from(b'0' + d)),
-                Key::Char(c) => h.scan.push(c),
-                Key::Backspace => {
-                    h.scan.pop();
-                    true
-                }
-                _ => false,
-            },
+            Screen::Home(_) => self.sell_edit(key),
             Screen::Close(c) if !c.confirm => {
                 let used = match key {
                     Key::Up | Key::BackTab => {
@@ -952,9 +1193,10 @@ impl Controller {
             let outcome = d.act(action);
             return self.dialog_outcome(outcome);
         }
+        let home = matches!(self.screen, Screen::Home(_)) && self.approval.is_none();
         match action {
-            Action::Confirm => self.confirm(),
-            Action::Back => {
+            Action::Confirm if !home => self.confirm(),
+            Action::Back if !home => {
                 self.back();
                 Vec::new()
             }
@@ -962,6 +1204,10 @@ impl Controller {
             Action::Start => vec![Effect::Exit],
             Action::Lock => self.logout(None),
             Action::CloseSession => {
+                if self.sell().is_some_and(|s| !s.cart.is_empty()) {
+                    self.set_notice(Notice::bad("cart_not_empty"));
+                    return Vec::new();
+                }
                 self.screen = Screen::Close(CloseScreen {
                     form: CountForm::default(),
                     confirm: false,
@@ -969,14 +1215,6 @@ impl Controller {
                     key: new_key(),
                 });
                 Vec::new()
-            }
-            Action::TestOverride => {
-                let body = ProtectedAction {
-                    action: DEMO_ACTION.to_owned(),
-                    value: Some(DEMO_VALUE),
-                    context_ref: format!("demo-{}", new_key()),
-                };
-                self.protected(body, None)
             }
             Action::Customer => {
                 self.dialog = Some(Dialog::new(self.customer.as_ref()));
@@ -986,16 +1224,19 @@ impl Controller {
                 self.customer = None;
                 if let Screen::Home(h) = &mut self.screen {
                     h.scan.forget_quote();
+                    h.sell.cart.tax_invoice = false;
                 }
                 self.set_notice(Notice::new("customer_detached", "", Tone::Neutral));
-                Vec::new()
+                self.cart_changed()
             }
             // Dialog actions; never on a screen's shortcuts.
             Action::SwitchMode
             | Action::NewCustomer
             | Action::PayOut
             | Action::ShowTaken
-            | Action::NextField => Vec::new(),
+            | Action::NextField
+            | Action::History => Vec::new(),
+            other => self.sell_action(other),
         }
     }
 
@@ -1015,12 +1256,24 @@ impl Controller {
                     generation: self.generation,
                 }]
             }
+            Outcome::History(customer) => {
+                self.dialog = None;
+                self.open_history(&customer)
+            }
             Outcome::Attach(customer) => {
                 let line = crate::customer::receipt_line(&customer);
+                let tax_id = customer.tax_id.is_some();
                 self.customer = Some(*customer);
                 self.dialog = None;
+                if let Screen::Home(h) = &mut self.screen
+                    && !tax_id
+                {
+                    h.sell.cart.tax_invoice = false;
+                }
                 self.set_notice(Notice::new("customer_attached", line, Tone::Good));
-                self.quote_shown()
+                let mut effects = self.quote_shown();
+                effects.extend(self.cart_changed());
+                effects
             }
         }
     }
@@ -1051,21 +1304,11 @@ impl Controller {
         Vec::new()
     }
 
-    fn token(&self) -> String {
+    pub(crate) fn token(&self) -> String {
         self.login
             .as_ref()
             .map(|l| l.token.clone())
             .unwrap_or_default()
-    }
-
-    fn protected(&mut self, body: ProtectedAction, override_token: Option<String>) -> Vec<Effect> {
-        self.busy = true;
-        self.pending = Some(body.clone());
-        vec![Effect::Protected {
-            token: self.token(),
-            body,
-            override_token,
-        }]
     }
 
     fn confirm(&mut self) -> Vec<Effect> {
@@ -1141,38 +1384,20 @@ impl Controller {
                 vec![effect]
             }
             Screen::Report(_) => self.logout(None),
-            Screen::Home(h) => {
-                let seq = self.lookups + 1;
-                let Some(code) = h.scan.take(seq) else {
-                    return Vec::new();
-                };
-                // A scan is the next action: the previous action's message goes.
-                h.notice = None;
-                self.lookups = seq;
-                vec![Effect::Lookup {
-                    token,
-                    code,
-                    seq,
-                    generation: self.generation,
-                }]
-            }
+            Screen::Home(_) => Vec::new(),
         }
     }
 
     fn back(&mut self) {
         if self.approval.take().is_some() {
-            self.pending = None;
+            self.approval_cancelled();
             self.set_notice(Notice::new("override_cancelled", "", Tone::Neutral));
             return;
         }
         match &mut self.screen {
             Screen::Lock(l) => l.pad = None,
             Screen::Close(c) if c.confirm => c.confirm = false,
-            Screen::Close(_) => self.screen = Screen::Home(HomeScreen::default()),
-            Screen::Home(h) => {
-                h.scan.clear();
-                h.notice = None;
-            }
+            Screen::Close(_) => self.screen = Screen::Home(Box::default()),
             _ => {}
         }
     }
@@ -1186,7 +1411,8 @@ impl Controller {
         self.customer = None;
         self.dialog = None;
         self.perms = Perms::default();
-        self.pending = None;
+        self.retry = None;
+        self.tenders.clear();
         self.busy = false;
         self.generation += 1;
         self.screen = Screen::Lock(LockScreen {
@@ -1202,7 +1428,7 @@ impl Controller {
     }
 
     /// Shows `notice` where the user is looking.
-    fn set_notice(&mut self, notice: Notice) {
+    pub(crate) fn set_notice(&mut self, notice: Notice) {
         let slot = match &mut self.screen {
             Screen::Lock(LockScreen { pad: Some(p), .. }) => &mut p.notice,
             Screen::Lock(l) => &mut l.notice,
@@ -1215,7 +1441,7 @@ impl Controller {
     }
 
     /// A failed call: back to Lock if the login or device is gone, else a message.
-    fn fail(&mut self, error: &ClientError) -> Vec<Effect> {
+    pub(crate) fn fail(&mut self, error: &ClientError) -> Vec<Effect> {
         self.busy = false;
         if ends_login(error) {
             self.login = None;
@@ -1254,7 +1480,6 @@ impl Controller {
             Msg::Opened(result) => self.opened(result),
             Msg::Closed(result) => self.closed(result.map(|report| *report)),
             Msg::Approved(result) => self.approved(result),
-            Msg::Protected(result) => self.protected_done(result),
             Msg::Event(generation, event) => {
                 if generation != self.generation || self.login.is_none() {
                     return Vec::new();
@@ -1264,11 +1489,21 @@ impl Controller {
                     self.login = None;
                     return self.logout(Some(Notice::bad("session_ended")));
                 }
-                self.catalog_event(&event)
+                let mut effects = self.held_event(&event.kind);
+                effects.extend(self.catalog_event(&event));
+                effects
             }
             Msg::Looked(generation, seq, result) => self.looked(generation, seq, result),
             Msg::Quoted(generation, seq, result) => self.quoted(generation, seq, result),
             Msg::Customer(generation, reply) => self.customer_reply(generation, *reply),
+            Msg::CartQuoted(generation, seq, result) => self.cart_quoted(generation, seq, result),
+            Msg::Searched(generation, result) => self.searched(generation, result),
+            Msg::CartVoided(generation, result) => self.cart_voided(generation, result),
+            Msg::Tenders(generation, result) => self.tenders_loaded(generation, result),
+            Msg::Posted(generation, result) => self.posted(generation, *result),
+            Msg::ReceiptText(generation, result) => self.receipt_loaded(generation, result),
+            Msg::CartFile(generation, contents) => self.cart_file(generation, contents.as_deref()),
+            Msg::After(generation, reply) => self.after_reply(generation, *reply),
             // Logout and branch failures change nothing on screen.
             _ => Vec::new(),
         }
@@ -1278,6 +1513,18 @@ impl Controller {
     /// layouts), `price.changed` touching its variant (or every price) or `events.lagged`: look
     /// the shown code up again.
     fn catalog_event(&mut self, event: &ServerEvent) -> Vec<Effect> {
+        let mut effects = Vec::new();
+        if matches!(event.kind.as_str(), "price.changed" | "events.lagged")
+            && self.sell().is_some_and(|s| !s.cart.is_empty())
+        {
+            effects = self.requote();
+        }
+        effects.extend(self.shown_event(event));
+        effects
+    }
+
+    /// The shown item of the price check after a catalog or price change.
+    fn shown_event(&mut self, event: &ServerEvent) -> Vec<Effect> {
         let token = self.token();
         let Screen::Home(h) = &mut self.screen else {
             return Vec::new();
@@ -1332,13 +1579,19 @@ impl Controller {
         {
             return self.fail(e);
         }
-        if let Screen::Home(h) = &mut self.screen {
-            let code = h.scan.looking().unwrap_or_default().to_owned();
-            if h.scan
-                .answer(seq, result.map_err(|e| lookup_notice(&e, &code)))
-            {
-                return self.quote_shown();
-            }
+        let code = match &self.screen {
+            Screen::Home(h) => h.scan.looking().unwrap_or_default().to_owned(),
+            _ => return Vec::new(),
+        };
+        let result = result.map_err(|e| lookup_notice(&e, &code));
+        let result = match self.sell_looked(seq, result.clone()) {
+            Some(effects) => return effects,
+            None => result,
+        };
+        if let Screen::Home(h) = &mut self.screen
+            && h.scan.answer(seq, result)
+        {
+            return self.quote_shown();
         }
         Vec::new()
     }
@@ -1449,8 +1702,16 @@ impl Controller {
             Ok(Some(session)) if session.user_id == login.user_id => {
                 self.busy = false;
                 self.session = Some(session);
-                self.screen = Screen::Home(HomeScreen::default());
-                Vec::new()
+                self.screen = Screen::Home(Box::default());
+                vec![
+                    Effect::TenderTypes {
+                        token: self.token(),
+                        generation: self.generation,
+                    },
+                    Effect::LoadCart {
+                        generation: self.generation,
+                    },
+                ]
             }
             Ok(other) => {
                 self.busy = false;
@@ -1475,11 +1736,15 @@ impl Controller {
         match result {
             Ok(session) => {
                 self.session = Some(session);
-                self.screen = Screen::Home(HomeScreen {
+                self.screen = Screen::Home(Box::new(HomeScreen {
                     notice: Some(Notice::new("session_opened", "", Tone::Good)),
                     scan: ScanField::default(),
-                });
-                Vec::new()
+                    sell: Sell::default(),
+                }));
+                vec![Effect::TenderTypes {
+                    token: self.token(),
+                    generation: self.generation,
+                }]
             }
             Err(e) if ends_login(&e) => self.fail(&e),
             Err(e) => {
@@ -1537,11 +1802,8 @@ impl Controller {
         match result {
             Ok(grant) => {
                 // Retry the original action with the token.
-                if let Some(action) = self.approval.as_ref().map(|a| a.action.clone()) {
-                    return self.protected(action, Some(grant.token));
-                }
                 self.busy = false;
-                Vec::new()
+                self.retry_with(grant.token)
             }
             Err(e) if ends_login(&e) => self.fail(&e),
             Err(e) => {
@@ -1552,47 +1814,6 @@ impl Controller {
                 }
                 Vec::new()
             }
-        }
-    }
-
-    fn protected_done(&mut self, result: Result<ProtectedResult, ClientError>) -> Vec<Effect> {
-        self.busy = false;
-        let pending = self.pending.take();
-        match result {
-            Ok(done) => {
-                self.approval = None;
-                let notice = match done.approved_by {
-                    Some(id) => {
-                        let name = self.user_name(&id).unwrap_or(&id).to_owned();
-                        Notice::new("override_ok", name, Tone::Good)
-                    }
-                    None => Notice::new("override_not_needed", "", Tone::Good),
-                };
-                self.set_notice(notice);
-                Vec::new()
-            }
-            Err(e) if ends_login(&e) => self.fail(&e),
-            Err(e) => match (e.code(), pending, &mut self.approval) {
-                (Some("needs_override"), Some(action), None) => {
-                    self.approval = Some(Approval {
-                        action,
-                        limit: e.problem().and_then(sultan_client::Problem::limit),
-                        cursor: 0,
-                        pin: Pin::default(),
-                        notice: None,
-                    });
-                    Vec::new()
-                }
-                (_, _, Some(a)) => {
-                    // The retry with the token failed (expired, already used, …).
-                    a.notice = Some(notice_for(&e));
-                    Vec::new()
-                }
-                _ => {
-                    self.set_notice(notice_for(&e));
-                    Vec::new()
-                }
-            },
         }
     }
 }
@@ -1725,8 +1946,15 @@ mod tests {
             register_id: None,
             expires_at: 0,
         });
-        c.screen = Screen::Home(HomeScreen::default());
+        c.screen = Screen::Home(Box::new(checking()));
         c
+    }
+
+    /// The session home in price-check mode (F7): scans show the item.
+    fn checking() -> HomeScreen {
+        let mut h = HomeScreen::default();
+        h.sell.check = true;
+        h
     }
 
     fn found(product: &str) -> Lookup {
@@ -1843,7 +2071,7 @@ mod tests {
                 .is_empty()
         );
         // Nothing shown at home: nothing to refresh.
-        c.screen = Screen::Home(HomeScreen::default());
+        c.screen = Screen::Home(Box::new(checking()));
         assert!(
             c.update(event("events.lagged", serde_json::Value::Null))
                 .effects

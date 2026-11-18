@@ -66,6 +66,8 @@ pub struct RegisterUi {
     pub language: Option<String>,
     /// Opened from the Start screen: F9 on the lock screen goes back to it.
     pub start: bool,
+    /// The cart's crash copy (spec 2.6 D2), next to `register.token`.
+    pub cart_file: Option<std::path::PathBuf>,
 }
 
 /// Opens the register window against the paired server and blocks until it is closed. Must be
@@ -84,6 +86,7 @@ pub fn open_register_window(ui: RegisterUi) -> Result<()> {
     ));
     options.language = ui.language;
     options.start = ui.start;
+    options.cart_file = ui.cart_file.map(sultan_ui::crash::CartFile::new);
     sultan_ui::run(service, tokio::runtime::Handle::current(), options)
         .map_err(|e| AppError::Ui(e.to_string()))
 }
@@ -319,6 +322,7 @@ fn open_paired(
         device_token,
         language: config::resolve_language(env, file),
         start: false,
+        cart_file: Some(register::cart_path(config_path)),
     })
 }
 
@@ -632,6 +636,7 @@ mod tests {
                 device_token: "device".into(),
                 language: Some("id".into()),
                 start: false,
+                cart_file: Some(register::cart_path(&config_path)),
             }]
         );
         assert!(out.is_empty());

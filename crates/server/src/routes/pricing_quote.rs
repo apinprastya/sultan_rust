@@ -493,12 +493,15 @@ pub async fn quote(
 }
 
 /// The price shown by a lookup (spec 2.3 §10, §5).
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct LookupPrice {
     /// One unit of the looked-up unit from the store chain (branch → default), no customer.
     pub unit_price: Option<Money>,
     /// A price-embedded label's quantity: printed amount ÷ that price, 3 dp.
     pub label_qty: Option<Qty>,
+    /// The product's active sellable units, in position order: what the register's unit change
+    /// offers (spec 2.6 §2).
+    pub units: Vec<sultan_core::catalog::Unit>,
 }
 
 /// The lookup price of `variant` in `unit` (of `product`) at `branch` today. `label_amount` is a
@@ -516,13 +519,25 @@ pub async fn lookup_price(
     let Some(record) = catalog::get_product(&state.db, product).await? else {
         return Ok(LookupPrice::default());
     };
+    let units: Vec<sultan_core::catalog::Unit> = record
+        .doc
+        .draft
+        .units
+        .units
+        .iter()
+        .filter(|u| u.sellable && !u.archived)
+        .cloned()
+        .collect();
     let info = ProductInfo {
         units: record.doc.draft.units,
         open_price: record.doc.draft.open_price,
         tax_class: record.doc.tax_class,
     };
     let Some(item) = sale_item(&info, variant, unit) else {
-        return Ok(LookupPrice::default());
+        return Ok(LookupPrice {
+            units,
+            ..LookupPrice::default()
+        });
     };
     let date = match branch {
         Some(b) => today_at(state, b).await?,
@@ -538,12 +553,14 @@ pub async fn lookup_price(
         return Ok(LookupPrice {
             unit_price: label.unit_price,
             label_qty: label.qty,
+            units,
         });
     }
     let price = resolve_unit_price(&lists.store_chain(date), &item, item.factor)?;
     Ok(LookupPrice {
         unit_price: price.map(|p| p.unit_price),
         label_qty: None,
+        units,
     })
 }
 

@@ -311,6 +311,17 @@ fn magic_ok(bytes: &[u8]) -> bool {
 }
 
 impl State {
+    /// The receipt name (product + variant) and the unit's name of a sold line (sales, spec
+    /// 2.6), or `None` when the catalog does not know them.
+    pub(super) fn line_names(&self, variant: &str, unit: &str) -> Option<(String, String)> {
+        self.catalog.products.values().find_map(|s| {
+            let p = &s.product;
+            let v = p.variants.iter().find(|x| x.id == variant)?;
+            let u = p.units.iter().find(|x| x.id == unit)?;
+            Some((variant_name(p, v), u.name.clone()))
+        })
+    }
+
     pub(super) fn bo_user(&self, token: &str) -> Result<BackOfficeUser, ClientError> {
         self.catalog
             .tokens
@@ -767,14 +778,17 @@ impl State {
         })
     }
 
-    fn search(
+    pub(in crate::fake) fn search(
         &self,
         token: &str,
         q: &str,
         limit: u32,
         after: Option<&str>,
     ) -> Result<SearchPage, ClientError> {
-        self.bo_user(token)?;
+        // The register searches too (F2), with its PIN session.
+        if self.caller(token).is_err() {
+            self.bo_user(token)?;
+        }
         let q = q.trim().to_lowercase();
         if q.is_empty() {
             return Ok(SearchPage::default());

@@ -58,6 +58,7 @@ fn till(language: &str, user: usize) -> Till {
         language: Some(language.to_owned()),
         clock: Arc::new(|| T0),
         start: false,
+        cart_file: None,
     };
     let app = build_app(
         fake.clone(),
@@ -135,6 +136,16 @@ impl Till {
             .collect()
     }
 
+    /// The session home's buttons.
+    fn buttons(&self) -> Vec<String> {
+        let ui = &self.app.ui;
+        ui.get_actions()
+            .iter()
+            .chain(ui.get_actions_b().iter())
+            .map(|c| format!("{} {}", c.keys, c.label))
+            .collect()
+    }
+
     /// Looks `text` up in the open dialog (phone or code mode).
     fn find(&self, text: &str) -> CustomerView {
         self.typed(text);
@@ -204,7 +215,7 @@ fn lookup_by_phone_and_by_code() {
     assert_eq!((d.group.as_str(), d.attached), ("", false));
     assert_eq!(
         t.chips(),
-        ["Enter attach", "Esc back"],
+        ["Enter attach", "F9 history", "Esc back"],
         "no payout for a cashier"
     );
     assert_eq!(t.fake.calls_of("customer_by_phone"), ["0812-3456-789"]);
@@ -297,7 +308,7 @@ fn name_search_is_for_managers_only() {
     assert_eq!(d.line, "Toko Siti · 0812*****432 · Silver");
     assert_eq!(
         t.chips(),
-        ["Enter attach", "Esc back"],
+        ["Enter attach", "F9 history", "Esc back"],
         "a balance of 0: nothing to pay out"
     );
     // Back to phone or code.
@@ -322,7 +333,7 @@ fn attach_and_detach() {
         t.app.ui.invoke_message(home.note).as_str(),
         "Customer attached: Budi S. · 0812****789 · Gold"
     );
-    assert!(t.chips().contains(&"F4 detach_customer".to_owned()));
+    assert!(t.buttons().contains(&"Ctrl+F3 detach_customer".to_owned()));
     // F3 opens the attached customer; the strip opens it too.
     t.press("F3");
     let d = t.dialog();
@@ -337,7 +348,7 @@ fn attach_and_detach() {
         t.app.ui.invoke_message(t.home().note).as_str(),
         "Customer detached."
     );
-    assert!(!t.chips().contains(&"F4 detach_customer".to_owned()));
+    assert!(!t.buttons().contains(&"Ctrl+F3 detach_customer".to_owned()));
     // Locking forgets the customer.
     t.press("F3");
     t.find("K7QH29XM");
@@ -414,7 +425,10 @@ fn payout_checks_the_balance_and_pays_out() {
     let t = till("en", 1);
     t.press("F3");
     t.find("K7QH-29XM");
-    assert_eq!(t.chips(), ["Enter attach", "F7 pay_out", "Esc back"]);
+    assert_eq!(
+        t.chips(),
+        ["Enter attach", "F7 pay_out", "F9 history", "Esc back"]
+    );
     t.press("Enter");
     t.press("F3");
     t.click("Pay out");
@@ -447,7 +461,11 @@ fn payout_checks_the_balance_and_pays_out() {
     let d = t.dialog();
     assert_eq!((d.page.as_str(), d.balance.as_str()), ("shown", "Rp 0"));
     assert_eq!(t.message(), "Paid out Rp 2.200 in cash.");
-    assert_eq!(t.chips(), ["Enter attach", "Esc back"], "nothing left");
+    assert_eq!(
+        t.chips(),
+        ["Enter attach", "F9 history", "Esc back"],
+        "nothing left"
+    );
     // The attached customer follows.
     assert_eq!(t.home().customer_balance, "Rp 0");
     let calls = t.fake.calls_of("balance_payout");

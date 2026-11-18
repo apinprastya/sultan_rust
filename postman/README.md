@@ -6,7 +6,7 @@ of the catalog, spec 2.2 (`docs/spec/2.2-catalog.md`), of pricing, spec 2.3
 spec 2.6 (`docs/spec/2.6-sales.md`), against a running node. Requests and bodies follow the OpenAPI document served at
 `GET /api/v1/openapi.json` (import that URL into Postman to browse every endpoint).
 
-Flow (147 requests, each with test scripts). Spec 2.1 (requests 01–35):
+Flow (149 requests, each with test scripts). Spec 2.1 (requests 01–35):
 password login → OpenAPI document → create branch (`PUT`, client UUIDv7, time zone
 `Asia/Makassar`) → replay the same `PUT` (idempotent) → a time zone that is not IANA (`WIB`) is
 rejected (`invalid_field`) → create register → issue pairing code → pair (the answer names the branch: `branch_code`,
@@ -32,7 +32,8 @@ EAN-13 barcodes (default SKUs `<code>-S-RED`…, `factor_thousandths`) → repla
 read it with the device token → duplicate barcode on another product (`409 duplicate_barcode` with
 the conflicting `product_id` / `variant_id`) → an invalid product lists every error (`422`,
 `errors`) → lookup by barcode with the device token (branch from the token; with the register's display
-fields `product_name`, `variant_label`, `unit_name`, `matched_code`, `plu`, phase C5) → lookup the box
+fields `product_name`, `variant_label`, `unit_name`, `matched_code`, `plu`, phase C5, and the
+product's sellable `units`, spec 2.6 S4) → lookup the box
 barcode → search → block the product at the register's branch → read the blocks → lookup
 `not_sold_here` → search hides it → unblock → archive (`Idempotency-Key`) → lookup `archived` →
 the owner lists archived products → a device token may not (`403`, `catalog.view_archived`) →
@@ -76,15 +77,16 @@ back to the default tier (9 000) → delete the entry. A quote **with** a custom
 group) is covered by the server tests (`crates/server/tests/api/pricing_quote.rs`); the
 pricing folder runs before customer price lists exist in the collection.
 
-**Sales (folder "Sales (spec 2.6)", requests 123–147, phase S3):** create a product and price it
+**Sales (folder "Sales (spec 2.6)", requests 123–147, 130a and 138a, phases S3–S5):** create a product and price it
 10 000 a pcs in the default list → the seeded tender types with the device token (Tunai, Kartu
 debit, QRIS, Saldo pelanggan) → the owner opens a cashier session at the register → a sale posted
 with stale totals is `409 cart_stale` and carries the fresh quote (`quote.totals`) → post the sale
 with those totals (`PUT /sales/{id}`, 2 pcs, cash 50 000, change 30 000) → the same `PUT` again
-answers the stored sale (`200`) → the receipt text → a reprint (`copy=true`, 42 columns: COPY,
+answers the stored sale (`200`) → the receipt text → the receipt in Indonesian (`?lang=id`:
+`Petugas`, `Kembali`) → a reprint (`copy=true`, 42 columns: COPY,
 audited) → find the sale by its number → the session's sales → hold a cart → the branch's held
 carts → take it (`Idempotency-Key`) → taking it again is `409 cart_taken` → a removed cart line
-(`POST /cart-voids`) → return 1 pcs by receipt (refund 10 000 in cash, number `…-RT-…`) → the sale
+(`POST /cart-voids`) → open the drawer (`POST /drawer/open`, `drawer.open`, audited; S5) → return 1 pcs by receipt (refund 10 000 in cash, number `…-RT-…`) → the sale
 with a return cannot be voided (`409 has_returns`) → a second sale → post-void it
 (`Idempotency-Key`, 20 000 back in cash) → close the session: the report's `sales` block (cash
 received 100 000, change 60 000, refunds 30 000, one return, one post-void, one line void) and
@@ -130,8 +132,8 @@ postman collection run postman/sultan-api.postman_collection.json --working-dir 
     --env-var baseUrl=http://127.0.0.1:8080/api/v1
 ```
 
-S3 ran the whole collection against `sultan serve` on a fresh SQLite database (147/147 requests
-passed).
+S5 (2026-11-18) ran the whole collection against `sultan serve` on a fresh SQLite database
+(149/149 requests passed).
 
 The run needs no Postman login; it only prints a note that results are not published to the cloud.
 

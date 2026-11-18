@@ -131,6 +131,7 @@ fn till(language: &str) -> Till {
         language: Some(language.to_owned()),
         clock: Arc::new(|| T0),
         start: false,
+        cart_file: None,
     };
     let app = build_app(
         fake.clone(),
@@ -151,6 +152,8 @@ fn till(language: &str) -> Till {
     t.typed("500000");
     t.press("Enter");
     assert_eq!(t.app.ui.get_screen(), "home");
+    // These tests look items up: F7 turns the price check on (a scan then only shows the item).
+    t.press("F7");
     t
 }
 
@@ -158,6 +161,7 @@ fn key_text(name: &str) -> SharedString {
     match name {
         "Enter" => Key::Return.into(),
         "Esc" => Key::Escape.into(),
+        "F7" => Key::F7.into(),
         "F3" => Key::F3.into(),
         "F4" => Key::F4.into(),
         other => other.into(),
@@ -351,10 +355,17 @@ fn an_attached_customer_gets_their_price() {
     assert_eq!(v.cust_state, 0);
     assert_eq!(t.fake.calls_of("quote").len(), before);
 
-    // F4 detaches: the customer price goes.
+    // Ctrl+F3 detaches: the customer price goes.
     t.scan(&teh());
     assert_eq!(t.view().cust_state, 2);
-    t.press("F4");
+    let window = t.app.ui.window();
+    window.dispatch_event(WindowEvent::KeyPressed {
+        text: Key::Control.into(),
+    });
+    t.press("F3");
+    window.dispatch_event(WindowEvent::KeyReleased {
+        text: Key::Control.into(),
+    });
     assert_eq!(t.view().cust_state, 0);
     assert_eq!(t.view().price, "Rp 5.000");
 }

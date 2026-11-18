@@ -106,11 +106,16 @@ button on screen:
 |---|---|
 | Lock | ←/→/↑/↓ or Tab pick a user · a digit or Enter opens the PIN pad · digits, Backspace, Enter log in · Esc closes the pad · F5 reloads the users · F9 back to the Start screen |
 | Open session | digits / Backspace type the opening cash (shown as Rupiah) · Enter opens · Esc locks. If another cashier's session is open here: Esc back to lock |
-| Session home | type or scan into the barcode field (digits, letters, `-`, `.`; Backspace) · Enter looks the code up · Esc clears the field and the item · F2 test a manager override · F3 customer · F4 detach the attached customer (shown when one is attached) · F10 close the session · F12 lock (the session stays open; the attached customer is let go) |
-| Customer (F3) | **Find:** type or scan a phone number or member code (`k7qh-29xm` works too; a scan here is always a member code, never a product) · Enter looks it up · Tab switches to a name search and back (only with `customer.search`) · ↑/↓ pick a result, Enter or a click opens it · F6 new customer (`customer.create`) · Esc closes. **Customer:** Enter attaches · F7 pay the balance out (`customer.balance_payout`, balance above 0) · Esc back. **New customer:** type the name, Tab (or ↑/↓, a click) to the phone (optional) · Enter signs up · F8 shows the customer who already has the phone · Esc back. **Payout:** digits / Backspace type the amount · Enter, then Enter again to pay out · Esc back |
+| Sell screen (session home) | type or scan into the barcode field (digits, letters, `-`, `.`, `*`; Backspace) · Enter adds the item (`3*` before the code sets the quantity; an open-price item asks for its price) · Esc clears the field · F1 key list · F2 product search (type, Enter searches, ↑/↓ pick, Enter adds) · F3 customer · Shift+F3 customer by name (`customer.search`) · Ctrl+F3 detach the customer · Ctrl+T tax invoice on / off (a customer with a tax ID) · F4 pay, starting with cash · F9 pay with another tender · F5 open the drawer (`drawer.open`, audited; a manager approves for a cashier; the real kick comes with 2.11) · F7 price check on / off (a scan only shows the item and its prices) · Ctrl+↑ to the cart lines · Ctrl+D cart discount · Ctrl+N or Ctrl+Del void the cart (pick a reason) · F6 last receipts · F10 return / exchange (an empty cart; during an exchange F10 cancels it) · F11 hold the cart (with lines) · Shift+F11 resume a held cart · F12 lock (the session stays open; the cart waits in its crash copy) · Ctrl+F10 close the session (an empty cart only) |
+| Cart lines (Ctrl+↑) | ↑/↓ pick a line (or a click) · Enter quantity · Del void the line (pick a reason) · `+` / `−` one more / less · U unit · P manual price · D line discount · Ctrl+D cart discount · Ctrl+N void the cart · Esc or Ctrl+↓ back to the barcode field. In a discount, `%` switches between percent and Rupiah; an empty value removes the discount |
+| Payment (F4 / F9) | **Cash:** digits / Backspace type the cash received (Enter alone: exactly what is due, after cash rounding) · F9 another tender · Esc takes the last payment back (or closes the panel). **Other tender:** ↑/↓ pick (or a click) · Enter · type the amount (Enter alone: the rest, or the balance) · Enter · type the reference when the tender needs one · Enter · F4 cash. **Paid:** Enter confirms the sale · F8 save change to the customer's balance (type the amount, 0 gives it back) · Esc takes the last payment back. **Posted:** the change due and the receipt; Enter starts a new sale |
+| Hold / resume (F11, Shift+F11) | **Hold:** type a note (optional) · Enter holds · Esc cancels. **Resume list:** ↑/↓ pick (or a click) · Enter resumes into the empty cart (with lines, Shift+F11 first asks to hold them) · Del deletes the held cart (`sale.void`, a manager approves) · Esc closes |
+| Last receipts (F6) / purchase history | type or scan a receipt number (receipts only) · ↑/↓ pick (or a click) · Enter shows the receipt · F8 the next history page · Esc closes. **Receipt:** R reprint (COPY; any but the session's last sale needs `sale.reprint`) · V post-void · T return this sale · Esc back. **Post-void:** ↑/↓ pick a reason (type it for "other") · ← / → cash or the customer's balance (a sale with a customer) · Enter voids (`sale.post_void`) · Esc cancels |
+| Return / exchange (F10) | **Which sale:** type or scan the receipt number, or ↑/↓ pick one of the attached customer's recent receipts · Enter · F2 without a receipt · Esc closes. **Lines:** ↑/↓ pick · Q or a digit types the quantity (by receipt; a decimal comma for weighed items, Enter sets it) · `+` / `−` one more / less · `*` all or none · Del write the line off (type the reason, Enter) · Tab cash or the customer's balance · Enter refunds · F9 exchange (the refund becomes the credit of a new cart; pay the difference as usual, or the payment shows what is paid back before Enter) · Esc back. Without a receipt: scan or type the items, Enter adds each (no Q and no `*`). **Done:** the cash to pay back; Enter closes |
+| Customer (F3) | **Find:** type or scan a phone number or member code (`k7qh-29xm` works too; a scan here is always a member code, never a product) · Enter looks it up · Tab switches to a name search and back (only with `customer.search`) · ↑/↓ pick a result, Enter or a click opens it · F6 new customer (`customer.create`) · Esc closes. **Customer:** Enter attaches · F7 pay the balance out (`customer.balance_payout`, balance above 0) · F9 purchase history · Esc back. **New customer:** type the name, Tab (or ↑/↓, a click) to the phone (optional) · Enter signs up · F8 shows the customer who already has the phone · Esc back. **Payout:** digits / Backspace type the amount · Enter, then Enter again to pay out · Esc back |
 | Blind close | ↑/↓ or Tab move between the total and the denominations · digits / Backspace · Enter, then Enter again to confirm · Esc back |
 | Close report | Enter: done (logs out to the lock screen) |
-| Manager override | ↑/↓ pick the manager · digits / Backspace PIN · Enter approve (the action is retried with the token) · Esc cancel |
+| Manager override | ↑/↓ pick the manager · digits / Backspace PIN · Enter approve (the void or the sale is retried with the token; a sale that needs several approvals asks for each in turn) · Esc cancel |
 
 The back-office window is keyboard-first too; shortcuts work while a text field has the focus:
 
@@ -136,7 +141,7 @@ The back-office window is keyboard-first too; shortcuts work while a text field 
 | Confirmation | Enter or Y yes · Esc or N no (the erase dialog: Enter and Esc only) |
 
 Screenshots of every screen: `docs/screenshots/` (regenerate with
-`cargo run -p sultan-ui --example screenshots -- docs/screenshots 1366x768 en`).
+`TZ=Asia/Jakarta cargo run -p sultan-ui --example screenshots -- docs/screenshots 1366x768 en`).
 
 `init` refuses a database that is already set up; `serve` refuses one that is not.
 `sultan --help` and `sultan <command> --help` list every flag.
@@ -189,19 +194,30 @@ Every setting is taken from, in order: **command-line flag > environment variabl
   returns and exchanges, held carts, the purchase history and the close report's sales figures;
   see `postman/README.md`. The return window `return_days` is fixed at 30 days (no setting yet),
   the receipt width is chosen per request (`?width=32|42|48`) and printing waits for 2.11.
-- The register window has no selling yet (S4): the session home looks up a scanned or
-  typed barcode, scale label, SKU or PLU (`GET /catalog/lookup`) and shows the item, its unit,
-  quantity and how it matched, or why it cannot be sold here, with its price (spec 2.3, R5): the
-  store price of the scanned unit (a box without its own price is the base price × its factor),
-  "Not priced yet" when no list prices it, "Typed at sale" for an open-price item (the list
-  price as a suggestion), weight × price per kg for a weight label, and the printed amount as
-  final for a price label (its quantity derived from the store price, empty without one). With a
-  customer attached, the item is also quoted for them (`POST /pricing/quote`, qty 1 or the
-  label's weight) and the customer's price is shown with its source (e.g. "Gold member price ·
-  −5%"), or "Same as the store price"; a failed quote shows its reason and keeps the store price.
-  A `price.changed` for the shown item refreshes it. There is no cart yet. The override test is
-  still there. It needs a display (Slint picks Wayland, X11 or another backend; set
-  `SLINT_BACKEND`, e.g. `winit-software`, to force one).
+- The register sells (spec 2.6 S4): scan, type or search (F2) items into the cart (a rescan adds
+  to the line; weighed items, scale labels, open-price and manually priced lines always get a
+  line of their own), change quantities and units, set manual prices and line or cart
+  discounts, void lines or the whole cart with a reason (`POST /cart-voids`), and pay with split
+  tenders (cash with change and cash rounding, cards, QRIS and others with a reference, the
+  customer balance, saved change). Every change quotes the whole cart again
+  (`POST /pricing/quote`); the server checks prices and permissions again at posting, and the
+  approvals a cashier's limits do not cover (manual price, line and cart discount) are asked for
+  when the sale is confirmed, one manager PIN per check. A `cart_stale` answer shows the new total
+  and closes the payment panel. The cart is kept in a crash copy (`register.cart` next to
+  `register.token`, owner-only) and comes back at the next login of the same cashier session.
+  After the sale (S5): hold and resume (F11 / Shift+F11, held carts of the whole branch), the
+  last receipts (F6) with reprints, post-voids (cash or the customer's balance) and returns,
+  returns and exchanges (F10, by receipt or without one), the customer's purchase history (F3 →
+  F9) and an audited drawer open (F5, `POST /drawer/open`). The receipt is shown on screen only
+  (printing and the drawer kick wait for 2.11); a return slip is shown from the posted return
+  (there is no return receipt endpoint yet); the held-cart, receipt and history lists show IDs
+  where the API has no names (another register's held cart shows the names it stored); a voided
+  line is gone for good (no undo); a price-embedded scale label is quoted for its tax rate only;
+  saved change is checked against the balance limits by the server at posting, not before.
+  The F7 price check shows the item, its unit, quantity and how it matched, or why it cannot be
+  sold here, with its store price and, with a customer attached, the customer's price and its
+  source (spec 2.3 R5). The register needs a display (Slint picks Wayland, X11 or another
+  backend; set `SLINT_BACKEND`, e.g. `winit-software`, to force one).
 - The register does not reconnect the events WebSocket after a network drop; it reconnects at
   the next login. The back office behaves the same.
 - Customers (spec 2.5) are in the API (`/customers`, `/customer-groups`, `/membership-tiers`,
@@ -209,8 +225,8 @@ Every setting is taken from, in order: **command-line flag > environment variabl
   tiers, possible duplicates with merge, negative balances, erase and the balance settings; the
   list's "archived" switch works without a search only (the name search never finds archived
   customers). The register's customer step (F3) finds, signs up and attaches a customer and pays a
-  balance out; the attached customer is only shown on the session home (it joins a sale with 2.6),
-  is let go when the register locks, and does not follow later edits made elsewhere until it is
+  balance out; the attached customer joins the sale (and is let go after it is posted, when the
+  register locks, or with Ctrl+F3), and does not follow later edits made elsewhere until it is
   looked up again. No payout slip is printed yet. Purchase history
   (`GET /customers/{id}/history`) lists the customer's sales and returns (spec 2.6 S3); the
   register shows it from S5. On a branch node only sign-up works; a till's

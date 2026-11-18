@@ -5429,6 +5429,7 @@ dependencies = [
  "i-slint-backend-testing",
  "image",
  "png",
+ "serde",
  "serde_json",
  "slint",
  "slint-build",

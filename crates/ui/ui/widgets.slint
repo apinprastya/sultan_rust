@@ -27,6 +27,8 @@ export component KeyChip inherits Rectangle {
     in property <string> keys;
     in property <string> label;
     in property <bool> large;
+    // Tighter padding and smaller text, for the sell screen's two-column action grid.
+    in property <bool> compact;
     callback clicked;
     accessible-role: button;
     accessible-label: root.label;
@@ -43,23 +45,23 @@ export component KeyChip inherits Rectangle {
         }
     }
     HorizontalLayout {
-        padding-left: 10px;
-        padding-right: 16px;
-        spacing: 12px;
+        padding-left: root.compact ? 6px : 10px;
+        padding-right: root.compact ? 8px : 16px;
+        spacing: root.compact ? 8px : 12px;
         VerticalLayout {
             alignment: center;
             Rectangle {
                 height: 26px;
-                min-width: 48px;
+                min-width: root.compact ? 40px : 48px;
                 border-radius: 6px;
                 background: Theme.accent-soft;
                 HorizontalLayout {
-                    padding-left: 8px;
-                    padding-right: 8px;
+                    padding-left: root.compact ? 6px : 8px;
+                    padding-right: root.compact ? 6px : 8px;
                     Text {
                         text: root.keys;
                         color: Theme.accent;
-                        font-size: 13px;
+                        font-size: root.compact ? 11px : 13px;
                         font-weight: 700;
                         horizontal-alignment: center;
                         vertical-alignment: center;
@@ -70,7 +72,7 @@ export component KeyChip inherits Rectangle {
         Text {
             text: root.label;
             color: Theme.text;
-            font-size: root.large ? 17px : 14px;
+            font-size: root.large ? 17px : root.compact ? 13px : 14px;
             font-weight: root.large ? 600 : 400;
             vertical-alignment: center;
             overflow: elide;
