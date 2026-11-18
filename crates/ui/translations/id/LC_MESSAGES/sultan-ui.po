@@ -2780,3 +2780,198 @@ msgstr "Retur: berapa banyak?"
 
 msgid "Quantity to return (a decimal comma for weighed items)"
 msgstr "Jumlah yang diretur (koma desimal untuk barang timbang)"
+
+msgid "Sales"
+msgstr "Penjualan"
+
+msgid "Tender types"
+msgstr "Jenis pembayaran"
+
+msgid "Sales settings"
+msgstr "Pengaturan penjualan"
+
+msgid "VOID"
+msgstr "BATAL"
+
+msgid "Posted"
+msgstr "Tercatat"
+
+msgid "Number"
+msgstr "Nomor"
+
+msgid "Date and time"
+msgstr "Tanggal dan jam"
+
+msgid "Branch / register"
+msgstr "Cabang / kasir"
+
+msgid "Cashier"
+msgstr "Petugas"
+
+msgid "All"
+msgstr "Semua"
+
+msgid "Sale"
+msgstr "Penjualan"
+
+msgid "Returns of this sale"
+msgstr "Retur dari penjualan ini"
+
+msgid "Linked sales"
+msgstr "Penjualan terkait"
+
+msgid "Original sale"
+msgstr "Penjualan asal"
+
+msgid "Exchange sale"
+msgstr "Penjualan tukar"
+
+msgid "Purchase history of {}"
+msgstr "Riwayat belanja {}"
+
+msgid "Back to the customer"
+msgstr "Kembali ke pelanggan"
+
+msgid "Sales and returns at every branch, newest first, including customers merged into this one. Voided sales are marked VOID."
+msgstr "Penjualan dan retur di semua cabang, terbaru di atas, termasuk pelanggan yang digabung ke sini. Penjualan yang dibatalkan ditandai BATAL."
+
+msgid "Posted for (merged)"
+msgstr "Atas nama (gabungan)"
+
+msgid "reference"
+msgstr "referensi"
+
+msgid "drawer"
+msgstr "laci"
+
+msgid "New tender type"
+msgstr "Jenis pembayaran baru"
+
+msgid "Edit tender type"
+msgstr "Ubah jenis pembayaran"
+
+msgid "Name (printed on receipts)"
+msgstr "Nama (tercetak di struk)"
+
+msgid "Kind (fixed once saved)"
+msgstr "Jenis (tetap setelah disimpan)"
+
+msgid "Needs a reference (EDC or app number)"
+msgstr "Perlu referensi (nomor EDC atau aplikasi)"
+
+msgid "Opens the cash drawer"
+msgstr "Membuka laci uang"
+
+msgid "Active (offered at the register)"
+msgstr "Aktif (ditawarkan di kasir)"
+
+msgid "Position"
+msgstr "Urutan"
+
+msgid "Archived: it can no longer be edited or used."
+msgstr "Diarsipkan: tidak bisa diubah atau dipakai lagi."
+
+msgid "New"
+msgstr "Baru"
+
+msgid "Return window in days (0 = no limit)"
+msgstr "Batas retur dalam hari (0 = tanpa batas)"
+
+msgid "A return by receipt older than this needs a manager's approval at the till."
+msgstr "Retur dengan struk yang lebih lama dari ini perlu persetujuan manajer di kasir."
+
+msgid "Receipt width per branch"
+msgstr "Lebar struk per cabang"
+
+msgid "32 columns"
+msgstr "32 kolom"
+
+msgid "42 columns"
+msgstr "42 kolom"
+
+msgid "48 columns"
+msgstr "48 kolom"
+
+msgid "Receipt width"
+msgstr "Lebar struk"
+
+msgid "58 mm printers print 32 columns, 80 mm printers 42 or 48."
+msgstr "Printer 58 mm mencetak 32 kolom, printer 80 mm 42 atau 48."
+
+msgid "Reading sales needs the permission {}. Ask the owner."
+msgstr "Melihat penjualan perlu hak akses {}. Tanyakan pemilik."
+
+msgid "Read-only: changing tender types and the sales settings needs the permission {} at HQ."
+msgstr "Hanya baca: mengubah jenis pembayaran dan pengaturan penjualan perlu hak akses {} di pusat."
+
+msgid "Type a name (1 to 40 characters)."
+msgstr "Ketik nama (1 sampai 40 karakter)."
+
+msgid "Type the position as a whole number, 0 or more."
+msgstr "Ketik urutan sebagai bilangan bulat, 0 atau lebih."
+
+msgid "Type the days as a whole number from 0 to 3650."
+msgstr "Ketik jumlah hari sebagai bilangan bulat dari 0 sampai 3650."
+
+msgid "Tender type archived."
+msgstr "Jenis pembayaran diarsipkan."
+
+msgid "No customer has this member code or phone."
+msgstr "Tidak ada pelanggan dengan kode anggota atau nomor HP ini."
+
+msgid "Line discounts"
+msgstr "Diskon baris"
+
+msgid "Tax (PPN)"
+msgstr "Pajak (PPN)"
+
+msgid "Incl. tax (PPN)"
+msgstr "Termasuk pajak (PPN)"
+
+msgid "Paid"
+msgstr "Dibayar"
+
+msgid "Saved to balance"
+msgstr "Disimpan ke saldo"
+
+msgid "Voided"
+msgstr "Dibatalkan"
+
+msgid "Void reason"
+msgstr "Alasan batal"
+
+msgid "Paid back in cash"
+msgstr "Dikembalikan tunai"
+
+msgid "Back to the balance"
+msgstr "Kembali ke saldo"
+
+msgid "Without receipt"
+msgstr "Tanpa struk"
+
+msgid "Note"
+msgstr "Catatan"
+
+msgid "QRIS"
+msgstr "QRIS"
+
+msgid "Transfer"
+msgstr "Transfer"
+
+msgid "E-wallet"
+msgstr "Dompet digital"
+
+msgid "Other"
+msgstr "Lainnya"
+
+msgid "Archive the tender type {}?"
+msgstr "Arsipkan jenis pembayaran {}?"
+
+msgid "Registers stop offering it at once; sales already paid with it keep it."
+msgstr "Kasir langsung berhenti menawarkannya; penjualan yang sudah dibayar dengannya tetap."
+
+msgid "Until"
+msgstr "Sampai"
+
+msgid "Member code or phone"
+msgstr "Kode anggota atau HP"

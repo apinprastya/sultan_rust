@@ -172,6 +172,14 @@ pub struct SaleHeader {
     pub user: Option<UserId>,
     /// The customer.
     pub customer: Option<CustomerId>,
+    /// The customer's name (joined when read; `None` without a customer).
+    pub customer_name: Option<String>,
+    /// The customer's member code (joined when read).
+    pub customer_code: Option<String>,
+    /// The cashier's display name (joined when read).
+    pub user_name: Option<String>,
+    /// The register's code (joined when read).
+    pub register_code: Option<String>,
     /// Printed as a tax invoice.
     pub tax_invoice: bool,
     /// Tax-inclusive prices.
@@ -272,10 +280,17 @@ pub struct NewSaleVoid {
     pub voided_at: Timestamp,
 }
 
-const HEADER_SELECT: &str = "SELECT id, number, legacy_number, status, branch_id, register_id, \
-     cashier_session_id, user_id, customer_id, tax_invoice, tax_inclusive, subtotal, \
-     line_discount, cart_discount, tax, total, cash_rounding, change_given, change_saved, \
-     line_count, return_count, posted_at, voided_at FROM sale";
+/// The header columns, with the customer's name and member code joined in (phase S6: lists show
+/// names without a query per row). The derived table keeps the column names unqualified, so the
+/// `WHERE` clauses of the callers stay as they are.
+const HEADER_SELECT: &str = "SELECT * FROM (SELECT s.id, s.number, s.legacy_number, s.status, \
+     s.branch_id, s.register_id, s.cashier_session_id, s.user_id, s.customer_id, s.tax_invoice, \
+     s.tax_inclusive, s.subtotal, s.line_discount, s.cart_discount, s.tax, s.total, \
+     s.cash_rounding, s.change_given, s.change_saved, s.line_count, s.return_count, s.posted_at, \
+     s.voided_at, c.name AS customer_name, c.code AS customer_code, \
+     u.display_name AS user_name, g.code AS register_code \
+     FROM sale s LEFT JOIN customer c ON c.id = s.customer_id \
+     LEFT JOIN app_user u ON u.id = s.user_id LEFT JOIN register g ON g.id = s.register_id) sale_h";
 
 fn status(row: &dyn Row) -> Result<SaleStatus> {
     match row.text("status")?.as_str() {
@@ -296,6 +311,10 @@ fn map_header(row: &dyn Row) -> Result<SaleHeader> {
         cashier_session: sql::opt_id(row, "cashier_session_id")?,
         user: sql::opt_id(row, "user_id")?,
         customer: sql::opt_id(row, "customer_id")?,
+        customer_name: row.opt_text("customer_name")?,
+        customer_code: row.opt_text("customer_code")?,
+        user_name: row.opt_text("user_name")?,
+        register_code: row.opt_text("register_code")?,
         tax_invoice: row.bool("tax_invoice")?,
         tax_inclusive: row.bool("tax_inclusive")?,
         totals: SaleTotals {
@@ -523,6 +542,8 @@ pub struct DocFilter {
     pub until: Option<Timestamp>,
     /// Exactly this number (for sales also the old-Sultan number).
     pub number: Option<String>,
+    /// Only this status (`posted` or `voided`; phase S6).
+    pub status: Option<SaleStatus>,
     /// Page cursor.
     pub before: Option<Uuid>,
     /// Page size; `0` = 50, at most [`MAX_DOC_PAGE`].
@@ -560,6 +581,9 @@ pub(super) fn filter_sql(filter: &DocFilter, legacy: bool) -> (String, Vec<Arg>)
     }
     if let Some(before) = filter.before {
         add("id < ?", before.into());
+    }
+    if let Some(status) = filter.status {
+        add("status = ?", status.as_str().into());
     }
     if let Some(number) = &filter.number {
         if legacy {

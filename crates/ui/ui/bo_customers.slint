@@ -43,6 +43,7 @@ export struct BoCustomerList {
 
 export struct BoCustomerForm {
     is-new: bool,
+    can-history: bool,
     title: string,
     code: string,
     signed-up: string,
@@ -593,6 +594,13 @@ export component CustomerFormScreen inherits VerticalLayout {
             text: root.form.archived ? @tr("Unarchive") : @tr("Archive");
             clicked => {
                 root.action("customer-archive");
+            }
+        }
+        if root.form.can-history: KeyButton {
+            keys: "Ctrl+H";
+            text: @tr("Purchase history");
+            clicked => {
+                root.action("customer-history");
             }
         }
         KeyButton {

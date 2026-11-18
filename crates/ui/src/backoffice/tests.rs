@@ -1181,3 +1181,36 @@ fn a_bundle_loads_its_component_units() {
     let line = &c.form.as_ref().unwrap().form.data.components[0];
     assert_eq!(line.units.len(), 1, "unit choices survive the save");
 }
+
+#[test]
+fn a_late_tender_list_keeps_the_new_tender_being_typed() {
+    use crate::backoffice::sales::Reply;
+    use sultan_client::TenderType;
+
+    let stored = |id: &str, name: &str| TenderType {
+        id: id.into(),
+        name: name.into(),
+        kind: "cash".into(),
+        needs_reference: false,
+        opens_drawer: true,
+        active: true,
+        sort: 1,
+        archived: false,
+    };
+    let list = || {
+        Msg::Sales(Box::new(Reply::TenderTypes(Ok(vec![stored(
+            "t1", "Tunai",
+        )]))))
+    };
+    let mut c = owner();
+    // A new tender type with a typed name: the late list does not replace it.
+    c.sales.editor.name = "Debit BCA".into();
+    c.update(list());
+    assert_eq!(c.sales.editor.id, None);
+    assert_eq!(c.sales.editor.name, "Debit BCA");
+    assert_eq!(c.sales.tenders.len(), 1);
+    // An empty editor selects the first stored one.
+    c.sales.editor.name.clear();
+    c.update(list());
+    assert_eq!(c.sales.editor.id.as_deref(), Some("t1"));
+}

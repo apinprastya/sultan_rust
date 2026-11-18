@@ -111,7 +111,7 @@ button on screen:
 | Payment (F4 / F9) | **Cash:** digits / Backspace type the cash received (Enter alone: exactly what is due, after cash rounding) · F9 another tender · Esc takes the last payment back (or closes the panel). **Other tender:** ↑/↓ pick (or a click) · Enter · type the amount (Enter alone: the rest, or the balance) · Enter · type the reference when the tender needs one · Enter · F4 cash. **Paid:** Enter confirms the sale · F8 save change to the customer's balance (type the amount, 0 gives it back) · Esc takes the last payment back. **Posted:** the change due and the receipt; Enter starts a new sale |
 | Hold / resume (F11, Shift+F11) | **Hold:** type a note (optional) · Enter holds · Esc cancels. **Resume list:** ↑/↓ pick (or a click) · Enter resumes into the empty cart (with lines, Shift+F11 first asks to hold them) · Del deletes the held cart (`sale.void`, a manager approves) · Esc closes |
 | Last receipts (F6) / purchase history | type or scan a receipt number (receipts only) · ↑/↓ pick (or a click) · Enter shows the receipt · F8 the next history page · Esc closes. **Receipt:** R reprint (COPY; any but the session's last sale needs `sale.reprint`) · V post-void · T return this sale · Esc back. **Post-void:** ↑/↓ pick a reason (type it for "other") · ← / → cash or the customer's balance (a sale with a customer) · Enter voids (`sale.post_void`) · Esc cancels |
-| Return / exchange (F10) | **Which sale:** type or scan the receipt number, or ↑/↓ pick one of the attached customer's recent receipts · Enter · F2 without a receipt · Esc closes. **Lines:** ↑/↓ pick · Q or a digit types the quantity (by receipt; a decimal comma for weighed items, Enter sets it) · `+` / `−` one more / less · `*` all or none · Del write the line off (type the reason, Enter) · Tab cash or the customer's balance · Enter refunds · F9 exchange (the refund becomes the credit of a new cart; pay the difference as usual, or the payment shows what is paid back before Enter) · Esc back. Without a receipt: scan or type the items, Enter adds each (no Q and no `*`). **Done:** the cash to pay back; Enter closes |
+| Return / exchange (F10) | **Which sale:** type or scan the receipt number, or ↑/↓ pick one of the attached customer's recent receipts · Enter · F2 without a receipt · Esc closes. **Lines:** ↑/↓ pick · Q or a digit types the quantity (by receipt; a decimal comma for weighed items, Enter sets it) · `+` / `−` one more / less · `*` all or none · Del write the line off (type the reason, Enter) · Tab cash or the customer's balance · Enter refunds · F9 exchange (the refund becomes the credit of a new cart; pay the difference as usual, or the payment shows what is paid back before Enter) · Esc back. Without a receipt: scan or type the items, Enter adds each; with the code field empty Q types the quantity of the picked item (3 decimals for a weighed item). **Done:** the cash to pay back and the return receipt; Enter closes |
 | Customer (F3) | **Find:** type or scan a phone number or member code (`k7qh-29xm` works too; a scan here is always a member code, never a product) · Enter looks it up · Tab switches to a name search and back (only with `customer.search`) · ↑/↓ pick a result, Enter or a click opens it · F6 new customer (`customer.create`) · Esc closes. **Customer:** Enter attaches · F7 pay the balance out (`customer.balance_payout`, balance above 0) · F9 purchase history · Esc back. **New customer:** type the name, Tab (or ↑/↓, a click) to the phone (optional) · Enter signs up · F8 shows the customer who already has the phone · Esc back. **Payout:** digits / Backspace type the amount · Enter, then Enter again to pay out · Esc back |
 | Blind close | ↑/↓ or Tab move between the total and the denominations · digits / Backspace · Enter, then Enter again to confirm · Esc back |
 | Close report | Enter: done (logs out to the lock screen) |
@@ -121,7 +121,7 @@ The back-office window is keyboard-first too; shortcuts work while a text field 
 
 | Screen | Keys |
 |---|---|
-| Everywhere (after login) | F2 products · F3 categories · F4 brands · F6 customers · F7 pricing · F12 log out |
+| Everywhere (after login) | F2 products · F3 categories · F4 brands · F6 customers · F7 pricing · F8 sales · F12 log out |
 | Login | Enter in the username moves to the password · Enter logs in · F9 back to the Start screen |
 | Products | `/` or Ctrl+F search (typing filters after a short pause) · ↑/↓ move (past the last row loads more) · Enter open · Ctrl+N new product · Ctrl+Shift+D delete the highlighted product (never used only; asks first) · F5 refresh · Esc back from the search to the list |
 | Product form | Ctrl+S save · Ctrl+1 / Ctrl+2 / Ctrl+3 / Ctrl+4 tabs General / Variants / Units & barcodes / Prices · Esc back (asks first when there are unsaved changes) · Ctrl+Shift+A archive / unarchive (asks first) |
@@ -129,7 +129,13 @@ The back-office window is keyboard-first too; shortcuts work while a text field 
 | Categories / Brands | ↑/↓ pick · Ctrl+S save · Ctrl+N add (a child of the picked category / a brand) · Ctrl+Shift+A archive / unarchive · Ctrl+Shift+D delete (never used only; asks first) · F5 refresh · Esc back to products |
 | Customer screens | Ctrl+1 customer list · Ctrl+2 groups · Ctrl+3 tiers · Ctrl+4 possible duplicates · Ctrl+5 negative balances · Ctrl+6 balance settings · F5 refresh |
 | Customer list | `/` or Ctrl+F search name or company (needs `customer.search`) · ↑/↓ move (past the last row loads more) · Enter open · Ctrl+N new customer |
-| Customer form | Ctrl+S save · Esc back (asks first when there are unsaved changes) · Ctrl+Shift+A archive / unarchive (asks first; `customer.manage`) · Ctrl+Shift+E erase personal data (`customer.erase`; type the member code, then Enter) |
+| Customer form | Ctrl+S save · Esc back (asks first when there are unsaved changes) · Ctrl+Shift+A archive / unarchive (asks first; `customer.manage`) · Ctrl+Shift+E erase personal data (`customer.erase`; type the member code, then Enter) · Ctrl+H purchase history |
+| Purchase history | ↑/↓ move (past the last row loads more) · Ctrl+L load more · Enter open the sale or return · F5 refresh · Esc back to the customer |
+| Sales screens | Ctrl+1 sales · Ctrl+2 returns · Ctrl+3 tender types · Ctrl+4 sales settings · F5 refresh · reading needs `report.sales` |
+| Sales / Returns lists | filters branch, register, from / until (`YYYY-MM-DD`), customer (member code or phone), number, status (sales); Enter in a filter field or Search runs them, Clear resets · ↑/↓ move (past the last row loads more) · Ctrl+L load more · Ctrl+F to the number · Enter open |
+| Sale / Return detail | ↑/↓ pick a linked document (the returns of a sale; a return's original and exchange sale) · Enter open it · Esc back (through the opened documents, then the list) |
+| Tender types | ↑/↓ pick · Ctrl+N new · Ctrl+S save (the kind is fixed once saved) · Ctrl+Shift+A archive (asks first) · needs `tender.manage` at HQ |
+| Sales settings | Ctrl+S save the return window (`return_days`, 0 = no limit) and the receipt width per branch (32 / 42 / 48) · needs `tender.manage` at HQ |
 | Groups / Tiers | ↑/↓ pick · Ctrl+S save · Ctrl+N add · Ctrl+Shift+A archive / unarchive · Esc back to the customer list |
 | Possible duplicates | ↑/↓ pick the customer to merge away (the one holding its phone is the one to keep; type another member code to change it) · Ctrl+M merge (asks first) · Enter open · Esc back |
 | Negative balances | ↑/↓ move · Enter open · Esc back |
@@ -209,9 +215,9 @@ Every setting is taken from, in order: **command-line flag > environment variabl
   last receipts (F6) with reprints, post-voids (cash or the customer's balance) and returns,
   returns and exchanges (F10, by receipt or without one), the customer's purchase history (F3 →
   F9) and an audited drawer open (F5, `POST /drawer/open`). The receipt is shown on screen only
-  (printing and the drawer kick wait for 2.11); a return slip is shown from the posted return
-  (there is no return receipt endpoint yet); the held-cart, receipt and history lists show IDs
-  where the API has no names (another register's held cart shows the names it stored); a voided
+  (printing and the drawer kick wait for 2.11); the return-done panel shows the server's return
+  receipt (`GET /returns/{id}/receipt`, S6); the receipt and history lists name the customer
+  (another register's held cart shows the names it stored); a voided
   line is gone for good (no undo); a price-embedded scale label is quoted for its tax rate only;
   saved change is checked against the balance limits by the server at posting, not before.
   The F7 price check shows the item, its unit, quantity and how it matched, or why it cannot be

@@ -135,6 +135,14 @@ pub struct ReturnHeader {
     pub user: UserId,
     /// The customer.
     pub customer: Option<CustomerId>,
+    /// The customer's name (joined when read).
+    pub customer_name: Option<String>,
+    /// The customer's member code (joined when read).
+    pub customer_code: Option<String>,
+    /// The cashier's display name (joined when read).
+    pub user_name: Option<String>,
+    /// The register's code (joined when read).
+    pub register_code: Option<String>,
     /// The note.
     pub reason: Option<String>,
     /// Σ line refunds.
@@ -158,9 +166,15 @@ pub struct Return {
     pub tenders: Vec<RefundTender>,
 }
 
-const HEADER_SELECT: &str = "SELECT id, number, status, sale_id, branch_id, register_id, \
-     cashier_session_id, user_id, customer_id, reason, refund, cash_rounding, exchange_sale_id, \
-     posted_at FROM sale_return";
+/// The header columns with the customer's name and member code joined in (see the sales'
+/// `HEADER_SELECT`).
+const HEADER_SELECT: &str = "SELECT * FROM (SELECT r.id, r.number, r.status, r.sale_id, \
+     r.branch_id, r.register_id, r.cashier_session_id, r.user_id, r.customer_id, r.reason, \
+     r.refund, r.cash_rounding, r.exchange_sale_id, r.posted_at, c.name AS customer_name, \
+     c.code AS customer_code, u.display_name AS user_name, g.code AS register_code \
+     FROM sale_return r LEFT JOIN customer c ON c.id = r.customer_id \
+     LEFT JOIN app_user u ON u.id = r.user_id LEFT JOIN register g ON g.id = r.register_id) \
+     return_h";
 
 fn map_header(row: &dyn Row) -> Result<ReturnHeader> {
     let status = match row.text("status")?.as_str() {
@@ -178,6 +192,10 @@ fn map_header(row: &dyn Row) -> Result<ReturnHeader> {
         cashier_session: sql::id(row, "cashier_session_id")?,
         user: sql::id(row, "user_id")?,
         customer: sql::opt_id(row, "customer_id")?,
+        customer_name: row.opt_text("customer_name")?,
+        customer_code: row.opt_text("customer_code")?,
+        user_name: row.opt_text("user_name")?,
+        register_code: row.opt_text("register_code")?,
         reason: row.opt_text("reason")?,
         refund: sql::money(row, "refund")?,
         cash_rounding: sql::money(row, "cash_rounding")?,

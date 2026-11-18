@@ -33,6 +33,7 @@ db_tests!(
     lists_filter_and_page,
     purchase_history_includes_merged_customers,
     session_events_feed_the_report,
+    sales_settings_round_trip,
 );
 
 #[allow(clippy::too_many_lines)] // one story: two partial returns, refusals, a write-off
@@ -839,6 +840,34 @@ async fn lists_filter_and_page(db: &Db) {
         .await,
         1
     );
+    // Names are joined in (phase S6), and the status filters.
+    let all = sales::list_sales(db, &DocFilter::default()).await.unwrap();
+    let named = all.iter().find(|h| h.customer.is_some()).unwrap();
+    assert_eq!(named.customer_name.as_deref(), Some("Pelanggan K7QH29XM"));
+    assert_eq!(named.customer_code.as_deref(), Some("K7QH29XM"));
+    assert!(named.user_name.is_some());
+    assert!(named.register_code.is_some());
+    assert!(
+        all.iter()
+            .filter(|h| h.customer.is_none())
+            .all(|h| h.customer_name.is_none())
+    );
+    assert_eq!(
+        by(DocFilter {
+            status: Some(SaleStatus::Posted),
+            ..DocFilter::default()
+        })
+        .await,
+        3
+    );
+    assert_eq!(
+        by(DocFilter {
+            status: Some(SaleStatus::Voided),
+            ..DocFilter::default()
+        })
+        .await,
+        0
+    );
     // Returns list the same way.
     let r = return_of(
         &till,
@@ -946,6 +975,9 @@ async fn purchase_history_includes_merged_customers(db: &Db) {
         ]
     );
     assert_eq!(history[3].customer, b);
+    assert_eq!(history[3].customer_name, "Pelanggan B2222222");
+    assert_eq!(history[3].customer_code, "B2222222");
+    assert_eq!(history[0].customer_code, "K7QH29XM");
     assert_eq!(history[0].amount, rp(3_000));
     assert_eq!(history[2].amount, rp(2_000));
     assert_eq!(history[1].amount, rp(2_000));
@@ -1099,4 +1131,97 @@ async fn register_two(db: &Db, till: &crate::sales_fixtures::Till) -> sultan_cor
         .unwrap();
     tx.commit().await.unwrap();
     r.id
+}
+
+async fn sales_settings_round_trip(db: &Db) {
+    let till = till(db).await;
+    let stored = sales::get_sales_settings(db).await.unwrap();
+    assert_eq!(stored.return_days, sales::DEFAULT_RETURN_DAYS);
+    assert!(stored.receipt_widths.is_empty());
+    assert_eq!(sales::return_days(db).await.unwrap(), 30);
+    assert_eq!(
+        sales::receipt_width(db, till.o.jkt.id).await.unwrap(),
+        sales::DEFAULT_RECEIPT_WIDTH
+    );
+    let who = actor(&till.o);
+    let who = &who;
+    let put = |s: sales::SalesSettings| async move {
+        let mut tx = db.begin().await.unwrap();
+        let out = sales::put_sales_settings(&mut tx, &s, who, t(NOV16)).await;
+        tx.commit().await.unwrap();
+        out
+    };
+    let before = trail(db).await;
+    let wanted = sales::SalesSettings {
+        return_days: 0,
+        receipt_widths: vec![(till.o.jkt.id, 48)],
+    };
+    assert_eq!(put(wanted.clone()).await.unwrap(), Written::Updated);
+    assert_eq!(trail(db).await, (before.0 + 1, before.1 + 1));
+    assert_eq!(sales::get_sales_settings(db).await.unwrap(), wanted);
+    assert_eq!(sales::receipt_width(db, till.o.jkt.id).await.unwrap(), 48);
+    assert_eq!(sales::return_days(db).await.unwrap(), 0);
+    // The same again writes nothing; another width updates the row.
+    assert_eq!(put(wanted.clone()).await.unwrap(), Written::Unchanged);
+    assert_eq!(trail(db).await, (before.0 + 1, before.1 + 1));
+    let changed = sales::SalesSettings {
+        return_days: 14,
+        receipt_widths: vec![(till.o.jkt.id, 42), (till.o.bdg.id, 32)],
+    };
+    assert_eq!(put(changed).await.unwrap(), Written::Updated);
+    let got = sales::get_sales_settings(db).await.unwrap();
+    assert_eq!(got.return_days, 14);
+    assert_eq!(got.receipt_widths.len(), 2);
+    assert_eq!(sales::receipt_width(db, till.o.jkt.id).await.unwrap(), 42);
+    // Refusals.
+    for (bad, field) in [
+        (
+            sales::SalesSettings {
+                return_days: sales::MAX_RETURN_DAYS + 1,
+                receipt_widths: Vec::new(),
+            },
+            "return_days",
+        ),
+        (
+            sales::SalesSettings {
+                return_days: 30,
+                receipt_widths: vec![(till.o.jkt.id, 40)],
+            },
+            "receipt_width",
+        ),
+        (
+            sales::SalesSettings {
+                return_days: 30,
+                receipt_widths: vec![(till.o.jkt.id, 32), (till.o.jkt.id, 48)],
+            },
+            "receipt_width",
+        ),
+    ] {
+        match put(bad).await {
+            Err(SaleDbError::Invalid { field: f, .. }) => assert_eq!(f, field),
+            other => panic!("{other:?}"),
+        }
+    }
+    let unknown = sales::SalesSettings {
+        return_days: 30,
+        receipt_widths: vec![(BranchId::generate(), 32)],
+    };
+    assert!(matches!(
+        put(unknown).await,
+        Err(SaleDbError::NotFound("branch"))
+    ));
+    // The database refuses what the code would not write.
+    assert!(
+        raw(db, "UPDATE sales_settings SET return_days = -1")
+            .await
+            .is_err()
+    );
+    assert!(
+        raw(
+            db,
+            "INSERT INTO sales_settings (id, return_days, updated_at) VALUES (2, 1, 0)"
+        )
+        .await
+        .is_err()
+    );
 }

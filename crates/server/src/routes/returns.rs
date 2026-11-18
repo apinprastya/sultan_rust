@@ -10,7 +10,8 @@
 //!     another branch is never on this node's branch), not voided (`409 conflict`), not imported
 //!     (`invalid_field`, `sale`). Each line refunds what the customer paid for it
 //!     (`core::sale::line_refund`, the last return takes what is left); more than sold − returned
-//!     → `422 return_qty_exceeded`. Older than `return_days` (30; 0 = no limit) →
+//!     → `422 return_qty_exceeded`. Older than the stored `return_days` (default 30, 0 = no limit;
+//!     `GET|PUT /settings/sales`, phase S6) →
 //!     `403 return_window` until a manager override of `refund.with_receipt` is presented. The
 //!     customer is the sale's (a sale without one may refund to the attached customer).
 //!   - **Without receipt** (no `sale_id`): the refund is the current price for the attached
@@ -34,18 +35,23 @@ use axum::http::StatusCode;
 use serde::{Deserialize, Serialize};
 use sultan_core::access::{Permission, Requested};
 use sultan_core::catalog::Qty;
+use sultan_core::customer::{Phone, ReceiptCustomer};
 use sultan_core::doc_number::BranchTimeZone;
 use sultan_core::ids::{ReturnId, SaleId, UnitId, VariantId};
 use sultan_core::money::Money;
 use sultan_core::pricing::{self as core_pricing, LineMode};
 use sultan_core::sale::{
+    Label, ReceiptHeader, ReceiptWidth, ReturnReceiptInput, ReturnReceiptLine, ReturnReceiptTender,
+    build_return_receipt,
+};
+use sultan_core::sale::{
     RefundInput, ReturnDisposition, ReturnedSoFar, SaleError, SoldLine, TenderKind, TotalsLine,
     check_return_window, compute_totals, ensure_returnable, line_refund, plan_refund,
     return_movements,
 };
-use sultan_db::org;
 use sultan_db::sales::{self, NewReturn, RefundTender, Return, ReturnHeader, ReturnLine, Written};
-use utoipa::ToSchema;
+use sultan_db::{cashier_sessions, customers, org, users};
+use utoipa::{IntoParams, ToSchema};
 use uuid::Uuid;
 
 use super::sale_post::{self, BuiltSale, SaleBody, body_hash, build_sale};
@@ -57,10 +63,6 @@ use crate::events::Event;
 use crate::extract::{ApiJson, ApiQuery, RegisterSession, UserSession};
 use crate::overrides::{self, Action, OverrideHeader};
 use crate::state::AppState;
-
-/// The return window in days (spec 2.6 §8: company setting `return_days`, default 30). There is
-/// no stored setting yet (spec 2.6 §19, from S3): every node uses the default.
-pub const RETURN_DAYS: u32 = 30;
 
 /// One returned line.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, ToSchema)]
@@ -153,6 +155,14 @@ pub struct ReturnHeaderDto {
     pub user_id: String,
     /// Customer.
     pub customer_id: Option<String>,
+    /// The customer's name (phase S6).
+    pub customer_name: Option<String>,
+    /// The customer's member code.
+    pub customer_code: Option<String>,
+    /// The cashier's display name (phase S6).
+    pub cashier_name: Option<String>,
+    /// The register's code (phase S6).
+    pub register_code: Option<String>,
     /// The note.
     pub reason: Option<String>,
     /// Σ line refunds.
@@ -177,6 +187,10 @@ impl From<&ReturnHeader> for ReturnHeaderDto {
             cashier_session_id: h.cashier_session.to_string(),
             user_id: h.user.to_string(),
             customer_id: h.customer.map(|c| c.to_string()),
+            customer_name: h.customer_name.clone(),
+            customer_code: h.customer_code.clone(),
+            cashier_name: h.user_name.clone(),
+            register_code: h.register_code.clone(),
             reason: h.reason.clone(),
             refund: h.refund.minor(),
             cash_rounding: h.cash_rounding.minor(),
@@ -337,7 +351,8 @@ async fn by_receipt(
         .and_then(|b| b.timezone.parse().ok())
         .unwrap_or_default();
     let mut checks = vec![(Permission::RefundWithReceipt, None, None)];
-    if let Err(e) = check_return_window(h.posted_at, state.now(), tz, RETURN_DAYS) {
+    let return_days = sales::return_days(&state.db).await?;
+    if let Err(e) = check_return_window(h.posted_at, state.now(), tz, return_days) {
         checks.push((Permission::RefundWithReceipt, None, Some(ApiError::from(e))));
     }
     let paid_with_balance = sale
@@ -645,10 +660,20 @@ pub async fn get(
     Path(id): Path<String>,
 ) -> Result<Json<ReturnDto>, ApiError> {
     let id: ReturnId = parse_id(&id, "id")?;
+    let stored = readable(&state, &caller, id).await?;
+    Ok(Json(with_exchange(&state, &stored).await?))
+}
+
+/// The stored return `id`, when the caller may read it ([`super::sales::may_read`]).
+async fn readable(
+    state: &AppState,
+    caller: &UserSession,
+    id: ReturnId,
+) -> Result<Return, ApiError> {
     let stored = sales::get_return(&state.db, id)
         .await?
         .ok_or_else(|| ApiError::not_found("return"))?;
-    let access = Caller::load(&state.db, &caller).await?;
+    let access = Caller::load(&state.db, caller).await?;
     if !super::sales::may_read(
         &access,
         caller.user.id,
@@ -660,7 +685,7 @@ pub async fn get(
         }
         .into());
     }
-    Ok(Json(with_exchange(&state, &stored).await?))
+    Ok(stored)
 }
 
 /// One page of `GET /returns`.
@@ -694,4 +719,231 @@ pub async fn list(
         items: items.iter().map(ReturnHeaderDto::from).collect(),
         next_before_id,
     }))
+}
+
+/// Query of `GET /returns/{id}/receipt` (as for a sale's receipt).
+#[derive(Debug, Clone, Default, Deserialize, IntoParams)]
+pub struct ReturnReceiptQuery {
+    /// A reprint (printed COPY, audited as `return.reprint`).
+    #[serde(default)]
+    pub copy: bool,
+    /// 32, 42 or 48 columns (default: the branch's receipt width).
+    pub width: Option<usize>,
+    /// The label language: `id` or `en` (default).
+    pub lang: Option<String>,
+}
+
+/// The receipt of a return.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
+pub struct ReturnReceiptDto {
+    /// The return.
+    pub return_id: String,
+    /// Its number (also the barcode/QR payload).
+    pub number: String,
+    /// A reprint.
+    pub copy: bool,
+    /// The text, one entry per line.
+    pub lines: Vec<String>,
+    /// The text with a newline after each line.
+    pub text: String,
+    /// The payload of the barcode/QR under the text.
+    pub barcode: String,
+}
+
+/// Builds the receipt of `ret` (`core::sale::build_return_receipt`).
+#[allow(clippy::too_many_lines)] // gathers every block of the return receipt
+async fn return_receipt(
+    state: &AppState,
+    ret: &Return,
+    width: ReceiptWidth,
+    copy: bool,
+    lang: &str,
+) -> Result<ReturnReceiptDto, ApiError> {
+    let h = &ret.header;
+    let branch = org::get_branch(&state.db, h.branch)
+        .await?
+        .ok_or_else(|| ApiError::not_found("branch"))?;
+    let tz: BranchTimeZone = branch.timezone.parse().unwrap_or_default();
+    let register = org::get_register(&state.db, h.register)
+        .await?
+        .map(|r| r.code)
+        .unwrap_or_default();
+    let cashier = users::get_user(&state.db, h.user)
+        .await?
+        .map(|u| u.display_name)
+        .unwrap_or_default();
+    let customer = match h.customer {
+        Some(c) => customers::get_customer(&state.db, c).await?,
+        None => None,
+    };
+    let phone = customer
+        .as_ref()
+        .and_then(|c| c.customer.phone.as_deref())
+        .and_then(|p| Phone::parse(p).ok());
+    let customer_line = customer.as_ref().map(|c| ReceiptCustomer {
+        name: &c.customer.name,
+        company_name: c.customer.company_name.as_deref(),
+        phone: phone.as_ref(),
+        tier_name: None,
+    });
+    let sale_number = match h.sale {
+        Some(s) => sales::get_sale(&state.db, s)
+            .await?
+            .map(|s| s.header.number),
+        None => None,
+    };
+    let exchange_number = match h.exchange_sale {
+        Some(s) => sales::get_sale(&state.db, s)
+            .await?
+            .map(|s| s.header.number),
+        None => None,
+    };
+    let wanted: Vec<_> = ret
+        .lines
+        .iter()
+        .map(|l| (l.line.variant, l.line.unit))
+        .collect();
+    let items = sale_post::load_items(state, &wanted, "lines", true).await?;
+    let lines: Vec<ReturnReceiptLine<'_>> = ret
+        .lines
+        .iter()
+        .zip(&items)
+        .map(|(l, item)| ReturnReceiptLine {
+            name: &l.line.name,
+            qty: l.line.qty,
+            unit: &item.unit_name,
+            refund: l.line.refund,
+            write_off: matches!(l.line.disposition, ReturnDisposition::WriteOff { .. }),
+        })
+        .collect();
+    let mut names: Vec<String> = Vec::with_capacity(ret.tenders.len());
+    for t in &ret.tenders {
+        let name = match t.tender_type {
+            Some(id) => sales::get_tender_type(&state.db, id)
+                .await?
+                .map(|r| r.tender.name)
+                .unwrap_or_default(),
+            None => Label::Exchange.text(lang).to_owned(),
+        };
+        names.push(name);
+    }
+    let tenders: Vec<ReturnReceiptTender<'_>> = ret
+        .tenders
+        .iter()
+        .zip(&names)
+        .map(|(t, name)| ReturnReceiptTender {
+            name,
+            amount: t.amount,
+        })
+        .collect();
+    let header_lines: Vec<String> = branch.receipt_header.lines().map(str::to_owned).collect();
+    let footer_lines: Vec<String> = branch.receipt_footer.lines().map(str::to_owned).collect();
+    let input = ReturnReceiptInput {
+        width,
+        header: ReceiptHeader {
+            lines: &header_lines,
+            branch_name: &branch.name,
+            address: &branch.address,
+            tax_id: branch.npwp.as_deref(),
+        },
+        number: &h.number,
+        posted_at: h.posted_at,
+        tz,
+        register: &register,
+        cashier: &cashier,
+        customer: customer_line,
+        sale_number: sale_number.as_deref(),
+        lines: &lines,
+        cash_rounding: h.cash_rounding,
+        refund: h.refund,
+        tenders: &tenders,
+        exchange_number: exchange_number.as_deref(),
+        footer: &footer_lines,
+        copy,
+    };
+    let built = build_return_receipt(&input, &|l| l.text(lang).to_owned());
+    Ok(ReturnReceiptDto {
+        return_id: h.id.to_string(),
+        number: h.number.clone(),
+        copy,
+        text: built.text(),
+        lines: built.lines,
+        barcode: built.barcode,
+    })
+}
+
+/// Whether `ret` is the last return of the caller's open session on their register.
+async fn last_return_of_own_session(
+    state: &AppState,
+    caller: &UserSession,
+    ret: &Return,
+) -> Result<bool, ApiError> {
+    let Some(register) = caller.session.register else {
+        return Ok(false);
+    };
+    let Some(open) = cashier_sessions::open_for_register(&state.db, register).await? else {
+        return Ok(false);
+    };
+    if open.session.user() != caller.user.id || ret.header.cashier_session != open.session.id() {
+        return Ok(false);
+    }
+    let filter = sales::DocFilter {
+        cashier_session: Some(open.session.id()),
+        limit: 1,
+        ..sales::DocFilter::default()
+    };
+    let last = sales::list_returns(&state.db, &filter).await?;
+    Ok(last.first().is_some_and(|h| h.id == ret.header.id))
+}
+
+/// `GET /api/v1/returns/{id}/receipt?copy=&width=&lang=` (phase S6): the return receipt, built
+/// like a sale's. Readable like the return; a copy follows the sale reprint rules (free for the
+/// last return of the caller's open session, else `sale.reprint`, overridable at a register)
+/// and is audited as `return.reprint`.
+///
+/// # Errors
+/// `401`, `403 permission_denied` / `needs_override` / `invalid_override`, `404 not_found`,
+/// `422 invalid_field` (`width`).
+#[utoipa::path(get, path = "/api/v1/returns/{id}/receipt", tag = "sales",
+    security(("bearer" = []), ("bearer" = [], "register_token" = [])),
+    params(("id" = String, Path, description = "Return ID"), ReturnReceiptQuery,
+        ("X-Override" = Option<String>, Header, description = "Override token for `sale.reprint` (spec 2.1 §6)")),
+    responses((status = 200, body = ReturnReceiptDto), (status = 403, body = crate::openapi::Problem),
+        (status = 404, body = crate::openapi::Problem), (status = 422, body = crate::openapi::Problem)))]
+pub async fn get_receipt(
+    State(state): State<AppState>,
+    caller: UserSession,
+    header: OverrideHeader,
+    Path(id): Path<String>,
+    ApiQuery(query): ApiQuery<ReturnReceiptQuery>,
+) -> Result<Json<ReturnReceiptDto>, ApiError> {
+    let id: ReturnId = parse_id(&id, "id")?;
+    let stored = readable(&state, &caller, id).await?;
+    let width = super::sales::receipt_width(&state, query.width, stored.header.branch).await?;
+    let dto = return_receipt(
+        &state,
+        &stored,
+        width,
+        query.copy,
+        query.lang.as_deref().unwrap_or("en"),
+    )
+    .await?;
+    if query.copy {
+        let free = last_return_of_own_session(&state, &caller, &stored).await?;
+        super::sales::authorize_reprint(
+            &state,
+            &caller,
+            &header,
+            super::sales::Reprint {
+                free,
+                action: "return.reprint",
+                target: format!("return:{id}"),
+                context_ref: id.to_string(),
+                branch: stored.header.branch,
+                after: serde_json::json!({"number": stored.header.number}),
+            },
+        )
+        .await?;
+    }
+    Ok(Json(dto))
 }

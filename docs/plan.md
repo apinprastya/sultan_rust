@@ -314,6 +314,21 @@ Where we are, so any session can pick up from here. Update this section at the e
   history (paged, VOID marked); F5 calls the new audited `POST /drawer/open` (`drawer.open`,
   overridable with the session ID; server, utoipa, client, fake, API tests, Postman). Readings in
   spec §19 (from S5).
+- **2.6 Sales** S6 back office (2026-11-18), so **2.6 Sales is complete**: F8 Sales in the back
+  office (`crates/ui/src/backoffice/sales.rs`, `ui/bo_sales.slint`): Ctrl+1 sales list (filters
+  branch, register, dates, customer by code / phone, number, status; keyset "load more"; Enter
+  detail with lines, totals, masked tenders, saved change, rounding, the VOID, its returns and the
+  receipt), Ctrl+2 returns list + detail (links to the original and the exchange sale, the return
+  receipt), Ctrl+3 tender types (HQ, `tender.manage`; kind locked once saved; archive asks
+  first; read-only without the permission or on a branch node), Ctrl+4 sales settings; the
+  customer form's purchase history (Ctrl+H). Server: customer name / code, cashier name and
+  register code joined into the sale and return lists and the history (no N+1), `status` filter,
+  `GET /returns/{id}/receipt` (`core::sale::build_return_receipt`, reprint like a sale's, audited
+  `return.reprint`), `GET|PUT /settings/sales` (`return_days`, receipt width per branch;
+  migration `20261118000001_sales_settings`), the return window and the receipts' default width
+  read them. Register: names in F6 / history lists, the return-done panel shows the server's
+  return receipt, Q types the quantity of a no-receipt return line. Client, fake, API tests,
+  Postman (157 requests). Readings in spec §19 (from S6).
 - **UI only, except HQ** (§3, 2026-11-09):
   - Start screen on single-app and terminal machines: F1 Kasir, F2 Back office, F3 Settings.
   - Settings: language (F6), set up again (F8), and on a single app "Allow terminals to connect"
@@ -335,26 +350,25 @@ Where we are, so any session can pick up from here. Update this section at the e
   price lists are not listed (no unarchive on screen).
 - Register: no payout slip is printed; the attached customer does not refresh on
   `customer.changed`.
-- Sales: `return_days` is fixed at 30 (no stored setting yet, spec 2.6 §19 from S3); the receipt
-  width is a query parameter (no branch setting); stock is not checked for branch blocks at
-  posting (only archived products are refused).
+- Sales: stock is not checked for branch blocks at posting (only archived products are refused).
 - Pricing: deleting a price entry or changing a tax rate is still always allowed, even when a
   posted sale used it (2.3 R2 limitation; sales now exist).
 - Register (S4): saved change is checked against `max_saved_per_sale` / `max_balance` only at
   posting (the register cannot read the balance settings).
-- Register (S5): no return receipt endpoint (the till shows a slip built from the posted return);
-  the receipts, history and held-cart lists show what the API carries (no customer names in
-  `GET /sales` / history, the branch code only for this branch); returned quantities move by whole
-  units (`*` returns all of a weighed line); the fake's no-receipt refund needs a manager for any
-  amount for a cashier, and its close report demo counts are not the server's.
+- Register (S5): the history list shows the branch code only for this branch; the fake's
+  no-receipt refund needs a manager for any amount for a cashier, and its close report demo counts
+  are not the server's. An exchange's posted panel shows the new sale, not the return receipt.
+- Back office (S6): the node role is not known to the window, so a branch node's tender types and
+  sales settings turn read-only only after the first refused write (`read_only_replica`); the
+  register filter offers the registers seen in the loaded rows (there is no register list call
+  in the back office); the sale detail's returns come from a list of the branch's returns since
+  the sale (at most 200); the header's buttons are tight at 1024 px in Indonesian (Keluar is cut
+  by a few pixels).
 - Each sub-agent worktree builds its own `target/` (20–40 GB with coverage); clear finished ones.
 
 **Next**
-- **2.6 Sales (register)**: spec agreed 2026-11-16 (`docs/spec/2.6-sales.md`). S1 `core::sale`,
-  S2 `db`, S3 `server` + client, S4 register: sell and S5 register: after the sale done; next
-  **S6 back office** (tender types, sales and returns lists + detail, purchase history tab).
-- Other P1 specs still to discuss: 2.4 is P2; 2.7 cash in/out + X/Z, 2.8 inventory, 2.9 money,
-  2.10 reports, 2.11 hardware (ESC/POS + drawer), old-Sultan importer.
+- The remaining P1 specs to discuss (2.4 is P2): **2.7 cash in/out + X/Z**, 2.8 inventory,
+  2.9 money, 2.10 reports, 2.11 hardware (ESC/POS + drawer), old-Sultan importer.
 
 **Way of working**
 - Each phase is discussed, written as a spec in `docs/spec/`, then built in phases; the user usually

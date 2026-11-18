@@ -71,11 +71,11 @@ pub use pricing::{
     QuoteTotals, QuotedLine, TaxRate,
 };
 pub use sales::{
-    CartVoid, CartVoidRequest, Discount, DocQuery, DrawerOpen, DrawerRequest, ExchangeRequest,
-    HeldCart, HistoryItem, HistoryPage, HoldRequest, Receipt, RefundTender, ReturnLine,
-    ReturnLineRequest, ReturnPage, ReturnRequest, ReturnSummary, Sale, SaleLine, SaleLineRequest,
-    SalePage, SaleRequest, SaleReturn, SaleSummary, SaleTender, SaleTotals, SaleVoid,
-    TenderRequest, TenderType, TenderTypeBody, VoidRequest, VoidedLine,
+    BranchWidth, CartVoid, CartVoidRequest, Discount, DocQuery, DrawerOpen, DrawerRequest,
+    ExchangeRequest, HeldCart, HistoryItem, HistoryPage, HoldRequest, Receipt, RefundTender,
+    ReturnLine, ReturnLineRequest, ReturnPage, ReturnRequest, ReturnSummary, Sale, SaleLine,
+    SaleLineRequest, SalePage, SaleRequest, SaleReturn, SaleSummary, SaleTender, SaleTotals,
+    SaleVoid, SalesSettings, TenderRequest, TenderType, TenderTypeBody, VoidRequest, VoidedLine,
 };
 pub use types::{
     Branch, CashierSession, CloseReport, CloseRequest, Count, LockUser, Login, OverrideGrant,
@@ -218,6 +218,16 @@ pub trait Service: Send + Sync {
     /// (`id` or `en`); a copy of another than the last sale of the session needs `sale.reprint`
     /// (`override_token`).
     fn receipt(
+        &self,
+        token: &str,
+        id: &str,
+        copy: bool,
+        lang: &str,
+        override_token: Option<&str>,
+    ) -> BoxFuture<Receipt>;
+    /// `GET /returns/{id}/receipt[?copy=true]&lang=` (phase S6): the return receipt; a copy
+    /// follows the sale reprint rules (`sale.reprint`, `override_token`).
+    fn return_receipt(
         &self,
         token: &str,
         id: &str,
@@ -515,4 +525,8 @@ pub trait BackOffice: Service {
     fn returns(&self, token: &str, query: &DocQuery) -> BoxFuture<ReturnPage>;
     /// `GET /returns/{id}`.
     fn sale_return(&self, token: &str, id: &str) -> BoxFuture<SaleReturn>;
+    /// `GET /settings/sales`: `return_days` and the receipt width of every branch (phase S6).
+    fn sales_settings(&self, token: &str) -> BoxFuture<SalesSettings>;
+    /// `PUT /settings/sales` (HQ, `tender.manage`).
+    fn put_sales_settings(&self, token: &str, body: &SalesSettings) -> BoxFuture<SalesSettings>;
 }

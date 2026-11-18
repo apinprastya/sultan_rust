@@ -29,8 +29,12 @@
 //! 7. **Prices** (F7, spec 2.3 phase R4) — price lists, tax rates and the pricing settings, and
 //!    the product form's Prices tab (Ctrl+4); see [`pricing`].
 //!
-//! F2 / F3 / F4 / F6 / F7 switch between products, categories, brands, customers and prices; F12
-//! logs out.
+//! 8. **Sales** (F8, spec 2.6 phase S6) — sales and returns lists with their details, tender
+//!    types and the sales settings, and the customer form's purchase history (Ctrl+H); see
+//!    [`sales`].
+//!
+//! F2 / F3 / F4 / F6 / F7 / F8 switch between products, categories, brands, customers, prices and
+//! sales; F12 logs out.
 //!
 //! **Live refresh**: after login the glue watches `GET /events`; `catalog.changed` reloads the
 //! product list (or the taxonomy) and, for the product open in the form, fetches it: when it
@@ -39,6 +43,7 @@
 pub mod customers;
 pub mod form;
 pub mod pricing;
+pub mod sales;
 
 use std::collections::BTreeSet;
 
@@ -176,6 +181,20 @@ pub enum Screen {
     TaxRates,
     /// Pricing settings.
     PricingSettings,
+    /// Sales list.
+    Sales,
+    /// One sale.
+    SaleDetail,
+    /// Returns list.
+    Returns,
+    /// One return.
+    ReturnDetail,
+    /// Tender types.
+    TenderTypes,
+    /// Sales settings.
+    SalesSettings,
+    /// The customer form's purchase history.
+    CustomerHistory,
 }
 
 impl Screen {
@@ -198,6 +217,13 @@ impl Screen {
             Self::PriceLists => "price-lists",
             Self::TaxRates => "tax-rates",
             Self::PricingSettings => "pricing-settings",
+            Self::Sales => "sales",
+            Self::SaleDetail => "sale-detail",
+            Self::Returns => "returns",
+            Self::ReturnDetail => "return-detail",
+            Self::TenderTypes => "tender-types",
+            Self::SalesSettings => "sales-settings",
+            Self::CustomerHistory => "customer-history",
         }
     }
 }
@@ -223,6 +249,8 @@ pub enum Confirm {
     PriceEntryDelete,
     /// Save the pricing settings with a changed tax mode (stored prices are not converted).
     TaxMode,
+    /// Archive the tender type in the editor (spec 2.6 S6).
+    TenderArchive,
 }
 
 /// What [`Confirm::Delete`] deletes.
@@ -669,6 +697,13 @@ pub enum Effect {
         /// The call.
         call: pricing::Call,
     },
+    /// A sales call (spec 2.6 S6, [`sales`]).
+    Sales {
+        /// Token.
+        token: String,
+        /// The call.
+        call: sales::Call,
+    },
     /// `logout`.
     Logout(String),
     /// `watch_events`; events come back as [`Msg::Event`] with `generation`.
@@ -799,6 +834,8 @@ pub enum Msg {
     Customers(Box<customers::Reply>),
     /// Result of [`Effect::Pricing`].
     Pricing(Box<pricing::Reply>),
+    /// Result of [`Effect::Sales`].
+    Sales(Box<sales::Reply>),
 }
 
 /// What [`Controller::update`] did.
@@ -929,6 +966,8 @@ pub struct Controller {
     pub customers: customers::CustomerState,
     /// The pricing section and the product form's Prices tab.
     pub pricing: pricing::PricingState,
+    /// The sales section and the customer history.
+    pub sales: sales::SalesState,
     /// A login is running.
     pub busy: bool,
     /// A field the view should focus (`search`, `name`, `category-name`, `brand-name`, or
@@ -1078,6 +1117,7 @@ impl Controller {
             (4, Screen::Brands),
             (6, Screen::Customers),
             (7, Screen::PriceLists),
+            (8, Screen::Sales),
         ] {
             if p.f(n) {
                 return Step::handled(self.go(target));
@@ -1092,6 +1132,7 @@ impl Controller {
             Screen::Categories | Screen::Brands => self.taxonomy_capture(p, screen),
             Screen::Login => Step::default(),
             s if pricing::in_section(s) => self.pricing_capture(p, s),
+            s if sales::in_section(s) || s == Screen::CustomerHistory => self.sales_capture(p, s),
             _ => self.customers_capture(p, screen),
         }
     }
@@ -1228,14 +1269,22 @@ impl Controller {
     fn go(&mut self, target: Screen) -> Vec<Effect> {
         let dirty = match self.screen() {
             Screen::Form => self.form.as_ref().is_some_and(|f| f.form.is_dirty()),
-            Screen::CustomerForm => self
+            Screen::CustomerForm
+            | Screen::CustomerHistory
+            | Screen::SaleDetail
+            | Screen::ReturnDetail => self
                 .customers
                 .form
                 .as_ref()
                 .is_some_and(customers::CustomerForm::is_dirty),
             _ => false,
         };
-        if dirty && target != self.screen() {
+        // The purchase history and the documents it opens keep the customer form.
+        let keeps_form = matches!(
+            target,
+            Screen::CustomerHistory | Screen::SaleDetail | Screen::ReturnDetail
+        );
+        if dirty && target != self.screen() && !keeps_form {
             self.confirm = Some(Confirm::Discard(target));
             return Vec::new();
         }
@@ -1248,7 +1297,19 @@ impl Controller {
         if from == Screen::Form && target != Screen::Form {
             self.form = None;
         }
-        if from == Screen::CustomerForm && target != Screen::CustomerForm {
+        if matches!(
+            from,
+            Screen::CustomerForm
+                | Screen::CustomerHistory
+                | Screen::SaleDetail
+                | Screen::ReturnDetail
+        ) && !matches!(
+            target,
+            Screen::CustomerForm
+                | Screen::CustomerHistory
+                | Screen::SaleDetail
+                | Screen::ReturnDetail
+        ) {
             self.customers.form = None;
         }
         if target != Screen::Form {
@@ -1273,8 +1334,11 @@ impl Controller {
                 self.focus("brand-name");
                 Vec::new()
             }
-            Screen::Login | Screen::Form | Screen::CustomerForm => Vec::new(),
+            Screen::Login | Screen::Form | Screen::CustomerForm | Screen::CustomerHistory => {
+                Vec::new()
+            }
             s if pricing::in_section(s) => self.enter_pricing(s),
+            s if sales::in_section(s) => self.enter_sales(s, from),
             _ => self.enter_customers(target, from),
         }
     }
@@ -1311,6 +1375,7 @@ impl Controller {
             Confirm::PriceListArchive | Confirm::PriceEntryDelete | Confirm::TaxMode => {
                 self.pricing_confirmed(confirm)
             }
+            Confirm::TenderArchive => self.sales_confirmed(),
         }
     }
 
@@ -1421,6 +1486,9 @@ impl Controller {
             };
         }
         if let Some(effects) = self.pricing_action(id) {
+            return effects;
+        }
+        if let Some(effects) = self.sales_action(id) {
             return effects;
         }
         if let Some(effects) = self.customer_action(id) {
@@ -1841,6 +1909,10 @@ impl Controller {
             k if pricing::EDIT_KINDS.contains(&k) => {
                 return self.pricing_edit(k, row, field, value);
             }
+            k if sales::EDIT_KINDS.contains(&k) => {
+                self.sales_edit(k, row, field, value);
+                return Vec::new();
+            }
             _ => {}
         }
         let can = self.can_manage();
@@ -1945,6 +2017,9 @@ impl Controller {
         if self.pricing_toggle(kind, field, on).is_some() {
             return Vec::new();
         }
+        if self.sales_toggle(kind, field, on).is_some() {
+            return Vec::new();
+        }
         let can = self.can_manage();
         let branches: Vec<String> = self
             .reference
@@ -1992,6 +2067,9 @@ impl Controller {
             return effects;
         }
         if let Some(effects) = self.pricing_choose(kind, row, field, index) {
+            return effects;
+        }
+        if let Some(effects) = self.sales_choose(kind, row, field, index) {
             return effects;
         }
         match (kind, field) {
@@ -2110,6 +2188,9 @@ impl Controller {
             return effects;
         }
         if let Some(effects) = self.pricing_pick(kind, row) {
+            return effects;
+        }
+        if let Some(effects) = self.sales_pick(kind, row) {
             return effects;
         }
         match kind {
@@ -2565,6 +2646,7 @@ impl Controller {
             Msg::Deleted(what, result) => self.deleted(what, &result),
             Msg::Customers(reply) => self.customer_reply(*reply),
             Msg::Pricing(reply) => self.pricing_reply(*reply),
+            Msg::Sales(reply) => self.sales_reply(*reply),
             _ => Vec::new(),
         }
     }

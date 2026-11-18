@@ -49,8 +49,9 @@ pub use cart::{
 pub use payment::{BalanceContext, PaidSale, Payment, SaleTender, TenderKind, TenderType};
 pub use receipt::{
     Label, Receipt, ReceiptCustomerBlock, ReceiptHeader, ReceiptInput, ReceiptLine, ReceiptSaved,
-    ReceiptTender, ReceiptTotals, ReceiptWidth, TaxInvoiceBlock, TaxLine, build_receipt,
-    format_qty, format_rupiah, mask_reference,
+    ReceiptTender, ReceiptTotals, ReceiptWidth, ReturnReceiptInput, ReturnReceiptLine,
+    ReturnReceiptTender, TaxInvoiceBlock, TaxLine, build_receipt, build_return_receipt, format_qty,
+    format_rupiah, mask_reference,
 };
 pub use refund::{
     RefundInput, RefundMethod, RefundPlan, VoidInput, VoidPlan, plan_post_void, plan_refund,

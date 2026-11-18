@@ -203,6 +203,14 @@ pub struct SaleHeaderDto {
     pub user_id: Option<String>,
     /// Customer.
     pub customer_id: Option<String>,
+    /// The customer's name (phase S6: lists show names).
+    pub customer_name: Option<String>,
+    /// The customer's member code.
+    pub customer_code: Option<String>,
+    /// The cashier's display name (phase S6).
+    pub cashier_name: Option<String>,
+    /// The register's code (phase S6).
+    pub register_code: Option<String>,
     /// Printed as a tax invoice.
     pub tax_invoice: bool,
     /// Prices include tax.
@@ -247,6 +255,10 @@ impl From<&SaleHeader> for SaleHeaderDto {
             cashier_session_id: h.cashier_session.map(|s| s.to_string()),
             user_id: h.user.map(|u| u.to_string()),
             customer_id: h.customer.map(|c| c.to_string()),
+            customer_name: h.customer_name.clone(),
+            customer_code: h.customer_code.clone(),
+            cashier_name: h.user_name.clone(),
+            register_code: h.register_code.clone(),
             tax_invoice: h.tax_invoice,
             tax_inclusive: h.tax_inclusive,
             subtotal: h.totals.subtotal.minor(),
@@ -595,6 +607,8 @@ pub struct DocQuery {
     pub until: Option<i64>,
     /// Only this number.
     pub number: Option<String>,
+    /// Only this status: `posted` or `voided` (phase S6).
+    pub status: Option<String>,
     /// Page cursor: `next_before_id` of the previous page.
     pub before_id: Option<String>,
     /// Page size, 1–200 (default 50).
@@ -634,6 +648,17 @@ pub(crate) async fn doc_filter(
         from: query.from.map(Timestamp::from_unix_millis),
         until: query.until.map(Timestamp::from_unix_millis),
         number: query.number.clone().filter(|n| !n.trim().is_empty()),
+        status: match query.status.as_deref().map(str::trim) {
+            None | Some("") => None,
+            Some("posted") => Some(SaleStatus::Posted),
+            Some("voided") => Some(SaleStatus::Voided),
+            Some(_) => {
+                return Err(ApiError::invalid_field(
+                    "status",
+                    "`status` must be posted or voided",
+                ));
+            }
+        },
         before: parse_opt_id::<Uuid>(query.before_id.as_deref(), "before_id")?,
         limit,
     };
@@ -684,7 +709,7 @@ pub struct ReceiptQuery {
     /// A reprint (printed COPY, audited).
     #[serde(default)]
     pub copy: bool,
-    /// 32, 42 or 48 columns (default 32).
+    /// 32, 42 or 48 columns (default: the branch's receipt width, `GET /settings/sales`).
     pub width: Option<usize>,
     /// The label language: `id` (Indonesian) or `en` (default); the register sends its window
     /// language (spec 2.6 §19 from S4).
@@ -865,6 +890,20 @@ async fn receipt(
     })
 }
 
+/// The receipt width: the asked one, else the branch's (`branch_sales_settings`, default 32).
+pub(crate) async fn receipt_width(
+    state: &AppState,
+    asked: Option<usize>,
+    branch: BranchId,
+) -> Result<ReceiptWidth, ApiError> {
+    let cols = match asked {
+        Some(cols) => cols,
+        None => usize::from(sales::receipt_width(&state.db, branch).await?),
+    };
+    ReceiptWidth::from_cols(cols)
+        .ok_or_else(|| ApiError::invalid_field("width", "`width` must be 32, 42 or 48"))
+}
+
 /// Whether `sale` is the last sale of the caller's open session on their register.
 async fn last_of_own_session(
     state: &AppState,
@@ -891,6 +930,73 @@ async fn last_of_own_session(
     Ok(last.first().is_some_and(|h| h.id == sale.header.id))
 }
 
+/// A reprint to check and audit (spec 2.6 §9, §19 item 46).
+pub(crate) struct Reprint {
+    /// The last document of the caller's open session: no permission needed.
+    pub free: bool,
+    /// The audit action (`sale.reprint`, `return.reprint`).
+    pub action: &'static str,
+    /// The audit target (`sale:{id}`, `return:{id}`).
+    pub target: String,
+    /// The override's `context_ref` (the document ID).
+    pub context_ref: String,
+    /// The document's branch.
+    pub branch: BranchId,
+    /// The audit `after` (the approver is added).
+    pub after: serde_json::Value,
+}
+
+/// Checks `sale.reprint` for a copy (free for the last document of the caller's open session;
+/// overridable at a register; required without an override from the back office) and writes
+/// its audit entry with the approver.
+pub(crate) async fn authorize_reprint(
+    state: &AppState,
+    caller: &UserSession,
+    header: &OverrideHeader,
+    reprint: Reprint,
+) -> Result<(), ApiError> {
+    let access = Caller::load(&state.db, caller).await?;
+    let mut tx = state.db.begin().await?;
+    let approver = if reprint.free {
+        None
+    } else if let Some(register) = caller.session.register {
+        let at = RegisterSession {
+            register: RegisterCtx {
+                register,
+                branch: caller.session.branch,
+            },
+            user: caller.clone(),
+        };
+        overrides::authorize(
+            state,
+            &mut tx,
+            &at,
+            &access.permissions,
+            Action {
+                permission: Permission::SaleReprint,
+                value: None,
+                context_ref: &reprint.context_ref,
+            },
+            header,
+        )
+        .await?
+    } else {
+        access.require(Permission::SaleReprint)?;
+        None
+    };
+    let mut after = reprint.after;
+    after["approved_by"] = json!(approver.map(|a| a.to_string()));
+    let mut entry = AuditEntry::new(state.now(), reprint.action);
+    entry.branch = Some(reprint.branch);
+    entry.register = caller.session.register;
+    entry.user = Some(caller.user.id);
+    entry.target = Some(reprint.target);
+    entry.after = Some(after);
+    audit::append(&mut tx, &entry).await?;
+    tx.commit().await?;
+    Ok(())
+}
+
 /// `GET /api/v1/sales/{id}/receipt?copy=&width=&lang=` (see the module docs).
 ///
 /// # Errors
@@ -910,9 +1016,8 @@ pub async fn get_receipt(
     ApiQuery(query): ApiQuery<ReceiptQuery>,
 ) -> Result<Json<ReceiptDto>, ApiError> {
     let id: SaleId = parse_id(&id, "id")?;
-    let width = ReceiptWidth::from_cols(query.width.unwrap_or(32))
-        .ok_or_else(|| ApiError::invalid_field("width", "`width` must be 32, 42 or 48"))?;
     let sale = readable(&state, &caller, sales::get_sale(&state.db, id).await?).await?;
+    let width = receipt_width(&state, query.width, sale.header.branch).await?;
     let dto = receipt(
         &state,
         &sale,
@@ -925,47 +1030,20 @@ pub async fn get_receipt(
         return Ok(Json(dto));
     }
     let free = last_of_own_session(&state, &caller, &sale).await?;
-    let access = Caller::load(&state.db, &caller).await?;
-    let mut tx = state.db.begin().await?;
-    let approver = if free {
-        None
-    } else if let Some(register) = caller.session.register {
-        let at = RegisterSession {
-            register: RegisterCtx {
-                register,
-                branch: caller.session.branch,
-            },
-            user: caller.clone(),
-        };
-        overrides::authorize(
-            &state,
-            &mut tx,
-            &at,
-            &access.permissions,
-            Action {
-                permission: Permission::SaleReprint,
-                value: None,
-                context_ref: &id.to_string(),
-            },
-            &header,
-        )
-        .await?
-    } else {
-        access.require(Permission::SaleReprint)?;
-        None
-    };
-    let mut entry = AuditEntry::new(state.now(), "sale.reprint");
-    entry.branch = Some(sale.header.branch);
-    entry.register = caller.session.register;
-    entry.user = Some(caller.user.id);
-    entry.target = Some(format!("sale:{id}"));
-    entry.after = Some(json!({
-        "number": sale.header.number,
-        "voided": dto.voided,
-        "approved_by": approver.map(|a| a.to_string()),
-    }));
-    audit::append(&mut tx, &entry).await?;
-    tx.commit().await?;
+    authorize_reprint(
+        &state,
+        &caller,
+        &header,
+        Reprint {
+            free,
+            action: "sale.reprint",
+            target: format!("sale:{id}"),
+            context_ref: id.to_string(),
+            branch: sale.header.branch,
+            after: json!({"number": sale.header.number, "voided": dto.voided}),
+        },
+    )
+    .await?;
     Ok(Json(dto))
 }
 

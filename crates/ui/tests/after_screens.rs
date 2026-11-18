@@ -830,6 +830,49 @@ fn weighed_lines_return_by_typed_quantity() {
     assert_eq!(t.list()[0].detail, "0 / 3 · Rp 0");
 }
 
+/// Phase S6: without a receipt, Q types the quantity of the highlighted item (whole units for a
+/// whole unit), the lines are quoted again, and the done panel shows the server's return receipt.
+#[test]
+fn no_receipt_return_types_a_quantity_and_shows_the_receipt() {
+    let t = till();
+    t.press(&["F10"]);
+    t.press(&["F2"]);
+    t.typed(&teh());
+    t.press(&["Enter"]);
+    assert_eq!(t.list()[0].detail, "1 pcs · Rp 5.000");
+    assert!(
+        t.chips().contains(&"Q edit_qty".to_owned()),
+        "{:?}",
+        t.chips()
+    );
+    t.press(&["Q"]);
+    let s = t.sell();
+    assert_eq!(
+        (s.modal_title.as_str(), s.modal_name.as_str()),
+        ("return_qty", "Teh Botol")
+    );
+    t.typed("2,5");
+    assert_eq!(
+        t.sell().modal_value,
+        "25",
+        "a whole unit takes no decimal comma"
+    );
+    t.press(&["Backspace"]);
+    t.press(&["Enter"]);
+    assert_eq!(t.list()[0].detail, "2 pcs · Rp 10.000");
+    // Digits still type an item code.
+    t.typed("1");
+    assert_eq!(t.sell().modal_value, "1");
+    t.press(&["Esc"]);
+    t.press(&["Enter"]);
+    t.budi_approves();
+    assert_eq!(t.sell().modal_title, "return_done");
+    let slip = t.receipt();
+    assert!(slip.contains("*** RETURN ***"), "{slip}");
+    assert!(slip.contains("10.000"), "{slip}");
+    assert_eq!(t.fake.calls_of("return_receipt").len(), 1);
+}
+
 #[test]
 fn recent_receipts_start_a_return_and_errors_are_said() {
     let t = till();

@@ -841,6 +841,8 @@ impl Controller {
             "customer-archive"
         } else if p.ctrl_shift_char('e') {
             "customer-erase"
+        } else if p.ctrl_char('h') {
+            return Step::handled(self.open_history());
         } else if p.plain(PressKey::Escape) {
             "customer-back"
         } else {

@@ -3,7 +3,7 @@
 //! phase C5 and its prices of spec 2.3 R5, files `5a`–`5d`, and the sell screen of spec 2.6 S4,
 //! files `5e`–`5h` and `6`) and every back-office screen (phase C4,
 //! files `bo-*`; the customer screens of spec 2.5 M4 are `bo-10`–`bo-19`, the pricing screens of
-//! spec 2.3 R4 `bo-20`–`bo-24`) to PNG
+//! spec 2.3 R4 `bo-20`–`bo-24`, the sales screens of spec 2.6 S6 `bo-25`–`bo-31`) to PNG
 //! with Slint's software renderer (no display needed), driven by keys against the fake service,
 //! like the headless tests. The register shots use a fixed time (`NOW`, 2027-01-15 15:00 WIB);
 //! the header clock shows it in the local time zone, so run it with `TZ=Asia/Jakarta`.
@@ -806,6 +806,45 @@ fn backoffice(
     edit("price-tier", 0, "value", "5.500");
     edit("price-tier", 1, "value", "5.000");
     shot("bo-24-form-prices-schedule")?;
+
+    // Sales (spec 2.6, S6): a short history posted at the fake register.
+    let sales = runtime.block_on(fake.seed_sales_demo(6));
+    key(w, &[Key::Escape.into()]);
+    key(w, &[Key::F8.into()]);
+    if !ui.get_confirm().is_empty() {
+        ui.invoke_action("confirm-yes".into());
+        key(w, &[Key::F8.into()]);
+    }
+    ui.invoke_action("sales-refresh".into());
+    shot("bo-25-sales")?;
+    let row = ui
+        .get_sale_rows()
+        .iter()
+        .position(|r| r.number == sales.sales[2].summary.number)
+        .unwrap_or_default();
+    ui.invoke_pick("sale-row".into(), i32::try_from(row)?, 0);
+    key(w, &[Key::Return.into()]);
+    shot("bo-26-sale-detail")?;
+    key(w, &[Key::Escape.into()]);
+    ctrl("2");
+    shot("bo-27-returns")?;
+    key(w, &[Key::Return.into()]);
+    shot("bo-28-return-detail")?;
+    ctrl("3");
+    key(w, &[Key::DownArrow.into()]);
+    shot("bo-29-tender-types")?;
+    ctrl("4");
+    shot("bo-30-sales-settings")?;
+    key(w, &[Key::F6.into()]);
+    key(w, &[Key::F5.into()]);
+    let row = ui
+        .get_customer_rows()
+        .iter()
+        .position(|r| r.name == "Ibu Emas")
+        .unwrap_or_default();
+    ui.invoke_pick("customer-open".into(), i32::try_from(row)?, 0);
+    ctrl("h");
+    shot("bo-31-customer-history")?;
     Ok(())
 }
 

@@ -126,6 +126,8 @@ pub enum Call {
     },
     /// `GET /customers/{id}/recent-receipts`.
     Recent(String),
+    /// `GET /returns/{id}/receipt` in the window language (the return-done panel, S6).
+    ReturnReceipt(String),
     /// `GET /customers/{id}/history`.
     History {
         /// The customer.
@@ -172,6 +174,8 @@ pub enum Reply {
     Exchanged(Result<SaleReturn, ClientError>),
     /// [`Call::Recent`].
     Recent(Result<Vec<SaleSummary>, ClientError>),
+    /// [`Call::ReturnReceipt`].
+    ReturnReceipt(Result<Receipt, ClientError>),
     /// [`Call::History`].
     History(Result<HistoryPage, ClientError>),
     /// [`Call::Lookup`].
@@ -189,7 +193,7 @@ impl Reply {
             Self::HeldCarts(r) => r.as_ref().err(),
             Self::Sales(r) => r.as_ref().err(),
             Self::Sale(r) | Self::Voided(r) => r.as_ref().err(),
-            Self::Receipt(r) => r.as_ref().err(),
+            Self::Receipt(r) | Self::ReturnReceipt(r) => r.as_ref().err(),
             Self::Returned(r) | Self::Exchanged(r) => r.as_ref().err(),
             Self::Recent(r) => r.as_ref().err(),
             Self::History(r) => r.as_ref().err(),
@@ -254,6 +258,8 @@ pub struct Doc {
     pub total: i64,
     /// The sale has a customer.
     pub customer: bool,
+    /// The customer's name (S6: the lists carry it).
+    pub customer_name: String,
     /// Voided.
     pub voided: bool,
     /// Branch.
@@ -387,6 +393,8 @@ pub struct Return {
     pub quote_seq: u64,
     /// The attached customer when the return started.
     pub customer: Option<String>,
+    /// The server's return receipt once posted (`GET /returns/{id}/receipt`).
+    pub slip: Vec<String>,
 }
 
 impl Return {
@@ -506,12 +514,13 @@ impl Return {
         false
     }
 
-    /// Sets the typed quantity of line `i` (by receipt): whole numbers, or 3 decimals for a
-    /// decimal unit (`core::sale::check_qty`), capped at what is left; `0` takes the line out.
+    /// Sets the typed quantity of line `i`: whole numbers, or 3 decimals for a decimal unit
+    /// (`core::sale::check_qty`), capped at what is left; `0` takes the line out. By receipt the
+    /// refund is `line_refund`; without a receipt the answer is `true`: quote the lines again.
     ///
     /// # Errors
     /// `invalid_qty` for a quantity that cannot be read or does not fit the unit.
-    fn set_qty(&mut self, i: usize, text: &str) -> Result<(), SaleError> {
+    fn set_qty(&mut self, i: usize, text: &str) -> Result<bool, SaleError> {
         let invalid = SaleError::InvalidQty { reason: "typed" };
         let qty = Qty::parse(&text.replace(',', ".")).map_err(|_| invalid.clone())?;
         let Some(l) = self.lines.get_mut(i) else {
@@ -526,8 +535,11 @@ impl Return {
             check_qty(qty, kind)?;
         }
         l.qty = qty.thousandths().min(l.left);
+        if self.no_receipt {
+            return Ok(true);
+        }
         self.refresh(i);
-        Ok(())
+        Ok(false)
     }
 
     /// Typing the quantity: digits, one decimal comma (a decimal unit), Backspace. `None` when
@@ -628,6 +640,7 @@ fn doc_of(s: &SaleSummary) -> Doc {
         at: s.posted_at,
         total: s.paid,
         customer: s.customer_id.is_some(),
+        customer_name: s.customer_name.clone().unwrap_or_default(),
         voided: s.status == "voided",
         branch: s.branch_id.clone(),
     }
@@ -769,9 +782,7 @@ impl Controller {
                         }
                     }
                     if !r.lines.is_empty() && r.text.is_empty() {
-                        if !r.no_receipt {
-                            keys.push(s(Key::Char('q'), Action::EditQty, "edit_qty"));
-                        }
+                        keys.push(s(Key::Char('q'), Action::EditQty, "edit_qty"));
                         keys.push(s(Key::Char('+'), Action::More, "more"));
                         keys.push(s(Key::Char('-'), Action::Less, "less"));
                         if !r.no_receipt {
@@ -874,7 +885,11 @@ impl Controller {
                         r.typed_qty = Some(char::from(b'0' + d).to_string());
                         true
                     }
-                    (ReturnStep::Lines, Key::Char('+' | '-' | '*')) if r.text.is_empty() => false,
+                    (ReturnStep::Lines, Key::Char('+' | '-' | '*' | 'q' | 'Q'))
+                        if r.text.is_empty() =>
+                    {
+                        false
+                    }
                     (ReturnStep::Lines, _) if r.no_receipt => text(&mut r.text, 40),
                     _ => false,
                 }
@@ -1058,8 +1073,8 @@ impl Controller {
             Action::EditQty => {
                 if let Some(Modal::Return(r)) = self.modal_mut()
                     && r.step == ReturnStep::Lines
-                    && !r.no_receipt
                     && !r.lines.is_empty()
+                    && r.text.is_empty()
                 {
                     r.typed_qty = Some(String::new());
                 }
@@ -1264,17 +1279,24 @@ impl Controller {
             let typed = typed.clone();
             let result = match self.modal_mut() {
                 Some(Modal::Return(r)) => r.set_qty(i, &typed),
-                _ => Ok(()),
+                _ => Ok(false),
             };
-            match result {
-                Ok(()) => {
-                    if let Some(Modal::Return(r)) = self.modal_mut() {
-                        r.typed_qty = None;
-                    }
+            return match result {
+                Ok(requote) => {
+                    let quote = match self.modal_mut() {
+                        Some(Modal::Return(r)) => {
+                            r.typed_qty = None;
+                            requote.then(|| r.quote())
+                        }
+                        _ => None,
+                    };
+                    self.return_quote(quote)
                 }
-                Err(e) => self.set_notice(crate::till::sale_notice(&e)),
-            }
-            return Vec::new();
+                Err(e) => {
+                    self.set_notice(crate::till::sale_notice(&e));
+                    Vec::new()
+                }
+            };
         }
         match r.step {
             ReturnStep::Done => {
@@ -1504,6 +1526,7 @@ impl Controller {
                         at: i.posted_at,
                         total: i.total,
                         customer: true,
+                        customer_name: i.customer_name.clone(),
                         voided: i.voided,
                         branch: i.branch_id.clone(),
                     });
@@ -1580,9 +1603,20 @@ impl Controller {
                 if let Some(h) = self.home_mut() {
                     h.sell.waiting = None;
                 }
+                let id = posted.summary.id.clone();
                 if let Some(Modal::Return(r)) = self.modal_mut() {
                     r.step = ReturnStep::Done;
                     r.result = Some(Box::new(posted));
+                }
+                self.quiet(Call::ReturnReceipt(id))
+            }
+            Reply::ReturnReceipt(Ok(receipt)) => {
+                if let Some(Modal::Return(r)) = self.modal_mut()
+                    && r.result
+                        .as_ref()
+                        .is_some_and(|p| p.summary.id == receipt.return_id)
+                {
+                    r.slip = receipt.lines;
                 }
                 Vec::new()
             }
@@ -1599,6 +1633,12 @@ impl Controller {
                                 name: item.name.clone(),
                                 unit: item.unit_name.clone(),
                                 left: NO_RECEIPT_LEFT,
+                                // A weighed item or a decimal unit takes 3 decimals (S6).
+                                decimal: item.product_type == "weighed"
+                                    || item
+                                        .units
+                                        .iter()
+                                        .any(|u| u.id == item.unit_id && u.kind == "decimal"),
                                 ..ReturnLine::default()
                             });
                             r.lines.len() - 1

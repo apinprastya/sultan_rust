@@ -40,7 +40,7 @@ use crate::pricing::{
 };
 use crate::sales::{
     CartVoid, CartVoidRequest, DocQuery, HeldCart, HistoryPage, HoldRequest, Receipt, ReturnPage,
-    ReturnRequest, Sale, SalePage, SaleRequest, SaleReturn, SaleSummary, TenderType,
+    ReturnRequest, Sale, SalePage, SaleRequest, SaleReturn, SaleSummary, SalesSettings, TenderType,
     TenderTypeBody, VoidRequest,
 };
 use crate::{
@@ -486,6 +486,23 @@ impl Service for HttpService {
     ) -> crate::BoxFuture<Receipt> {
         let mut request = self
             .request(Method::GET, &format!("/sales/{id}/receipt"), Some(token))
+            .query(&[("lang", lang)]);
+        if copy {
+            request = request.query(&[("copy", "true")]);
+        }
+        Box::pin(send(with_override(request, override_token)))
+    }
+
+    fn return_receipt(
+        &self,
+        token: &str,
+        id: &str,
+        copy: bool,
+        lang: &str,
+        override_token: Option<&str>,
+    ) -> crate::BoxFuture<Receipt> {
+        let mut request = self
+            .request(Method::GET, &format!("/returns/{id}/receipt"), Some(token))
             .query(&[("lang", lang)]);
         if copy {
             request = request.query(&[("copy", "true")]);
@@ -1125,6 +1142,25 @@ impl BackOffice for HttpService {
             &format!("/returns/{id}"),
             Some(token),
         )))
+    }
+
+    fn sales_settings(&self, token: &str) -> crate::BoxFuture<SalesSettings> {
+        Box::pin(send(self.request(
+            Method::GET,
+            "/settings/sales",
+            Some(token),
+        )))
+    }
+
+    fn put_sales_settings(
+        &self,
+        token: &str,
+        body: &SalesSettings,
+    ) -> crate::BoxFuture<SalesSettings> {
+        let request = self
+            .request(Method::PUT, "/settings/sales", Some(token))
+            .json(body);
+        Box::pin(send(request))
     }
 }
 

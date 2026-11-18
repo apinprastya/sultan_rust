@@ -300,6 +300,10 @@ fn after_call(
             reply!(service.sale_by_number(token, &number), AfterReply::Sale)
         }
         AfterCall::Sale(id) => reply!(service.sale(token, &id), AfterReply::Sale),
+        AfterCall::ReturnReceipt(id) => reply!(
+            service.return_receipt(token, &id, false, lang, None),
+            AfterReply::ReturnReceipt
+        ),
         AfterCall::Receipt {
             id,
             copy,
@@ -1241,8 +1245,14 @@ fn after_view(
                     if doc.voided {
                         detail.push_str(" · VOID");
                     }
-                    if d.history.is_some() {
+                    if let Some((_, name)) = &d.history {
                         detail = format!("{detail} · {}", branch_code(&doc.branch));
+                        // A merged customer's documents name who they were posted for.
+                        if !doc.customer_name.is_empty() && doc.customer_name != *name {
+                            detail = format!("{detail} · {}", doc.customer_name);
+                        }
+                    } else if !doc.customer_name.is_empty() {
+                        detail = format!("{detail} · {}", doc.customer_name);
                     } else if doc.customer {
                         detail.push_str(" · ♦");
                     }
@@ -1316,7 +1326,12 @@ fn after_view(
                 view.modal_value = typed.as_str().into();
                 view.modal_placeholder = "return_qty".into();
                 if let Some(l) = r.lines.get(r.cursor) {
-                    view.modal_name = format!("{} · ≤ {}", l.name, qty_text(l.left)).into();
+                    // Without a receipt nothing caps the quantity.
+                    view.modal_name = if r.no_receipt {
+                        l.name.as_str().into()
+                    } else {
+                        format!("{} · ≤ {}", l.name, qty_text(l.left)).into()
+                    };
                 }
                 return ("list", "return_qty");
             }
@@ -1402,6 +1417,10 @@ fn after_view(
                     if balance > 0 {
                         view.modal_refund = "balance".into();
                         view.modal_hint = rupiah(balance).into();
+                    }
+                    if !r.slip.is_empty() {
+                        view.modal_receipt = true;
+                        *receipt = r.slip.iter().map(|l| l.as_str().into()).collect();
                     }
                     *list = r
                         .lines

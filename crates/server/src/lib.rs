@@ -64,8 +64,8 @@ use tracing::Level;
 use routes::{
     audit, auth, branches, cashier_sessions, catalog, customer_balance, customer_groups, customers,
     drawer, held_carts, locations, overrides as override_routes, permissions, pricing,
-    pricing_quote, product_images, products, registers, returns, roles, sales, taxonomy,
-    tender_types, users,
+    pricing_quote, product_images, products, registers, returns, roles, sales, sales_settings,
+    taxonomy, tender_types, users,
 };
 
 pub use error::ApiError;
@@ -314,6 +314,11 @@ fn sales_routes() -> Router<AppState> {
         .route("/sales/{id}/receipt", get(sales::get_receipt))
         .route("/returns", get(returns::list))
         .route("/returns/{id}", get(returns::get).put(returns::put))
+        .route("/returns/{id}/receipt", get(returns::get_receipt))
+        .route(
+            "/settings/sales",
+            get(sales_settings::get).put(sales_settings::put),
+        )
         .route("/held-carts", get(held_carts::list))
         .route(
             "/held-carts/{id}",
