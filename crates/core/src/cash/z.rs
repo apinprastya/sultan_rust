@@ -93,8 +93,13 @@ pub struct SessionSales {
 
 /// The tax summary of document lines (§6, spec 2.3 §7): per rate (0 included, lowest first), the
 /// base (DPP) and the tax of `(amount, rate_bp)` lines by [`line_tax`].
-#[must_use]
-pub fn tax_summary(lines: &[(Money, u16)], settings: TaxSettings) -> Vec<TaxLine> {
+///
+/// # Errors
+/// [`CashError::AmountOverflow`] when a rate's base or tax does not fit.
+pub fn tax_summary(
+    lines: &[(Money, u16)],
+    settings: TaxSettings,
+) -> Result<Vec<TaxLine>, CashError> {
     let mut by_rate: BTreeMap<u16, TaxLine> = BTreeMap::new();
     for &(amount, rate_bp) in lines {
         let t = line_tax(amount, rate_bp, settings);
@@ -103,10 +108,10 @@ pub fn tax_summary(lines: &[(Money, u16)], settings: TaxSettings) -> Vec<TaxLine
             base: Money::ZERO,
             tax: Money::ZERO,
         });
-        e.base = e.base.saturating_add(t.net);
-        e.tax = e.tax.saturating_add(t.tax);
+        e.base = add(e.base, t.net)?;
+        e.tax = add(e.tax, t.tax)?;
     }
-    by_rate.into_values().collect()
+    Ok(by_rate.into_values().collect())
 }
 
 /// Adds (or with `subtract`, removes) `lines` into the per-rate `into`, kept lowest rate first.
@@ -155,6 +160,9 @@ pub struct ZSession<'a> {
     pub forced: bool,
     /// Its stored close figures.
     pub close: &'a CloseFigures,
+    /// Its cash outs missing a nota **as of the Z run** (§6): a photo may be added after the
+    /// close (§2a), so this replaces the close-time count in `close`.
+    pub missing_nota: u32,
     /// Its sales documents.
     pub sales: &'a SessionSales,
 }
@@ -244,7 +252,9 @@ impl ZTotals {
     fn add_session(&mut self, s: &ZSession<'_>) -> Result<(), CashError> {
         let c = s.close;
         let f = &c.session.sales;
-        self.figures.merge(&c.session)?;
+        let mut session = c.session.clone();
+        session.missing_nota = s.missing_nota;
+        self.figures.merge(&session)?;
         self.sessions = self.sessions.saturating_add(1);
         self.sales_count = self.sales_count.saturating_add(s.sales.count);
         self.gross_sales = add(self.gross_sales, s.sales.gross)?;
@@ -435,8 +445,14 @@ pub(crate) mod tests {
                 (m(2_000), 0),
             ],
             tax,
+        )
+        .unwrap();
+        let ret = tax_summary(&[(m(11_100), 1_100)], tax).unwrap();
+        // Two lines of one rate whose sum does not fit are an overflow, not a clamped figure.
+        assert_eq!(
+            tax_summary(&[(m(i64::MAX), 0), (m(1), 0)], tax),
+            Err(CashError::AmountOverflow)
         );
-        let ret = tax_summary(&[(m(11_100), 1_100)], tax);
         let tl = |rate_bp, base, tax| TaxLine {
             rate_bp,
             base: m(base),
@@ -543,6 +559,7 @@ pub(crate) mod tests {
                 closed_at: at(12),
                 forced: false,
                 close: &s.closes[1],
+                missing_nota: 0,
                 sales: &s.sales[1],
             },
             ZSession {
@@ -553,6 +570,7 @@ pub(crate) mod tests {
                 closed_at: at(7),
                 forced: false,
                 close: &s.closes[0],
+                missing_nota: 2,
                 sales: &s.sales[0],
             },
             ZSession {
@@ -563,6 +581,7 @@ pub(crate) mod tests {
                 closed_at: at(14),
                 forced: true,
                 close: &s.closes[2],
+                missing_nota: 1,
                 sales: &s.sales[2],
             },
         ]
@@ -641,10 +660,28 @@ pub(crate) mod tests {
             .collect();
         assert_eq!(rates, [(0, 100_000, 0), (1_100, 399_550, 43_950)]);
         assert_eq!((b.figures.drawer_opens, b.figures.x_reports), (3, 3));
+        // Missing notas are the counts as of the Z run, not the stored close-time ones.
+        assert_eq!(
+            (
+                r1.figures.missing_nota,
+                r2.figures.missing_nota,
+                b.figures.missing_nota
+            ),
+            (2, 1, 3)
+        );
 
         // A second Z of the day is supplementary; none without sessions.
         let z2 = build_z("JKT01-Z-261119-02", day, 2, run_at, &sessions(&s)[..1]).unwrap();
         assert!(z2.supplementary);
+        // A photo added between the close and the Z run clears the flag: the close said 4.
+        let mut stale = s.closes[0].clone();
+        stale.session.missing_nota = 4;
+        let mut list = sessions(&s);
+        list[1].close = &stale;
+        list[1].missing_nota = 0;
+        let z3 = build_z("JKT01-Z-261119-03", day, 3, run_at, &list).unwrap();
+        assert_eq!(z3.registers["R1"].figures.missing_nota, 0);
+        assert_eq!(z3.branch.figures.missing_nota, 1);
         assert_eq!(
             build_z("X", day, 1, run_at, &[]),
             Err(CashError::NothingToClose)
