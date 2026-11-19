@@ -240,8 +240,22 @@ audit log viewer · light/dark theme · i18n ID/EN.
   minimal stock ledger now · **post-void any time**, money out of the current session · refunds
   only in cash or customer balance · exchange in one flow · tax-invoice switch · old Qt keys ·
   every removed line is a void · return window 30 days · held carts never expire.
+- **2026-11-19 2.7 Cash management** (spec: `docs/spec/2.7-cash-management.md` §0, K1–K27): cash
+  reasons are HQ data with a direction · **safe drop** is its own kind with its own `cash.drop` ·
+  `cash.out` limit per movement, Cashier ≤ Rp 50 000 · no check against the drawer (blind close) ·
+  numbered slips (`JKT01-R2-K-261119-01`) with signature lines, payout slip too · corrections by a
+  linked reversal in the same session · **nota photos** (up to 3, at the till by file or webcam
+  and in the back office, optional with a "missing nota" flag above Rp 100 000, files on the
+  branch node pushed to HQ in the background) · X report live, audited, needs
+  `session.view_expected` · **Z per branch and business day** (the session's open date), refused
+  while a session of the day is open, supplementary Z for late sessions, not forced but days to
+  close are listed, run from the back office or the till's close report (`day.close`) · **kept
+  float** between sessions, cash to deposit = drops + to safe · bank deposits and EDC settlement
+  with 2.9 · drawer opens counted from the audit · Shift+F5 / Shift+F12 / Z on the register, F9
+  Cash in the back office · `tender.manage` manages reasons · no old-Sultan cash import · text
+  layouts in `core` now · the close report keeps its two blocks.
 
-## Status (updated 2026-11-18)
+## Status (updated 2026-11-19)
 
 Where we are, so any session can pick up from here. Update this section at the end of every phase.
 
@@ -329,6 +343,17 @@ Where we are, so any session can pick up from here. Update this section at the e
   read them. Register: names in F6 / history lists, the return-done panel shows the server's
   return receipt, Q types the quantity of a no-receipt return line. Client, fake, API tests,
   Postman (157 requests). Readings in spec §19 (from S6).
+- **2.7 Cash management** K1 `core::cash` (2026-11-19, `crates/core/src/cash/`): movement kinds
+  in / out / drop with the reason, note (≤ 200, required by the reason) and amount rules, linked
+  reversals (same open session, once, not of a reversal, note required), the seeded reasons, the
+  permission check per kind (`cash.in`, `cash.out` MaxAmount per movement, new `cash.drop`; new
+  `day.close` too, both overridable), the missing-nota rule and the 3-photo limit; expected cash
+  with drops in both close-report blocks (`SessionEvent::Drop`, `close_movements`; the server's
+  2.1 seam now uses it), cash figures per kind and reason with reversals netted, drawer opens, X
+  reads, missing notas; float kept / to safe / proposed opening / float difference; X (no count by
+  type) and close figures; the Z (business day = open day, run check, per-register and branch
+  totals, cash to deposit, tax summary per rate); slip / payout slip / X / close / Z texts with
+  ID/EN `CashLabel`s; `cash_movement_number` and `z_number`. Readings in spec §16 (from K1).
 - **UI only, except HQ** (§3, 2026-11-09):
   - Start screen on single-app and terminal machines: F1 Kasir, F2 Back office, F3 Settings.
   - Settings: language (F6), set up again (F8), and on a single app "Allow terminals to connect"
@@ -368,8 +393,9 @@ Where we are, so any session can pick up from here. Update this section at the e
 - Each sub-agent worktree builds its own `target/` (20–40 GB with coverage); clear finished ones.
 
 **Next**
-- The remaining P1 specs to discuss (2.4 is P2): **2.7 cash in/out + X/Z**, 2.8 inventory,
-  2.9 money, 2.10 reports, 2.11 hardware (ESC/POS + drawer), old-Sultan importer.
+- **2.7 Cash management**: spec agreed (2026-11-19); K1 done, next K2 `db` then K3–K6 (spec §13).
+- Then the remaining P1 specs to discuss (2.4 is P2): 2.8 inventory, 2.9 money, 2.10 reports,
+  2.11 hardware (ESC/POS + drawer), old-Sultan importer.
 
 **Way of working**
 - Each phase is discussed, written as a spec in `docs/spec/`, then built in phases; the user usually

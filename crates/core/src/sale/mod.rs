@@ -53,6 +53,7 @@ pub use receipt::{
     ReturnReceiptTender, TaxInvoiceBlock, TaxLine, build_receipt, build_return_receipt, format_qty,
     format_rupiah, mask_reference,
 };
+pub(crate) use receipt::{Page, format_pct};
 pub use refund::{
     RefundInput, RefundMethod, RefundPlan, VoidInput, VoidPlan, plan_post_void, plan_refund,
 };

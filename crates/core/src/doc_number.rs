@@ -11,6 +11,10 @@
 //! - Sale numbers are `<BRANCH>-<REGISTER>-<YYMMDD>-<NNNN>` ([`sale_number`]) and return numbers
 //!   `<BRANCH>-<REGISTER>-RT-<YYMMDD>-<NNNN>` ([`return_number`]), per register and local day,
 //!   at least four digits (spec 2.6 §1).
+//! - Cash movement numbers are `<BRANCH>-<REGISTER>-K-<YYMMDD>-<NN>` ([`cash_movement_number`]),
+//!   one sequence for cash in, cash out and safe drops per register and local day, and Z report
+//!   numbers `<BRANCH>-Z-<YYMMDD>-<NN>` ([`z_number`]) per branch and business day, both with at
+//!   least two digits (spec 2.7 §1, K9, K17).
 //!
 //! Pure: the time zone and the instant are passed in. The tz database is compiled in
 //! (`chrono-tz`), so the result does not depend on the machine's zone files.
@@ -168,6 +172,25 @@ pub fn return_number(branch_code: &str, register_code: &str, day: LocalDay, seq:
     format!("{branch_code}-{register_code}-RT-{}-{seq:04}", day.yymmdd())
 }
 
+/// The number of the `seq`-th cash movement (in, out or drop) of `day` on a register (spec 2.7
+/// §1, K9): `JKT01-R2-K-261119-01`. `seq` starts at 1 and is printed with at least two digits.
+#[must_use]
+pub fn cash_movement_number(
+    branch_code: &str,
+    register_code: &str,
+    day: LocalDay,
+    seq: u32,
+) -> String {
+    format!("{branch_code}-{register_code}-K-{}-{seq:02}", day.yymmdd())
+}
+
+/// The number of the `seq`-th Z report of the business `day` of a branch (spec 2.7 §1, K17):
+/// `JKT01-Z-261119-01`; a supplementary Z of the same day is `-02` (K16).
+#[must_use]
+pub fn z_number(branch_code: &str, day: LocalDay, seq: u32) -> String {
+    format!("{branch_code}-Z-{}-{seq:02}", day.yymmdd())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -287,6 +310,37 @@ mod tests {
         for (at, seq, sale, ret) in cases {
             assert_eq!(sale_number("JKT01", "R2", day(at), seq), sale);
             assert_eq!(return_number("JKT01", "R2", day(at), seq), ret);
+        }
+    }
+
+    /// Spec 2.7 §12 case 14: cash movement and Z numbers across midnight in `Asia/Jakarta`
+    /// (UTC+7) and `Asia/Jayapura` (UTC+9).
+    #[test]
+    fn cash_movement_and_z_numbers_across_midnight() {
+        // 2026-11-19T00:00:00Z.
+        const NOV19_UTC: i64 = NOV7_UTC + 12 * 24 * HOUR;
+        #[rustfmt::skip]
+        let cases = [
+            // 16:59:59.999Z = 23:59:59.999 WIB on the 19th.
+            (NOV19_UTC + 17 * HOUR - 1, "Asia/Jakarta", 1, "JKT01-R2-K-261119-01", "JKT01-Z-261119-01"),
+            // 17:00Z = 00:00 WIB on the 20th.
+            (NOV19_UTC + 17 * HOUR, "Asia/Jakarta", 1, "JKT01-R2-K-261120-01", "JKT01-Z-261120-01"),
+            // 14:59:59.999Z = 23:59:59.999 WIT on the 19th; 15:00Z is already the 20th in WIT.
+            (NOV19_UTC + 15 * HOUR - 1, "Asia/Jayapura", 7, "JKT01-R2-K-261119-07", "JKT01-Z-261119-07"),
+            (NOV19_UTC + 15 * HOUR, "Asia/Jayapura", 2, "JKT01-R2-K-261120-02", "JKT01-Z-261120-02"),
+            // The same instant is still the 19th in Jakarta.
+            (NOV19_UTC + 15 * HOUR, "Asia/Jakarta", 2, "JKT01-R2-K-261119-02", "JKT01-Z-261119-02"),
+            // Grows past 99 instead of failing.
+            (NOV19_UTC, "Asia/Jakarta", 100, "JKT01-R2-K-261119-100", "JKT01-Z-261119-100"),
+        ];
+        for (at, zone, seq, movement, z) in cases {
+            let day = LocalDay::of(Timestamp::from_unix_millis(at), tz(zone));
+            assert_eq!(
+                cash_movement_number("JKT01", "R2", day, seq),
+                movement,
+                "{zone} {at}"
+            );
+            assert_eq!(z_number("JKT01", day, seq), z, "{zone} {at}");
         }
     }
 

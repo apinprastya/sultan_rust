@@ -379,7 +379,7 @@ pub fn format_qty(qty: Qty) -> String {
 }
 
 /// A rate in basis points: `1100` → `11%`, `1150` → `11,5%`.
-fn format_pct(bp: u16) -> String {
+pub(crate) fn format_pct(bp: u16) -> String {
     let whole = bp / 100;
     let frac = format!("{:02}", bp % 100);
     let frac = frac.trim_end_matches('0');
@@ -403,20 +403,20 @@ pub fn mask_reference(reference: &str) -> String {
         .collect()
 }
 
-/// Line building with a fixed width.
-struct Page {
-    width: usize,
-    lines: Vec<String>,
+/// Line building with a fixed width (also used by the cash texts, spec 2.7).
+pub(crate) struct Page {
+    pub(crate) width: usize,
+    pub(crate) lines: Vec<String>,
 }
 
 impl Page {
-    fn rule(&mut self) {
+    pub(crate) fn rule(&mut self) {
         self.lines.push("-".repeat(self.width));
     }
 
     /// Word-wraps `text`; words longer than the width are cut. Leading spaces are an indent
     /// kept on every line (up to half the width).
-    fn wrap(&self, text: &str) -> Vec<String> {
+    pub(crate) fn wrap(&self, text: &str) -> Vec<String> {
         let body = text.trim_start_matches(' ');
         let indent = (text.len() - body.len()).min(self.width / 2);
         let width = self.width - indent;
@@ -447,12 +447,12 @@ impl Page {
         out.into_iter().map(|l| format!("{pad}{l}")).collect()
     }
 
-    fn left(&mut self, text: &str) {
+    pub(crate) fn left(&mut self, text: &str) {
         let lines = self.wrap(text);
         self.lines.extend(lines);
     }
 
-    fn center(&mut self, text: &str) {
+    pub(crate) fn center(&mut self, text: &str) {
         for line in self.wrap(text) {
             let pad = (self.width - line.chars().count()) / 2;
             self.lines.push(format!("{}{line}", " ".repeat(pad)));
@@ -461,7 +461,7 @@ impl Page {
 
     /// `left` and `right` on one line, `right` right-aligned; when they do not fit together,
     /// `left` gets its own line(s) first.
-    fn pair(&mut self, left: &str, right: &str) {
+    pub(crate) fn pair(&mut self, left: &str, right: &str) {
         let r = right.chars().count().min(self.width);
         let mut lines = self.wrap(left);
         let last = lines.pop().unwrap_or_default();
@@ -480,7 +480,7 @@ impl Page {
         }
     }
 
-    fn money(&mut self, left: &str, amount: Money) {
+    pub(crate) fn money(&mut self, left: &str, amount: Money) {
         self.pair(left, &format_rupiah(amount.minor()));
     }
 }
