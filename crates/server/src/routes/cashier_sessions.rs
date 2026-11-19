@@ -324,13 +324,15 @@ async fn till_voids(
     Ok(())
 }
 
-/// The sales figures of `record` (spec 2.6 §10): its documents, till voids and payouts.
+/// The sales figures of `record` (spec 2.6 §10): its documents, cash movements (spec 2.7, netted
+/// per kind), till voids and payouts.
 ///
 /// # Errors
 /// The database error, or `422 amount_overflow`.
 pub async fn sales_report(tx: &mut Tx, record: &SessionRecord) -> Result<SalesReportDto, ApiError> {
     let id = record.session.id();
     let mut events = sultan_db::sales::session_events(&mut *tx, id).await?;
+    events.extend(sultan_db::cash::session_cash_events(&mut *tx, id).await?);
     till_voids(tx, id, &mut events).await?;
     let payouts = sultan_db::customers::session_payouts(&mut *tx, id).await?;
     if payouts > Money::ZERO {

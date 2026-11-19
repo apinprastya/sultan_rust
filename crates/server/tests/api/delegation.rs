@@ -30,6 +30,7 @@ fn hr_role() -> Value {
             { "permission": "sale.void_line" },
             { "permission": "refund.with_receipt" },
             { "permission": "cash.in" },
+            { "permission": "cash.out", "limit": 100_000 },
             { "permission": "session.open_close" },
             { "permission": "customer.create" },
         ],

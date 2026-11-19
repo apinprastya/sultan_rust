@@ -175,8 +175,9 @@ fn nonzero(m: Money) -> Option<Money> {
 /// - every post-void paid in it: `PostVoid` with the sale's total, a `Refund` per tender, its cash
 ///   rounding.
 ///
-/// Line voids, cart voids, cash in/out and balance payouts come from elsewhere (the audit log,
-/// the cash movements, [`crate::customers::session_payouts`]) and are added by the caller.
+/// Line voids, cart voids, cash in/out/drops and balance payouts come from elsewhere (the audit
+/// log, [`crate::cash::session_cash_events`], [`crate::customers::session_payouts`]) and are
+/// added by the caller.
 ///
 /// # Errors
 /// The database error.

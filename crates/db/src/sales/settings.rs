@@ -1,10 +1,13 @@
 //! The sales settings (spec 2.6 §8, §9; phase S6, deferred from S3): the company's return
 //! window `return_days` (default 30, `0` = no limit) and the receipt width of each branch (32,
-//! 42 or 48 columns, default 32). Both are HQ data: [`put_sales_settings`] writes them with one
+//! 42 or 48 columns, default 32), and since spec 2.7 §2a the company's `nota_flag_above` (Rp,
+//! default 100 000, `0` = off: a cash out of at least this much without a nota photo is flagged
+//! "missing nota"). All are HQ data: [`put_sales_settings`] writes them with one
 //! audit row and one outbox row (`sales_settings.put`), nothing when nothing changed.
 
 use serde_json::{Value, json};
 use sultan_core::ids::BranchId;
+use sultan_core::money::Money;
 use sultan_core::time::Timestamp;
 
 use super::{Actor, Change, SaleDbError, SaleResult, Written, count, record};
@@ -29,6 +32,9 @@ pub struct SalesSettings {
     /// The stored receipt widths per branch, by branch ID; a branch that is not listed prints
     /// [`DEFAULT_RECEIPT_WIDTH`] columns.
     pub receipt_widths: Vec<(BranchId, u16)>,
+    /// A cash out of at least this much without a nota photo is "missing nota" (spec 2.7 §2a,
+    /// default `core::cash::DEFAULT_NOTA_FLAG_ABOVE`); `0` = off.
+    pub nota_flag_above: Money,
 }
 
 fn settings_json(s: &SalesSettings) -> Value {
@@ -39,6 +45,7 @@ fn settings_json(s: &SalesSettings) -> Value {
             .iter()
             .map(|(b, w)| json!({"branch_id": b.to_string(), "receipt_width": w}))
             .collect::<Vec<_>>(),
+        "nota_flag_above": s.nota_flag_above.minor(),
     })
 }
 
@@ -48,11 +55,16 @@ fn settings_json(s: &SalesSettings) -> Value {
 /// The database error, or [`DbError::Corrupt`] when the company row is missing.
 pub async fn get_sales_settings<'c>(conn: impl Into<Conn<'c>>) -> Result<SalesSettings> {
     let mut conn = conn.into();
-    let return_days = sql::fetch_optional(
+    let (return_days, nota_flag_above) = sql::fetch_optional(
         conn.reborrow(),
-        "SELECT return_days FROM sales_settings WHERE id = 1",
+        "SELECT return_days, nota_flag_above FROM sales_settings WHERE id = 1",
         args![],
-        |row| count(row, "return_days"),
+        |row| {
+            Ok((
+                count(row, "return_days")?,
+                sql::money(row, "nota_flag_above")?,
+            ))
+        },
     )
     .await?
     .ok_or_else(|| DbError::Corrupt("sales_settings row is missing".into()))?;
@@ -73,6 +85,7 @@ pub async fn get_sales_settings<'c>(conn: impl Into<Conn<'c>>) -> Result<SalesSe
     Ok(SalesSettings {
         return_days,
         receipt_widths,
+        nota_flag_above,
     })
 }
 
@@ -108,13 +121,14 @@ pub async fn receipt_width<'c>(conn: impl Into<Conn<'c>>, branch: BranchId) -> R
         .unwrap_or(DEFAULT_RECEIPT_WIDTH))
 }
 
-/// Replaces the return window and sets the receipt width of every listed branch (`PUT
+/// Replaces the return window and the nota threshold and sets the receipt width of every listed branch (`PUT
 /// /settings/sales`); branches that are not listed keep theirs. One audit row and one outbox row
 /// `sales_settings.put` with the whole settings before and after, nothing when nothing changed.
 ///
 /// # Errors
 /// [`SaleDbError::Invalid`] (`return_days` above [`MAX_RETURN_DAYS`], a `receipt_width` that is
-/// not 32, 42 or 48), [`SaleDbError::NotFound`] (`branch`), or the database error.
+/// not 32, 42 or 48, a negative `nota_flag_above`), [`SaleDbError::NotFound`] (`branch`), or the
+/// database error.
 pub async fn put_sales_settings(
     tx: &mut Tx,
     settings: &SalesSettings,
@@ -125,6 +139,12 @@ pub async fn put_sales_settings(
         return Err(SaleDbError::Invalid {
             field: "return_days",
             message: format!("must be 0 to {MAX_RETURN_DAYS}"),
+        });
+    }
+    if settings.nota_flag_above.is_negative() {
+        return Err(SaleDbError::Invalid {
+            field: "nota_flag_above",
+            message: "must not be negative".into(),
         });
     }
     let mut seen = std::collections::HashSet::new();
@@ -155,6 +175,15 @@ pub async fn put_sales_settings(
             Conn::Tx(&mut *tx),
             "UPDATE sales_settings SET return_days = ?, updated_at = ? WHERE id = 1",
             args![i64::from(settings.return_days), now],
+        )
+        .await?;
+        changed = true;
+    }
+    if old.nota_flag_above != settings.nota_flag_above {
+        sql::execute(
+            Conn::Tx(&mut *tx),
+            "UPDATE sales_settings SET nota_flag_above = ?, updated_at = ? WHERE id = 1",
+            args![settings.nota_flag_above, now],
         )
         .await?;
         changed = true;

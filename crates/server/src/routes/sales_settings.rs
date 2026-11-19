@@ -104,9 +104,11 @@ pub async fn put(
         let branch: BranchId = parse_id(&w.branch_id, "branch_id")?;
         receipt_widths.push((branch, w.receipt_width));
     }
+    // The nota threshold (spec 2.7 §2a) is not in the body yet (phase K6): keep the stored one.
     let settings = SalesSettings {
         return_days: body.return_days,
         receipt_widths,
+        nota_flag_above: sultan_db::cash::nota_flag_above(&state.db).await?,
     };
     let now = state.now();
     let (state_ref, actor, settings) = (&state, &actor(&session), &settings);

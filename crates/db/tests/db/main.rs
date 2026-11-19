@@ -4,6 +4,8 @@
 mod common;
 
 mod access;
+mod cash;
+mod cash_z;
 mod cashier;
 mod catalog;
 mod catalog_admin;

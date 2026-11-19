@@ -7,7 +7,7 @@ Persistence for Sultan POS: sqlx migrations and repositories for SQLite and MySQ
   differs), embedded with `sqlx::migrate!` and applied by `Db::migrate()` (`build.rs` rebuilds the
   crate when a migration changes).
 - `src/`: one module per area (`org`, `users`, `roles`, `seed`, `devices`, `auth`, `overrides`,
-  `cashier_sessions`, `catalog`, `customers`, `pricing`, `sales`, `audit`, `outbox`,
+  `cashier_sessions`, `catalog`, `customers`, `pricing`, `sales`, `cash`, `audit`, `outbox`,
   `idempotency`). The queries are
   shared between backends and use the runtime query API, so building never needs a `DATABASE_URL`.
 
@@ -46,6 +46,34 @@ Persistence for Sultan POS: sqlx migrations and repositories for SQLite and MySQ
   cashier's `display_name` and the register's `code` (a derived table, so the callers' `WHERE`
   clauses stay unqualified; no query per row); the purchase history joins the name and code of the
   customer each document was posted for. `DocFilter.status` filters by `posted` / `voided`.
+
+## Cash management (spec 2.7, phase K2)
+
+`src/cash/` and `20261119000001_cash.sql`:
+
+| Table / column | What |
+|---|---|
+| `cash_reason` | HQ master data: name, fixed `direction` (`in`, `out`), `note_required`, `active`, `sort_order`, `archived_at` (never hard-deleted). Seeded with fixed ids …0401–…0406 (`core::cash::SEED_REASONS`, `cash::SEED_REASON_IDS`). |
+| `cash_movement` | A posted cash in / out / safe drop (append-only by trigger): number `<BRANCH>-<REGISTER>-K-<YYMMDD>-<NN>` from `(local_day, seq)` under `UNIQUE (register_id, local_day, seq)`, kind, amount > 0, reason (none for a drop), note, branch / register / session / user / approver, `reverses` (`UNIQUE`: reversed at most once), `request_hash` (idempotent `PUT`). |
+| `cash_movement_photo` | Nota photo records (append-only by trigger): sha256, size, who, when; `photo_no` 1–3 under `UNIQUE (movement_id, photo_no)`, so a movement never has a fourth. The file itself lives on the node's disk (K6). |
+| `z_report` | The Z of a branch's business day (append-only by trigger): number `<BRANCH>-Z-<YYMMDD>-<NN>` under `UNIQUE (branch_id, business_day, seq)`, `supplementary` (= `seq > 1`), headline totals and the server's JSON snapshot `figures`. |
+| `cashier_session` + | `float_kept`, `missing_nota` (written at the close), `opening_proposed` (at the open), `z_report_id` (the Z that covers it). |
+| `sales_settings` + | `nota_flag_above` (Rp, default 100 000, `0` = off). |
+
+- **Posting** (`post_cash_movement`) re-checks the open session, the reason (exists, active, not
+  archived, right direction) and a reversal's target, allocates the number like sales (a lost
+  race is a retryable `DbError::Conflict`), and writes the audit row and the outbox event
+  `cash_movement.posted` in the caller's transaction.
+- **Session inputs** of `core::cash::session_figures`: `session_cash` (movements, photo counts,
+  `drawer.open` / `session.x_report` audit entries on `cashier_session:<id>`, indexed by
+  `audit_log (target, action)`), and `session_cash_events` (the netted `CashIn` / `CashOut` /
+  `Drop` events the server's close report adds to `sales::session_events`).
+- **Z:** `day_sessions` / `z_candidates` / `open_day_sessions` by business day (the session's
+  `local_day`), `next_z_number`, `insert_z_report` (links each session with a guarded `UPDATE`),
+  `pending_days` (K18: days with closed sessions in no Z, or past days with an open session).
+- **Grants:** the migration gives Manager `cash.drop` and `day.close`, and Cashier `cash.out`
+  ≤ Rp 50 000 only when Cashier has no `cash.out` grant yet; `seed_defaults` does the same on a
+  fresh install and keeps rewriting Owner.
 
 ## Tests
 
@@ -119,8 +147,8 @@ kill %1 && rm -rf "$DIR"
   `WHERE kind = 'default'` for the single default list). MySQL uses `STORED` generated columns
   `live_target` and `default_key` under `UNIQUE` keys, like the phone above. The repository reports
   `price_list_conflict` first; the indexes catch races.
-- The migrations create triggers that make `audit_log`, `customer_balance_entry` and
-  `stock_movement` append-only.
+- The migrations create triggers that make `audit_log`, `customer_balance_entry`,
+  `stock_movement`, `cash_movement`, `cash_movement_photo` and `z_report` append-only.
   With binary logging on (the default), a user without `SUPER` needs
   `log_bin_trust_function_creators = 1` to create them.
 - Session numbers (`cashier_sessions::insert`) are allocated as `MAX(seq) + 1` inside the open

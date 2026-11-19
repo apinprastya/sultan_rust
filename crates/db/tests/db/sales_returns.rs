@@ -1133,11 +1133,13 @@ async fn register_two(db: &Db, till: &crate::sales_fixtures::Till) -> sultan_cor
     r.id
 }
 
+#[allow(clippy::too_many_lines)] // one story: defaults, writes, replays and refusals
 async fn sales_settings_round_trip(db: &Db) {
     let till = till(db).await;
     let stored = sales::get_sales_settings(db).await.unwrap();
     assert_eq!(stored.return_days, sales::DEFAULT_RETURN_DAYS);
     assert!(stored.receipt_widths.is_empty());
+    assert_eq!(stored.nota_flag_above, rp(100_000));
     assert_eq!(sales::return_days(db).await.unwrap(), 30);
     assert_eq!(
         sales::receipt_width(db, till.o.jkt.id).await.unwrap(),
@@ -1155,6 +1157,7 @@ async fn sales_settings_round_trip(db: &Db) {
     let wanted = sales::SalesSettings {
         return_days: 0,
         receipt_widths: vec![(till.o.jkt.id, 48)],
+        nota_flag_above: rp(100_000),
     };
     assert_eq!(put(wanted.clone()).await.unwrap(), Written::Updated);
     assert_eq!(trail(db).await, (before.0 + 1, before.1 + 1));
@@ -1167,11 +1170,14 @@ async fn sales_settings_round_trip(db: &Db) {
     let changed = sales::SalesSettings {
         return_days: 14,
         receipt_widths: vec![(till.o.jkt.id, 42), (till.o.bdg.id, 32)],
+        nota_flag_above: rp(0),
     };
     assert_eq!(put(changed).await.unwrap(), Written::Updated);
     let got = sales::get_sales_settings(db).await.unwrap();
     assert_eq!(got.return_days, 14);
     assert_eq!(got.receipt_widths.len(), 2);
+    assert_eq!(got.nota_flag_above, rp(0));
+    assert_eq!(sultan_db::cash::nota_flag_above(db).await.unwrap(), rp(0));
     assert_eq!(sales::receipt_width(db, till.o.jkt.id).await.unwrap(), 42);
     // Refusals.
     for (bad, field) in [
@@ -1179,6 +1185,7 @@ async fn sales_settings_round_trip(db: &Db) {
             sales::SalesSettings {
                 return_days: sales::MAX_RETURN_DAYS + 1,
                 receipt_widths: Vec::new(),
+                nota_flag_above: rp(0),
             },
             "return_days",
         ),
@@ -1186,6 +1193,7 @@ async fn sales_settings_round_trip(db: &Db) {
             sales::SalesSettings {
                 return_days: 30,
                 receipt_widths: vec![(till.o.jkt.id, 40)],
+                nota_flag_above: rp(0),
             },
             "receipt_width",
         ),
@@ -1193,8 +1201,17 @@ async fn sales_settings_round_trip(db: &Db) {
             sales::SalesSettings {
                 return_days: 30,
                 receipt_widths: vec![(till.o.jkt.id, 32), (till.o.jkt.id, 48)],
+                nota_flag_above: rp(0),
             },
             "receipt_width",
+        ),
+        (
+            sales::SalesSettings {
+                return_days: 30,
+                receipt_widths: Vec::new(),
+                nota_flag_above: rp(-1),
+            },
+            "nota_flag_above",
         ),
     ] {
         match put(bad).await {
@@ -1205,6 +1222,7 @@ async fn sales_settings_round_trip(db: &Db) {
     let unknown = sales::SalesSettings {
         return_days: 30,
         receipt_widths: vec![(BranchId::generate(), 32)],
+        nota_flag_above: rp(0),
     };
     assert!(matches!(
         put(unknown).await,
@@ -1213,6 +1231,11 @@ async fn sales_settings_round_trip(db: &Db) {
     // The database refuses what the code would not write.
     assert!(
         raw(db, "UPDATE sales_settings SET return_days = -1")
+            .await
+            .is_err()
+    );
+    assert!(
+        raw(db, "UPDATE sales_settings SET nota_flag_above = -1")
             .await
             .is_err()
     );

@@ -47,7 +47,9 @@ const fn pct(percent: u16) -> Limit {
 /// spec 2.5 §12, by `20261111000002_customers.sql`; pricing grants spec 2.3 §6, §9, by
 /// `20261111000003_pricing.sql`, which adds `price.manage` but keeps existing `price.override`
 /// grants as they are, so an older Manager keeps an unlimited one; sales grants spec 2.6 §11, by
-/// `20261117000001_sales.sql`: `sale.reprint` for Manager, `tender.manage` for Owner only). Only
+/// `20261117000001_sales.sql`: `sale.reprint` for Manager, `tender.manage` for Owner only; cash
+/// grants spec 2.7 §7, by `20261119000001_cash.sql`: `cash.drop` and `day.close` for Manager, and
+/// `cash.out` ≤ Rp 50 000 for Cashier only when the Cashier role has no `cash.out` grant yet). Only
 /// Owner is reset by [`seed_defaults`]; the others are created once and are then editable.
 ///
 /// # Panics
@@ -101,6 +103,8 @@ pub fn default_roles() -> Vec<Role> {
                 (P::CustomerBalancePayout, None),
                 (P::PriceManage, None),
                 (P::SaleReprint, None),
+                (P::CashDrop, None),
+                (P::DayClose, None),
             ],
         ),
         role(
@@ -113,6 +117,7 @@ pub fn default_roles() -> Vec<Role> {
                 (P::SaleVoidLine, None),
                 (P::RefundWithReceipt, None),
                 (P::CashIn, None),
+                (P::CashOut, Some(rp(50_000))),
                 (P::SessionOpenClose, None),
                 (P::CustomerCreate, None),
             ],

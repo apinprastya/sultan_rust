@@ -13,6 +13,8 @@
 //! - Price lists, entries, tax rates and the pricing settings (spec 2.3) live in [`pricing`].
 //! - Tender types, sales, post-voids, returns, held carts, the stock movement ledger and the
 //!   purchase history (spec 2.6) live in [`sales`].
+//! - Cash reasons, cash movements and their nota photos, the float between sessions and the Z
+//!   report (spec 2.7) live in [`cash`].
 //! - Rows map to and from the domain types of `sultan_core`. No access rule lives here: the
 //!   server checks permissions, lockout, override approval and the Owner invariant with `core`.
 //!
@@ -31,6 +33,7 @@ mod sql;
 
 pub mod audit;
 pub mod auth;
+pub mod cash;
 pub mod cashier_sessions;
 pub mod catalog;
 pub mod customers;
