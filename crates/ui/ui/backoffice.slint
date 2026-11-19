@@ -93,7 +93,7 @@ component Header inherits Rectangle {
     HorizontalLayout {
         padding-left: 16px;
         padding-right: 16px;
-        spacing: 10px;
+        spacing: 6px;
         VerticalLayout {
             alignment: center;
             Rectangle {
@@ -117,7 +117,7 @@ component Header inherits Rectangle {
             vertical-alignment: center;
         }
         Rectangle {
-            width: 12px;
+            width: 8px;
         }
         for nav in [
             { id: "nav-products", keys: "F2", label: @tr("Products"), on: root.screen == "products" || root.screen == "form" },
@@ -132,6 +132,7 @@ component Header inherits Rectangle {
                 keys: nav.keys;
                 text: nav.label;
                 primary: nav.on;
+                compact: true;
                 clicked => {
                     root.action(nav.id);
                 }
@@ -159,6 +160,7 @@ component Header inherits Rectangle {
             KeyButton {
                 keys: "F12";
                 text: @tr("Log out");
+                compact: true;
                 clicked => {
                     root.action("logout");
                 }

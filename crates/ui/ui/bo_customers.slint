@@ -534,8 +534,9 @@ export component CustomerFormScreen inherits VerticalLayout {
     padding: 16px;
     spacing: 10px;
 
+    // The tool bar must fit at 1024 px in Indonesian: compact buttons, and the title elides.
     HorizontalLayout {
-        spacing: 10px;
+        spacing: 6px;
         VerticalLayout {
             alignment: center;
             Text {
@@ -543,12 +544,15 @@ export component CustomerFormScreen inherits VerticalLayout {
                 color: Theme.text;
                 font-size: 20px;
                 font-weight: 700;
+                min-width: 0px;
                 overflow: elide;
             }
             Text {
                 text: root.form.is-new ? @tr("The member code is drawn when you save.") : root.form.code + "  ·  " + root.form.signed-up;
                 color: Theme.muted;
                 font-size: 12px;
+                min-width: 0px;
+                overflow: elide;
             }
         }
         if root.form.erased: VerticalLayout {
@@ -576,6 +580,7 @@ export component CustomerFormScreen inherits VerticalLayout {
             horizontal-stretch: 1;
         }
         KeyButton {
+            compact: true;
             keys: "Esc";
             text: @tr("Back");
             clicked => {
@@ -583,6 +588,7 @@ export component CustomerFormScreen inherits VerticalLayout {
             }
         }
         if root.form.can-erase: KeyButton {
+            compact: true;
             keys: "Ctrl+Shift+E";
             text: @tr("Erase personal data");
             clicked => {
@@ -590,6 +596,7 @@ export component CustomerFormScreen inherits VerticalLayout {
             }
         }
         if root.form.can-archive: KeyButton {
+            compact: true;
             keys: "Ctrl+Shift+A";
             text: root.form.archived ? @tr("Unarchive") : @tr("Archive");
             clicked => {
@@ -597,6 +604,7 @@ export component CustomerFormScreen inherits VerticalLayout {
             }
         }
         if root.form.can-history: KeyButton {
+            compact: true;
             keys: "Ctrl+H";
             text: @tr("Purchase history");
             clicked => {
@@ -604,6 +612,7 @@ export component CustomerFormScreen inherits VerticalLayout {
             }
         }
         KeyButton {
+            compact: true;
             keys: "Ctrl+S";
             text: root.form.saving ? @tr("Saving…") : @tr("Save");
             primary: true;
