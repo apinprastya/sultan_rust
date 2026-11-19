@@ -179,7 +179,8 @@ pub struct CloseReport {
     pub cash_refunds: Money,
     /// Petty cash in.
     pub cash_in: Money,
-    /// Petty cash out.
+    /// Cash that left the drawer other than refunds: petty cash out, safe drops and balance
+    /// payouts (spec 2.7 §4, see `core::cash::close_movements`).
     pub cash_out: Money,
     /// `opening_cash + cash_sales − cash_refunds + cash_in − cash_out`.
     pub expected_cash: Money,

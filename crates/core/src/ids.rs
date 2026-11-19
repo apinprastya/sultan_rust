@@ -144,6 +144,22 @@ id_type!(
     /// A held cart on the branch server, spec 2.6 §4.
     HeldCartId
 );
+id_type!(
+    /// A cash in / out reason (HQ master data), spec 2.7 §1.
+    CashReasonId
+);
+id_type!(
+    /// A cash movement (cash in, cash out or safe drop), spec 2.7 §1.
+    CashMovementId
+);
+id_type!(
+    /// A nota photo of a cash movement, spec 2.7 §2a.
+    NotaPhotoId
+);
+id_type!(
+    /// A Z report (end of day per branch), spec 2.7 §6.
+    ZReportId
+);
 
 #[cfg(test)]
 mod tests {

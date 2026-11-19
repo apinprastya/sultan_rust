@@ -23,10 +23,10 @@ use std::fmt;
 use std::future::Future;
 use std::pin::Pin;
 
-use sultan_core::cashier_session::{Movement, Tender};
+use sultan_core::cashier_session::Movement;
 use sultan_core::ids::CashierSessionId;
 use sultan_core::money::Money;
-use sultan_core::sale::{SessionEvent, TenderKind};
+use sultan_core::sale::SessionEvent;
 use sultan_db::{DbError, Tx, customers, sales};
 
 use crate::state::AppState;
@@ -64,49 +64,12 @@ impl SessionMovements for SalesMovements {
     }
 }
 
-/// The 2.1 tender of a tender kind, if it has one.
-const fn tender(kind: TenderKind) -> Option<Tender> {
-    match kind {
-        TenderKind::Cash => Some(Tender::Cash),
-        TenderKind::Card => Some(Tender::Card),
-        TenderKind::Qris => Some(Tender::Qris),
-        TenderKind::Transfer => Some(Tender::Transfer),
-        _ => None,
-    }
-}
-
-/// The session events as close-report movements (see the module docs).
+/// The session events as close-report movements (see the module docs):
+/// [`sultan_core::cash::close_movements`], where cash out, safe drops (spec 2.7 §4) and payouts
+/// all count as cash out.
 #[must_use]
 pub fn to_movements(events: &[SessionEvent]) -> Vec<Movement> {
-    let mut out = Vec::new();
-    for event in events {
-        match *event {
-            SessionEvent::Tender {
-                key,
-                amount,
-                change_saved,
-                ..
-            } => {
-                if let Some(tender) = tender(key.kind) {
-                    let amount = if tender == Tender::Cash {
-                        amount.saturating_add(change_saved)
-                    } else {
-                        amount
-                    };
-                    out.push(Movement::Sale { tender, amount });
-                }
-            }
-            SessionEvent::Refund { key, amount } => {
-                if let Some(tender) = tender(key.kind) {
-                    out.push(Movement::Refund { tender, amount });
-                }
-            }
-            SessionEvent::CashIn(a) => out.push(Movement::CashIn(a)),
-            SessionEvent::CashOut(a) | SessionEvent::Payout(a) => out.push(Movement::CashOut(a)),
-            _ => {}
-        }
-    }
-    out
+    sultan_core::cash::close_movements(events)
 }
 
 /// Every movement of `session` that the close report counts: those of the installed source
@@ -131,6 +94,8 @@ pub async fn session_movements(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sultan_core::cashier_session::Tender;
+    use sultan_core::sale::TenderKind;
 
     #[test]
     fn events_become_movements() {

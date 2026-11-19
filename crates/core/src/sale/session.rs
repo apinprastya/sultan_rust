@@ -6,11 +6,13 @@
 //! movements in here as [`SessionEvent`]s.
 //!
 //! **Expected cash.** §10 writes it as `opening_cash + cash tenders − cash change given − cash
-//! refunds + cash_rounding + cash_in − cash_out − payouts`. A cash tender's stored `amount` is
-//! the rounded rest it settles, so the cash rounding is part of it; this module counts the cash
-//! that physically stays in the drawer per tender, `cash_received − change_given` (= `amount +
-//! change_saved`), which already holds the rounding and the saved change, and lists
-//! `cash_rounding` separately without adding it a second time (see spec 2.6 §19).
+//! refunds + cash_rounding + cash_in − cash_out − payouts`, and spec 2.7 §4 adds `− drops` (safe
+//! drops, [`SessionEvent::Drop`]). A cash tender's stored `amount` is the rounded rest it
+//! settles, so the cash rounding is part of it; this module counts the cash that physically stays
+//! in the drawer per tender, `cash_received − change_given` (= `amount + change_saved`), which
+//! already holds the rounding and the saved change, and lists `cash_rounding` separately without
+//! adding it a second time (see spec 2.6 §19). Cash movements of spec 2.7 arrive netted of their
+//! reversals (`core::cash::CashFigures::events`).
 
 use std::collections::BTreeMap;
 
@@ -98,6 +100,8 @@ pub enum SessionEvent {
     CashIn(Money),
     /// Petty cash out.
     CashOut(Money),
+    /// A safe drop: cash from the drawer to the safe (spec 2.7 §2, K2).
+    Drop(Money),
     /// A customer balance payout (2.5 §11).
     Payout(Money),
 }
@@ -119,10 +123,12 @@ pub struct SalesSessionReport {
     pub cash_in: Money,
     /// Petty cash out.
     pub cash_out: Money,
+    /// Safe drops (spec 2.7 §4).
+    pub drops: Money,
     /// Balance payouts.
     pub payouts: Money,
-    /// `opening_cash + cash_received − change_given − cash_refunds + cash_in − cash_out −
-    /// payouts`.
+    /// `opening_cash + cash_received − change_given − cash_refunds + cash_in − cash_out − drops
+    /// − payouts` (spec 2.7 §4).
     pub expected_cash: Money,
     /// Per tender: sales and refunds.
     pub tenders: BTreeMap<TenderKey, TenderReport>,
@@ -200,6 +206,7 @@ pub fn session_report(
             SessionEvent::PriceOverride(a) => r.price_overrides.push(a)?,
             SessionEvent::CashIn(a) => r.cash_in = add(r.cash_in, a)?,
             SessionEvent::CashOut(a) => r.cash_out = add(r.cash_out, a)?,
+            SessionEvent::Drop(a) => r.drops = add(r.drops, a)?,
             SessionEvent::Payout(a) => r.payouts = add(r.payouts, a)?,
         }
     }
@@ -208,6 +215,7 @@ pub fn session_report(
     expected = sub(expected, r.cash_refunds)?;
     expected = add(expected, r.cash_in)?;
     expected = sub(expected, r.cash_out)?;
+    expected = sub(expected, r.drops)?;
     r.expected_cash = sub(expected, r.payouts)?;
     Ok(r)
 }

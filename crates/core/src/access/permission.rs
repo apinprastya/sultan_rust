@@ -86,13 +86,17 @@ pub enum Permission {
     /// `sale.reprint`: reprint a receipt other than the last sale of the current session
     /// (spec 2.6 §9).
     SaleReprint,
-    /// `tender.manage`: tender types (HQ only, spec 2.6 §11).
+    /// `tender.manage`: tender types (HQ only, spec 2.6 §11), also cash reasons (spec 2.7 §7).
     TenderManage,
+    /// `cash.drop`: a safe drop (cash from the drawer to the safe), no limit (spec 2.7 §7, K3).
+    CashDrop,
+    /// `day.close`: run the Z report of a branch's business day (spec 2.7 §6, K19).
+    DayClose,
 }
 
 impl Permission {
     /// Every permission in the catalog, in catalog order.
-    pub const ALL: [Self; 34] = [
+    pub const ALL: [Self; 36] = [
         Self::SaleCreate,
         Self::SaleDiscount,
         Self::SaleCartDiscount,
@@ -127,6 +131,8 @@ impl Permission {
         Self::PriceManage,
         Self::SaleReprint,
         Self::TenderManage,
+        Self::CashDrop,
+        Self::DayClose,
     ];
 
     /// The stable string key, e.g. `"sale.discount"`.
@@ -167,6 +173,8 @@ impl Permission {
             Self::PriceManage => "price.manage",
             Self::SaleReprint => "sale.reprint",
             Self::TenderManage => "tender.manage",
+            Self::CashDrop => "cash.drop",
+            Self::DayClose => "day.close",
         }
     }
 
@@ -190,7 +198,8 @@ impl Permission {
     /// permissions (users, roles, org, reports, audit, stock), session permissions and
     /// `sale.create` are not: a manager does those under their own login. The customer
     /// permissions are not either (spec 2.5 §12): a balance payout is done by a manager under
-    /// their own login.
+    /// their own login. A safe drop and the Z (`cash.drop`, `day.close`) are approved at the till
+    /// too (spec 2.7 §2, §6).
     #[must_use]
     pub const fn is_overridable(self) -> bool {
         matches!(
@@ -207,6 +216,8 @@ impl Permission {
                 | Self::CashIn
                 | Self::CashOut
                 | Self::DrawerOpen
+                | Self::CashDrop
+                | Self::DayClose
         )
     }
 }
@@ -402,7 +413,7 @@ mod tests {
             Ok(Permission::CatalogViewArchived)
         );
         assert_eq!(Permission::CatalogManage.limit_kind(), None);
-        assert_eq!(Permission::ALL.len(), 34);
+        assert_eq!(Permission::ALL.len(), 36);
     }
 
     #[test]
@@ -449,6 +460,20 @@ mod tests {
             assert_eq!(key.parse::<Permission>(), Ok(p));
             assert_eq!(p.limit_kind(), None, "{key}");
             assert_eq!(p.is_overridable(), overridable, "{key}");
+        }
+    }
+
+    #[test]
+    fn cash_keys_are_stable_unlimited_and_overridable() {
+        // Spec 2.7 §7: `cash.drop` (K3) and `day.close` (K19), both approved at the till.
+        for (p, key) in [
+            (Permission::CashDrop, "cash.drop"),
+            (Permission::DayClose, "day.close"),
+        ] {
+            assert_eq!(p.as_str(), key);
+            assert_eq!(key.parse::<Permission>(), Ok(p));
+            assert_eq!(p.limit_kind(), None, "{key}");
+            assert!(p.is_overridable(), "{key}");
         }
     }
 
