@@ -138,6 +138,20 @@ impl LocalDay {
         i64::from(self.year) * 10_000 + i64::from(self.month) * 100 + i64::from(self.day)
     }
 
+    /// The day of a stored [`key`](Self::key) (`YYYYMMDD`); `None` when it is not a calendar
+    /// day (e.g. `20261131`) or outside years 1–9999.
+    #[must_use]
+    pub fn from_key(key: i64) -> Option<Self> {
+        if !(10_101..=99_991_231).contains(&key) {
+            return None;
+        }
+        let year = i32::try_from(key / 10_000).ok()?;
+        let month = u32::try_from(key / 100 % 100).ok()?;
+        let day = u32::try_from(key % 100).ok()?;
+        chrono::NaiveDate::from_ymd_opt(year, month, day)?;
+        Some(Self { year, month, day })
+    }
+
     /// The `YYMMDD` printed in document numbers (e.g. `261107`).
     #[must_use]
     pub fn yymmdd(self) -> String {
@@ -272,6 +286,25 @@ mod tests {
         let y2k = LocalDay::of(Timestamp::from_unix_millis(946_684_800_000), tz("UTC"));
         assert_eq!((y2k.key(), y2k.yymmdd()), (20_000_101, "000101".to_owned()));
         assert!(y2k < day);
+        assert_eq!(LocalDay::from_key(day.key()), Some(day));
+        assert_eq!(LocalDay::from_key(y2k.key()), Some(y2k));
+        #[rustfmt::skip]
+        let cases = [
+            (20_261_119, Some((2026, 11, 19))),
+            (20_240_229, Some((2024, 2, 29))),
+            (10_101, Some((1, 1, 1))),
+            (99_991_231, Some((9999, 12, 31))),
+            (20_250_229, None),
+            (20_261_131, None),
+            (20_261_300, None),
+            (20_261_001 - 1, None),
+            (0, None),
+            (-20_261_119, None),
+            (100_000_101, None),
+        ];
+        for (key, ymd) in cases {
+            assert_eq!(LocalDay::from_key(key).map(LocalDay::ymd), ymd, "{key}");
+        }
     }
 
     #[test]

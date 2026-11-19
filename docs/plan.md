@@ -354,6 +354,17 @@ Where we are, so any session can pick up from here. Update this section at the e
   type) and close figures; the Z (business day = open day, run check, per-register and branch
   totals, cash to deposit, tax summary per rate); slip / payout slip / X / close / Z texts with
   ID/EN `CashLabel`s; `cash_movement_number` and `z_number`. Readings in spec §16 (from K1).
+- **2.7 Cash management** K2 `db` (2026-11-19, `crates/db/src/cash/`): cash reasons (HQ data,
+  seeded …0401–…0406, put / archive, never deleted), append-only cash movements (per-register
+  per-local-day `K` numbers with unique key + retry, idempotent by body hash, reversal once by a
+  unique key, session / reason / reversal checks, filters incl. missing nota, keyset paging),
+  append-only nota photo rows (≤ 3 by a unique slot), the session inputs of the figures (movements,
+  photo counts, `drawer.open` / `session.x_report` audit counts, netted cash events now in both
+  close-report blocks), float kept / opening proposed / close-time missing nota on the session,
+  the Z (day sessions, candidates, next number, insert + guarded session link, append-only, lists)
+  and the days still to close; `nota_flag_above` in the sales settings; grants `cash.drop` /
+  `day.close` for Manager and Cashier `cash.out` ≤ Rp 50 000 only when absent (migration
+  `20261119000001_cash`); `LocalDay::from_key` in core. Readings in spec §17 (from K2).
 - **UI only, except HQ** (§3, 2026-11-09):
   - Start screen on single-app and terminal machines: F1 Kasir, F2 Back office, F3 Settings.
   - Settings: language (F6), set up again (F8), and on a single app "Allow terminals to connect"
@@ -393,7 +404,8 @@ Where we are, so any session can pick up from here. Update this section at the e
 - Each sub-agent worktree builds its own `target/` (20–40 GB with coverage); clear finished ones.
 
 **Next**
-- **2.7 Cash management**: spec agreed (2026-11-19); K1 done, next K2 `db` then K3–K6 (spec §13).
+- **2.7 Cash management**: spec agreed (2026-11-19); K1 and K2 done, next K3 `server` + client
+  then K4–K6 (spec §13).
 - Then the remaining P1 specs to discuss (2.4 is P2): 2.8 inventory, 2.9 money, 2.10 reports,
   2.11 hardware (ESC/POS + drawer), old-Sultan importer.
 

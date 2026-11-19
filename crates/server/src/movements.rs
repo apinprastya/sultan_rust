@@ -9,7 +9,9 @@
 //! exchange tenders move no cash and have no column in the 2.1 tender table: they appear in the
 //! report's `sales` block (`core::sale::session_report`) instead. Expected cash is therefore
 //! `opening_cash + cash received − change given − cash refunds + cash_in − cash_out − payouts`
-//! (§10). [`NoSales`] reports nothing (tests). Cash in/out do not exist yet (2.7). The close
+//! (§10). Since spec 2.7 (phase K2) the session's cash in / out / safe drops are added as the
+//! netted events of `sultan_db::cash::session_cash_events`, so cash out and drops lower the
+//! expected cash too. [`NoSales`] reports nothing (tests). The close
 //! handler reads the movements inside its close transaction, so the report and the close are
 //! consistent.
 //!
@@ -27,7 +29,7 @@ use sultan_core::cashier_session::Movement;
 use sultan_core::ids::CashierSessionId;
 use sultan_core::money::Money;
 use sultan_core::sale::SessionEvent;
-use sultan_db::{DbError, Tx, customers, sales};
+use sultan_db::{DbError, Tx, cash, customers, sales};
 
 use crate::state::AppState;
 
@@ -51,14 +53,15 @@ impl SessionMovements for NoSales {
     }
 }
 
-/// The sales, returns and post-voids of a session (see the module docs).
+/// The sales, returns, post-voids and cash movements of a session (see the module docs).
 #[derive(Debug, Clone, Copy, Default)]
 pub struct SalesMovements;
 
 impl SessionMovements for SalesMovements {
     fn movements<'a>(&'a self, tx: &'a mut Tx, session: CashierSessionId) -> MovementsFuture<'a> {
         Box::pin(async move {
-            let events = sales::session_events(&mut *tx, session).await?;
+            let mut events = sales::session_events(&mut *tx, session).await?;
+            events.extend(cash::session_cash_events(&mut *tx, session).await?);
             Ok(to_movements(&events))
         })
     }

@@ -7,9 +7,9 @@ use sqlx::mysql::MySqlRow;
 use sqlx::sqlite::SqliteRow;
 use sultan_core::catalog::Qty;
 use sultan_core::ids::{
-    BarcodeId, BranchId, BrandId, CashierSessionId, CategoryId, CompanyId, HeldCartId, LocationId,
-    OptionId, OptionValueId, ProductId, RegisterId, ReturnId, RoleId, SaleId, TaxClassId,
-    TenderTypeId, UnitId, UserId, VariantId,
+    BarcodeId, BranchId, BrandId, CashMovementId, CashReasonId, CashierSessionId, CategoryId,
+    CompanyId, HeldCartId, LocationId, NotaPhotoId, OptionId, OptionValueId, ProductId, RegisterId,
+    ReturnId, RoleId, SaleId, TaxClassId, TenderTypeId, UnitId, UserId, VariantId, ZReportId,
 };
 use sultan_core::money::Money;
 use sultan_core::pricing::{PriceEntryId, PriceListId};
@@ -58,11 +58,14 @@ arg_from_id!(
     BarcodeId,
     BranchId,
     BrandId,
+    CashMovementId,
+    CashReasonId,
     CashierSessionId,
     CategoryId,
     CompanyId,
     HeldCartId,
     LocationId,
+    NotaPhotoId,
     OptionId,
     OptionValueId,
     PriceEntryId,
@@ -76,7 +79,8 @@ arg_from_id!(
     TenderTypeId,
     UnitId,
     UserId,
-    VariantId
+    VariantId,
+    ZReportId
 );
 
 impl From<Uuid> for Arg {
