@@ -1624,4 +1624,43 @@ impl BackOffice for FakeService {
     ) -> crate::BoxFuture<crate::SalesSettings> {
         self.put_sales_settings_call(token, body)
     }
+
+    fn all_cash_reasons(&self, token: &str) -> crate::BoxFuture<Vec<crate::CashReason>> {
+        self.cash_reasons_call(token, true)
+    }
+
+    fn put_cash_reason(
+        &self,
+        token: &str,
+        id: &str,
+        body: &crate::CashReasonBody,
+    ) -> crate::BoxFuture<crate::CashReason> {
+        self.put_cash_reason_call(token, id, body)
+    }
+
+    fn delete_cash_reason(&self, token: &str, id: &str) -> crate::BoxFuture<crate::CashReason> {
+        self.delete_cash_reason_call(token, id)
+    }
+
+    fn z_reports(
+        &self,
+        token: &str,
+        query: &crate::ZQuery,
+    ) -> crate::BoxFuture<crate::ZReportPage> {
+        self.z_reports_call(token, query)
+    }
+
+    fn z_report(&self, token: &str, id: &str) -> crate::BoxFuture<crate::ZReport> {
+        self.z_report_call(token, id)
+    }
+
+    fn force_close_session(
+        &self,
+        token: &str,
+        session_id: &str,
+        body: &crate::CloseRequest,
+        key: &str,
+    ) -> crate::BoxFuture<crate::CloseReport> {
+        self.force_close_call(token, session_id, body, key)
+    }
 }

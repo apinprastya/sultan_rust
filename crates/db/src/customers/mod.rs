@@ -36,8 +36,8 @@ use crate::outbox;
 pub use crate::catalog::{Actor, Written};
 pub use balance::{
     BalanceEntry, BalanceEntryKind, CustomerBalance, CustomerBalanceSettings, MAX_ENTRY_PAGE,
-    append_balance_entry, get_balance, get_balance_settings, ledger_balance, put_balance_settings,
-    session_payouts,
+    append_balance_entry, balance_after, get_balance, get_balance_entry, get_balance_settings,
+    ledger_balance, put_balance_settings, session_payouts,
 };
 pub use customer::{
     Birthday, Customer, CustomerRecord, ERASED_NAME, MAX_PAGE, MAX_SEARCH_PAGE, archive_customer,

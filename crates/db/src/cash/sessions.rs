@@ -9,6 +9,7 @@ use sultan_core::cash::{CashFigures, CashMovement, proposed_float as propose};
 use sultan_core::ids::{CashMovementId, CashierSessionId, RegisterId, ZReportId};
 use sultan_core::money::Money;
 use sultan_core::sale::SessionEvent;
+use sultan_core::time::Timestamp;
 
 use super::count;
 use super::movements::map_movement;
@@ -143,6 +144,24 @@ pub async fn nota_flag_above<'c>(conn: impl Into<Conn<'c>>) -> Result<Money> {
     .ok_or_else(|| DbError::Corrupt("sales_settings row is missing".into()))
 }
 
+/// When cash management was installed (`sales_settings.cash_since`, migration
+/// `20261121000001_cash_since`): the upgrade of an existing install or the first migration run of
+/// a fresh one. The days still to close start at its branch-local day (spec 2.7 §17 reading 10,
+/// [`super::pending_days`]); `None` lists every day.
+///
+/// # Errors
+/// The database error.
+pub async fn cash_since<'c>(conn: impl Into<Conn<'c>>) -> Result<Option<Timestamp>> {
+    Ok(sql::fetch_optional(
+        conn.into(),
+        "SELECT cash_since FROM sales_settings WHERE id = 1",
+        args![],
+        |row| sql::opt_ts(row, "cash_since"),
+    )
+    .await?
+    .flatten())
+}
+
 /// The cash columns of a session; `None` for an unknown session.
 ///
 /// # Errors
@@ -179,7 +198,20 @@ pub async fn session_cash_state<'c>(
 /// # Errors
 /// The database error.
 pub async fn proposed_float<'c>(conn: impl Into<Conn<'c>>, register: RegisterId) -> Result<Money> {
-    let last = sql::fetch_optional(
+    Ok(propose(last_float_kept(conn, register).await?))
+}
+
+/// The float kept by the last closed session of `register` (by close time); `None` when the
+/// register has no closed session or the last one kept none (closed before 2.7). The server stores
+/// no `opening_proposed` then (spec 2.7 §18): there is nothing to compare the opening cash with.
+///
+/// # Errors
+/// The database error.
+pub async fn last_float_kept<'c>(
+    conn: impl Into<Conn<'c>>,
+    register: RegisterId,
+) -> Result<Option<Money>> {
+    Ok(sql::fetch_optional(
         conn.into(),
         "SELECT float_kept FROM cashier_session WHERE register_id = ? AND closed_at IS NOT NULL \
          ORDER BY closed_at DESC, id DESC LIMIT 1",
@@ -188,8 +220,7 @@ pub async fn proposed_float<'c>(conn: impl Into<Conn<'c>>, register: RegisterId)
     )
     .await?
     .flatten()
-    .map(Money::from_minor);
-    Ok(propose(last))
+    .map(Money::from_minor))
 }
 
 /// Stores the proposal of an open session whose typed opening cash differed from it (§3,

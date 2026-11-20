@@ -302,6 +302,39 @@ pub async fn get_balance<'c>(
     Ok(Some(CustomerBalance { balance, entries }))
 }
 
+/// One balance entry (the payout slip, spec 2.7 K7).
+///
+/// # Errors
+/// The database error.
+pub async fn get_balance_entry<'c>(
+    conn: impl Into<Conn<'c>>,
+    id: BalanceEntryId,
+) -> Result<Option<BalanceEntry>> {
+    let sql = format!("{ENTRY_SELECT} WHERE id = ?");
+    sql::fetch_optional(conn.into(), &sql, args![id], map_entry).await
+}
+
+/// The customer's balance right after entry `id`: the sum of their entries up to it in ID
+/// (`UUIDv7`, time) order. An entry synced in later with an older ID counts as before it.
+///
+/// # Errors
+/// The database error.
+pub async fn balance_after<'c>(
+    conn: impl Into<Conn<'c>>,
+    customer: CustomerId,
+    id: BalanceEntryId,
+) -> Result<Money> {
+    sql::fetch_optional(
+        conn.into(),
+        "SELECT CAST(COALESCE(SUM(amount), 0) AS SIGNED) AS total FROM customer_balance_entry \
+         WHERE customer_id = ? AND id <= ?",
+        args![customer, id],
+        |row| sql::money(row, "total"),
+    )
+    .await
+    .map(Option::unwrap_or_default)
+}
+
 /// The sum of the customer's ledger entries (what the cached balance must equal).
 ///
 /// # Errors

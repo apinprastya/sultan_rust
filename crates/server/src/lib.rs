@@ -35,6 +35,12 @@
 //! `/catalog/lookup`, with `price.changed` events ([`routes::pricing`],
 //! [`routes::pricing_quote`]).
 //!
+//! Phase K3 (spec 2.7) adds cash management: `/cash-reasons`, `/cash-movements` (cash in / out /
+//! safe drop with slips), the payout slip, the X report and the close report text of a cashier
+//! session, the proposed float (`/registers/me/float`), the float kept at a close and `/z-reports`
+//! (end of day per branch, days still to close), with `cash.moved` and `day.closed` events
+//! ([`routes::cash`]).
+//!
 //! Phase 7 adds request logging to [`router`]: one `tracing` span per request with the method and
 //! the path only, and the status and latency when it finishes. Header values (`Authorization`,
 //! `X-Register-Token`, `X-Override`), query strings and bodies are never logged.
@@ -62,10 +68,10 @@ use tower_http::trace::{DefaultOnRequest, DefaultOnResponse, TraceLayer};
 use tracing::Level;
 
 use routes::{
-    audit, auth, branches, cashier_sessions, catalog, customer_balance, customer_groups, customers,
-    drawer, held_carts, locations, overrides as override_routes, permissions, pricing,
-    pricing_quote, product_images, products, registers, returns, roles, sales, sales_settings,
-    taxonomy, tender_types, users,
+    audit, auth, branches, cash_movements, cash_reasons, cash_reports, cashier_sessions, catalog,
+    customer_balance, customer_groups, customers, drawer, held_carts, locations,
+    overrides as override_routes, permissions, pricing, pricing_quote, product_images, products,
+    registers, returns, roles, sales, sales_settings, taxonomy, tender_types, users, z_reports,
 };
 
 pub use error::ApiError;
@@ -99,6 +105,7 @@ pub fn routes(state: &AppState) -> Router<AppState> {
         .merge(customer_actions())
         .merge(pricing_actions())
         .merge(sales_actions())
+        .route("/z-reports", post(z_reports::post))
         .route_layer(from_fn_with_state(state.clone(), idempotency::middleware));
     let api = Router::new()
         .route("/openapi.json", get(openapi::openapi_json))
@@ -154,6 +161,7 @@ pub fn routes(state: &AppState) -> Router<AppState> {
         .merge(customer_routes())
         .merge(pricing_routes())
         .merge(sales_routes())
+        .merge(cash_routes())
         .merge(idempotent)
         .method_not_allowed_fallback(async || ApiError::method_not_allowed());
     Router::new()
@@ -328,6 +336,44 @@ fn sales_routes() -> Router<AppState> {
             "/customers/{id}/recent-receipts",
             get(customers::recent_receipts),
         )
+}
+
+/// The cash resources of spec 2.7 §11 (phase K3); `POST /z-reports` is with the idempotent
+/// actions.
+fn cash_routes() -> Router<AppState> {
+    Router::new()
+        .route("/cash-reasons", get(cash_reasons::list))
+        .route(
+            "/cash-reasons/{id}",
+            put(cash_reasons::put).delete(cash_reasons::delete),
+        )
+        .route("/cash-movements", get(cash_movements::list))
+        .route(
+            "/cash-movements/{id}",
+            get(cash_movements::get).put(cash_movements::put),
+        )
+        .route("/cash-movements/{id}/slip", get(cash_movements::slip))
+        .route(
+            "/customers/{id}/balance/payouts/{entry_id}/slip",
+            get(cash_movements::payout_slip),
+        )
+        .route(
+            "/cashier-sessions/{id}/x-report",
+            get(cash_reports::x_report_json),
+        )
+        .route(
+            "/cashier-sessions/{id}/x-report/text",
+            get(cash_reports::x_report_text),
+        )
+        .route(
+            "/cashier-sessions/{id}/report/text",
+            get(cash_reports::close_report_text),
+        )
+        .route("/registers/me/float", get(cash_reports::proposed_float))
+        .route("/z-reports", get(z_reports::list))
+        .route("/z-reports/pending", get(z_reports::pending))
+        .route("/z-reports/{id}", get(z_reports::get))
+        .route("/z-reports/{id}/text", get(z_reports::text))
 }
 
 fn request_span<B>(request: &Request<B>) -> tracing::Span {

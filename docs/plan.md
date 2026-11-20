@@ -255,7 +255,7 @@ audit log viewer · light/dark theme · i18n ID/EN.
   Cash in the back office · `tender.manage` manages reasons · no old-Sultan cash import · text
   layouts in `core` now · the close report keeps its two blocks.
 
-## Status (updated 2026-11-19)
+## Status (updated 2026-11-21)
 
 Where we are, so any session can pick up from here. Update this section at the end of every phase.
 
@@ -365,6 +365,22 @@ Where we are, so any session can pick up from here. Update this section at the e
   and the days still to close; `nota_flag_above` in the sales settings; grants `cash.drop` /
   `day.close` for Manager and Cashier `cash.out` ≤ Rp 50 000 only when absent (migration
   `20261119000001_cash`); `LocalDay::from_key` in core. Readings in spec §17 (from K2).
+- **2.7 Cash management** K3 `server` + client (2026-11-21): routes of §11 (`/cash-reasons` HQ data
+  with `read_only_replica` on a branch node, `PUT /cash-movements/{id}` with the open-session
+  check, `cash.in` / `cash.out` (per movement) / `cash.drop` and `X-Override`, replay by body
+  hash, reversals and the 2.1 §5 retry; movement reads and keyset lists with photo IDs and
+  `missing_nota`; slips and the payout slip with audited copies; the X report JSON and text,
+  audited `session.x_report`; the close report text; `GET /registers/me/float`; `POST
+  /z-reports` with `Idempotency-Key`, `day.close` override, `sessions_open` / `nothing_to_close`
+  / future day / HQ refusals; Z list, read and audited text; days still to close), the close
+  report's `cash` and `float` blocks (float kept at close and force close, `opening_proposed` at
+  open; `session.view_expected` now overridable), the Z's sales documents
+  (`cash::session_sales`), events `cash.moved` and `day.closed`, error codes `sessions_open`,
+  `nothing_to_close`, `already_reversed`, `photo_limit` (with register messages), the client's
+  register and back-office methods with the HTTP implementation and the fake, API tests (§12
+  15–30), the Postman folder "Cash (spec 2.7)" (186 requests). Decision of 2026-11-21 (§17
+  reading 10, option a): migration `20261121000001_cash_since` records when cash management was
+  installed and the days still to close start there. Readings in spec §18 (from K3).
 - **UI only, except HQ** (§3, 2026-11-09):
   - Start screen on single-app and terminal machines: F1 Kasir, F2 Back office, F3 Settings.
   - Settings: language (F6), set up again (F8), and on a single app "Allow terminals to connect"
@@ -384,8 +400,8 @@ Where we are, so any session can pick up from here. Update this section at the e
   `core::ids`.
 - Back office: the Prices tab is not part of the product form's unsaved-changes check; archived
   price lists are not listed (no unarchive on screen).
-- Register: no payout slip is printed; the attached customer does not refresh on
-  `customer.changed`.
+- Register: no payout slip is shown yet (the server and client have it since K3; the screen is
+  K4); the attached customer does not refresh on `customer.changed`.
 - Sales: stock is not checked for branch blocks at posting (only archived products are refused).
 - Pricing: deleting a price entry or changing a tax rate is still always allowed, even when a
   posted sale used it (2.3 R2 limitation; sales now exist).
@@ -404,8 +420,9 @@ Where we are, so any session can pick up from here. Update this section at the e
 - Each sub-agent worktree builds its own `target/` (20–40 GB with coverage); clear finished ones.
 
 **Next**
-- **2.7 Cash management**: spec agreed (2026-11-19); K1 and K2 done, next K3 `server` + client
-  then K4–K6 (spec §13).
+- **2.7 Cash management**: spec agreed (2026-11-19); K1, K2 and K3 done, next K4 register
+  (Shift+F5 cash dialog with slip and reversal, Shift+F12 X, float on open and close, Z from the
+  close report, payout slip), then K5 back office and K6 nota photos (spec §13).
 - Then the remaining P1 specs to discuss (2.4 is P2): 2.8 inventory, 2.9 money, 2.10 reports,
   2.11 hardware (ESC/POS + drawer), old-Sultan importer.
 

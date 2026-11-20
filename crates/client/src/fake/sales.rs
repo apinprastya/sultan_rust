@@ -122,6 +122,18 @@ impl Default for Sales {
     }
 }
 
+impl Sales {
+    /// No-sale drawer opens of a cashier session (spec 2.7 K22).
+    pub(super) fn drawer_opens(&self, session: &str) -> u32 {
+        let n = self
+            .drawer
+            .iter()
+            .filter(|d| d.cashier_session_id == session)
+            .count();
+        u32::try_from(n).unwrap_or(u32::MAX)
+    }
+}
+
 fn rule(error: &sultan_core::sale::SaleError) -> ClientError {
     let mut p = Problem::new(422, error.code(), &error.to_string());
     if let Some(field) = error.field() {

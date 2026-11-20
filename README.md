@@ -200,6 +200,13 @@ Every setting is taken from, in order: **command-line flag > environment variabl
   returns and exchanges, held carts, the purchase history and the close report's sales figures;
   see `postman/README.md`. The return window `return_days` is fixed at 30 days (no setting yet),
   the receipt width is chosen per request (`?width=32|42|48`) and printing waits for 2.11.
+- Cash management (spec 2.7) is in the API (phase K3) but not on screen yet (K4 register, K5
+  back office): cash reasons, cash in / out / safe drop with reversals and slips
+  (`/cash-movements`), the payout slip, the X report, the close report text with the float kept,
+  the proposed float (`GET /registers/me/float`) and the Z report per branch and business day
+  (`/z-reports`, days still to close from the day cash management was installed); see
+  `postman/README.md`. Nota photos come with K6; slips and reports are text until 2.11 prints
+  them.
 - The register sells (spec 2.6 S4): scan, type or search (F2) items into the cart (a rescan adds
   to the line; weighed items, scale labels, open-price and manually priced lines always get a
   line of their own), change quantities and units, set manual prices and line or cart

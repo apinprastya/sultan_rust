@@ -1,7 +1,7 @@
 {
   "info": {
-    "name": "Sultan POS API (2.1 Organization & access, 2.2 Catalog, 2.3 Pricing, 2.5 Customers, 2.6 Sales)",
-    "description": "Main flows of /api/v1, matching GET /api/v1/openapi.json (docs/plan.md §1, docs/spec/2.1-organization-access.md, docs/spec/2.2-catalog.md, docs/spec/2.5-customers.md, docs/spec/2.6-sales.md). Run against the dev server: see postman/README.md.",
+    "name": "Sultan POS API (2.1 Organization & access, 2.2 Catalog, 2.3 Pricing, 2.5 Customers, 2.6 Sales, 2.7 Cash)",
+    "description": "Main flows of /api/v1, matching GET /api/v1/openapi.json (docs/plan.md §1, docs/spec/2.1-organization-access.md, docs/spec/2.2-catalog.md, docs/spec/2.5-customers.md, docs/spec/2.6-sales.md, docs/spec/2.7-cash-management.md). Run against the dev server: see postman/README.md.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "item": [
@@ -7754,6 +7754,1499 @@
               "path": [
                 "tender-types",
                 "{{slTender}}"
+              ]
+            },
+            "description": ""
+          }
+        }
+      ]
+    },
+    {
+      "name": "Cash (spec 2.7)",
+      "description": "Cash in / out / safe drop with replay and reversal, slips, the X report, the close with the float kept, the close report text, days still to close, the Z with its replay, refusals and text, and cash reasons (spec 2.7, phase K3).",
+      "item": [
+        {
+          "name": "148 Cash reasons (device token)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Fresh client-generated IDs for the cash flow (spec 2.7).",
+                  "function uuidv7() {",
+                  "    const hex = (n) => Array.from({ length: n }, () => Math.floor(Math.random() * 16).toString(16)).join('');",
+                  "    const ts = Date.now().toString(16).padStart(12, '0');",
+                  "    const variant = (8 + Math.floor(Math.random() * 4)).toString(16);",
+                  "    return `${ts.slice(0, 8)}-${ts.slice(8, 12)}-7${hex(3)}-${variant}${hex(3)}-${hex(12)}`;",
+                  "}",
+                  "['csOpenKey', 'csIn', 'csOut', 'csDrop', 'csBadDrop', 'csReversal', 'csReversal2', 'csCloseKey', 'csZKey', 'csZKey2', 'csReason'].forEach((k) => pm.collectionVariables.set(k, uuidv7()));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 with the seeded reasons, in before out', () => {",
+                  "    pm.response.to.have.status(200);",
+                  "    const list = pm.response.json();",
+                  "    pm.expect(list.map((r) => r.id)).to.include('00000000-0000-7000-8000-000000000401');",
+                  "    pm.expect(list[0].direction).to.eql('in');",
+                  "    pm.expect(list[list.length - 1].direction).to.eql('out');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Register-Token",
+                "value": "{{deviceToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/cash-reasons",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "cash-reasons"
+              ]
+            },
+            "description": "Active cash reasons (spec 2.7 §2, K1); registers read them with the device token."
+          }
+        },
+        {
+          "name": "149 Proposed float of the register",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 with the float kept by the last session', () => {",
+                  "    pm.response.to.have.status(200);",
+                  "    const body = pm.response.json();",
+                  "    pm.expect(body.proposed_float).to.be.a('number');",
+                  "    pm.expect(body.has_proposal).to.be.a('boolean');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerPinToken}}"
+              },
+              {
+                "key": "X-Register-Token",
+                "value": "{{deviceToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/registers/me/float",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "registers",
+                "me",
+                "float"
+              ]
+            },
+            "description": "Spec 2.7 §3: the opening cash the open screen proposes."
+          }
+        },
+        {
+          "name": "150 Owner opens a cashier session",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201', () => {",
+                  "    pm.response.to.have.status(201);",
+                  "    const body = pm.response.json();",
+                  "    pm.collectionVariables.set('csSessionId', body.id);",
+                  "    // The business day is the session's open date (K14).",
+                  "    const d = body.number.match(/-S-(\\d{2})(\\d{2})(\\d{2})-/);",
+                  "    pm.collectionVariables.set('csDay', `20${d[1]}-${d[2]}-${d[3]}`);",
+                  "    const next = new Date(Date.UTC(2000 + Number(d[1]), Number(d[2]) - 1, Number(d[3]) + 1));",
+                  "    pm.collectionVariables.set('csTomorrow', next.toISOString().slice(0, 10));",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerPinToken}}"
+              },
+              {
+                "key": "X-Register-Token",
+                "value": "{{deviceToken}}"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{csOpenKey}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/cashier-sessions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "cashier-sessions"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{ \"opening_cash\": 200000 }",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "151 Cash in (PUT, client UUIDv7)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 with a K number', () => {",
+                  "    pm.response.to.have.status(201);",
+                  "    const body = pm.response.json();",
+                  "    pm.expect(body.number).to.match(/-K-\\d{6}-\\d{2}$/);",
+                  "    pm.expect(body.effect).to.eql(50000);",
+                  "    pm.expect(body.cashier_session_id).to.eql(pm.collectionVariables.get('csSessionId'));",
+                  "    pm.collectionVariables.set('csInNumber', body.number);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerPinToken}}"
+              },
+              {
+                "key": "X-Register-Token",
+                "value": "{{deviceToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/cash-movements/{{csIn}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "cash-movements",
+                "{{csIn}}"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\"kind\": \"in\", \"amount\": 50000, \"reason_id\": \"00000000-0000-7000-8000-000000000401\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "152 Replay the same PUT",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 with the stored movement', () => {",
+                  "    pm.response.to.have.status(200);",
+                  "    pm.expect(pm.response.json().number).to.eql(pm.collectionVariables.get('csInNumber'));",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerPinToken}}"
+              },
+              {
+                "key": "X-Register-Token",
+                "value": "{{deviceToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/cash-movements/{{csIn}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "cash-movements",
+                "{{csIn}}"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\"kind\": \"in\", \"amount\": 50000, \"reason_id\": \"00000000-0000-7000-8000-000000000401\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "153 Another body with the same ID: conflict",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('409 conflict', () => {",
+                  "    pm.response.to.have.status(409);",
+                  "    pm.expect(pm.response.json().code).to.eql('conflict');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerPinToken}}"
+              },
+              {
+                "key": "X-Register-Token",
+                "value": "{{deviceToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/cash-movements/{{csIn}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "cash-movements",
+                "{{csIn}}"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\"kind\": \"in\", \"amount\": 50001, \"reason_id\": \"00000000-0000-7000-8000-000000000401\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "154 Cash out with a reason and a note",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201', () => {",
+                  "    pm.response.to.have.status(201);",
+                  "    const body = pm.response.json();",
+                  "    pm.expect(body.effect).to.eql(-30000);",
+                  "    pm.expect(body.note).to.eql('parkir');",
+                  "    pm.expect(body.missing_nota).to.eql(false);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerPinToken}}"
+              },
+              {
+                "key": "X-Register-Token",
+                "value": "{{deviceToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/cash-movements/{{csOut}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "cash-movements",
+                "{{csOut}}"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\"kind\": \"out\", \"amount\": 30000, \"reason_id\": \"00000000-0000-7000-8000-000000000404\", \"note\": \" parkir \"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "155 Safe drop",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201', () => {",
+                  "    pm.response.to.have.status(201);",
+                  "    pm.expect(pm.response.json().kind).to.eql('drop');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerPinToken}}"
+              },
+              {
+                "key": "X-Register-Token",
+                "value": "{{deviceToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/cash-movements/{{csDrop}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "cash-movements",
+                "{{csDrop}}"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\"kind\": \"drop\", \"amount\": 100000}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "156 A drop with a reason is rejected",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('422 invalid_field reason', () => {",
+                  "    pm.response.to.have.status(422);",
+                  "    pm.expect(pm.response.json().field).to.eql('reason');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerPinToken}}"
+              },
+              {
+                "key": "X-Register-Token",
+                "value": "{{deviceToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/cash-movements/{{csBadDrop}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "cash-movements",
+                "{{csBadDrop}}"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\"kind\": \"drop\", \"amount\": 1000, \"reason_id\": \"00000000-0000-7000-8000-000000000404\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "157 Reverse the cash in (K10)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 with the opposite effect', () => {",
+                  "    pm.response.to.have.status(201);",
+                  "    const body = pm.response.json();",
+                  "    pm.expect(body.effect).to.eql(-50000);",
+                  "    pm.expect(body.reverses_number).to.eql(pm.collectionVariables.get('csInNumber'));",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerPinToken}}"
+              },
+              {
+                "key": "X-Register-Token",
+                "value": "{{deviceToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/cash-movements/{{csReversal}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "cash-movements",
+                "{{csReversal}}"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{ \"reverses\": \"{{csIn}}\", \"note\": \"salah input\" }",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "158 Reversing it again: already_reversed",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('409 already_reversed', () => {",
+                  "    pm.response.to.have.status(409);",
+                  "    pm.expect(pm.response.json().code).to.eql('already_reversed');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerPinToken}}"
+              },
+              {
+                "key": "X-Register-Token",
+                "value": "{{deviceToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/cash-movements/{{csReversal2}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "cash-movements",
+                "{{csReversal2}}"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{ \"reverses\": \"{{csIn}}\", \"note\": \"lagi\" }",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "159 The session's cash movements",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 with the 4 movements; the cash in is reversed', () => {",
+                  "    pm.response.to.have.status(200);",
+                  "    const items = pm.response.json().items;",
+                  "    pm.expect(items).to.have.lengthOf(4);",
+                  "    const cashIn = items.find((m) => m.id === pm.collectionVariables.get('csIn'));",
+                  "    pm.expect(cashIn.reversed_by).to.eql(pm.collectionVariables.get('csReversal'));",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerPinToken}}"
+              },
+              {
+                "key": "X-Register-Token",
+                "value": "{{deviceToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/cash-movements?cashier_session_id={{csSessionId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "cash-movements"
+              ],
+              "query": [
+                {
+                  "key": "cashier_session_id",
+                  "value": "{{csSessionId}}"
+                }
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "160 Cash out slip (?lang=id)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 with the slip text', () => {",
+                  "    pm.response.to.have.status(200);",
+                  "    const body = pm.response.json();",
+                  "    pm.expect(body.text).to.include('KAS KELUAR');",
+                  "    pm.expect(body.text).to.include('Diterima oleh');",
+                  "    pm.expect(body.large).to.have.lengthOf(1);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerPinToken}}"
+              },
+              {
+                "key": "X-Register-Token",
+                "value": "{{deviceToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/cash-movements/{{csOut}}/slip?lang=id",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "cash-movements",
+                "{{csOut}}",
+                "slip"
+              ],
+              "query": [
+                {
+                  "key": "lang",
+                  "value": "id"
+                }
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "161 Reprint the slip (COPY, free in its session)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 COPY', () => {",
+                  "    pm.response.to.have.status(200);",
+                  "    pm.expect(pm.response.json().copy).to.eql(true);",
+                  "    pm.expect(pm.response.json().text).to.include('COPY');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerPinToken}}"
+              },
+              {
+                "key": "X-Register-Token",
+                "value": "{{deviceToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/cash-movements/{{csOut}}/slip?copy=true&width=42",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "cash-movements",
+                "{{csOut}}",
+                "slip"
+              ],
+              "query": [
+                {
+                  "key": "copy",
+                  "value": "true"
+                },
+                {
+                  "key": "width",
+                  "value": "42"
+                }
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "162 X report (audited, never a count)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 with the expected cash and no count', () => {",
+                  "    pm.response.to.have.status(200);",
+                  "    const body = pm.response.json();",
+                  "    pm.expect(body.expected_cash).to.eql(70000);",
+                  "    pm.expect(body.cash.x_reports).to.eql(1);",
+                  "    pm.expect(body).to.not.have.property('counted_cash');",
+                  "    pm.expect(body).to.not.have.property('over_short');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerPinToken}}"
+              },
+              {
+                "key": "X-Register-Token",
+                "value": "{{deviceToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/cashier-sessions/{{csSessionId}}/x-report",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "cashier-sessions",
+                "{{csSessionId}}",
+                "x-report"
+              ]
+            },
+            "description": "Spec 2.7 §5: 200 000 opening − 30 000 out − 100 000 drop; the cash in is reversed."
+          }
+        },
+        {
+          "name": "163 X report text",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 X REPORT', () => {",
+                  "    pm.response.to.have.status(200);",
+                  "    pm.expect(pm.response.json().text).to.include('X REPORT');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerPinToken}}"
+              },
+              {
+                "key": "X-Register-Token",
+                "value": "{{deviceToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/cashier-sessions/{{csSessionId}}/x-report/text?lang=en",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "cashier-sessions",
+                "{{csSessionId}}",
+                "x-report",
+                "text"
+              ],
+              "query": [
+                {
+                  "key": "lang",
+                  "value": "en"
+                }
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "164 Close keeping a float",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 with the cash block and the float', () => {",
+                  "    pm.response.to.have.status(200);",
+                  "    const r = pm.response.json();",
+                  "    pm.expect(r.expected_cash).to.eql(70000);",
+                  "    pm.expect(r.sales.expected_cash).to.eql(70000);",
+                  "    pm.expect(r.cash_out).to.eql(130000);",
+                  "    pm.expect(r.cash.drops).to.eql({ count: 1, amount: 100000 });",
+                  "    pm.expect(r.cash.reversals.count).to.eql(1);",
+                  "    pm.expect(r.cash.x_reports).to.eql(2);",
+                  "    pm.expect(r.float.float_kept).to.eql(50000);",
+                  "    pm.expect(r.float.to_safe).to.eql(20000);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerPinToken}}"
+              },
+              {
+                "key": "X-Register-Token",
+                "value": "{{deviceToken}}"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{csCloseKey}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/cashier-sessions/{{csSessionId}}/close",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "cashier-sessions",
+                "{{csSessionId}}",
+                "close"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{ \"counted_cash\": 70000, \"float_kept\": 50000 }",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "165 Close report text (reprint)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 CLOSE REPORT, COPY', () => {",
+                  "    pm.response.to.have.status(200);",
+                  "    const text = pm.response.json().text;",
+                  "    pm.expect(text).to.include('CLOSE REPORT');",
+                  "    pm.expect(text).to.include('Kept as float');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/cashier-sessions/{{csSessionId}}/report/text?copy=true",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "cashier-sessions",
+                "{{csSessionId}}",
+                "report",
+                "text"
+              ],
+              "query": [
+                {
+                  "key": "copy",
+                  "value": "true"
+                }
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "166 X of a closed session: session_closed",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('409 session_closed', () => {",
+                  "    pm.response.to.have.status(409);",
+                  "    pm.expect(pm.response.json().code).to.eql('session_closed');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/cashier-sessions/{{csSessionId}}/x-report",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "cashier-sessions",
+                "{{csSessionId}}",
+                "x-report"
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "167 Days still to close",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 with today and its closed sessions', () => {",
+                  "    pm.response.to.have.status(200);",
+                  "    const day = pm.response.json().find((d) => d.day === pm.collectionVariables.get('csDay'));",
+                  "    pm.expect(day.closed).to.be.at.least(1);",
+                  "    pm.expect(day.open).to.eql(0);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/z-reports/pending?branch_id={{branchId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "z-reports",
+                "pending"
+              ],
+              "query": [
+                {
+                  "key": "branch_id",
+                  "value": "{{branchId}}"
+                }
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "168 Run the Z (Idempotency-Key)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 with the Z of the day', () => {",
+                  "    pm.response.to.have.status(201);",
+                  "    const z = pm.response.json();",
+                  "    pm.expect(z.report.number).to.match(/-Z-\\d{6}-01$/);",
+                  "    pm.expect(z.report.day).to.eql(pm.collectionVariables.get('csDay'));",
+                  "    pm.expect(z.session_ids).to.include(pm.collectionVariables.get('csSessionId'));",
+                  "    pm.expect(z.report.branch.cash.drops.amount).to.eql(100000);",
+                  "    pm.collectionVariables.set('csZ', z.id);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{csZKey}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/z-reports",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "z-reports"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{ \"day\": \"{{csDay}}\", \"branch_id\": \"{{branchId}}\" }",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "169 Retry replays the Z",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 replayed', () => {",
+                  "    pm.response.to.have.status(201);",
+                  "    pm.expect(pm.response.headers.get('Idempotency-Replayed')).to.eql('true');",
+                  "    pm.expect(pm.response.json().id).to.eql(pm.collectionVariables.get('csZ'));",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{csZKey}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/z-reports",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "z-reports"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{ \"day\": \"{{csDay}}\", \"branch_id\": \"{{branchId}}\" }",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "170 Another run: nothing_to_close",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('409 nothing_to_close', () => {",
+                  "    pm.response.to.have.status(409);",
+                  "    pm.expect(pm.response.json().code).to.eql('nothing_to_close');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{csZKey2}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/z-reports",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "z-reports"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{ \"day\": \"{{csDay}}\", \"branch_id\": \"{{branchId}}\" }",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "171 A Z of a future day is rejected",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('422 invalid_field day', () => {",
+                  "    pm.response.to.have.status(422);",
+                  "    pm.expect(pm.response.json().field).to.eql('day');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/z-reports",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "z-reports"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{ \"day\": \"{{csTomorrow}}\", \"branch_id\": \"{{branchId}}\" }",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "172 Z reports of the branch",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 with the Z', () => {",
+                  "    pm.response.to.have.status(200);",
+                  "    const items = pm.response.json().items;",
+                  "    pm.expect(items[0].id).to.eql(pm.collectionVariables.get('csZ'));",
+                  "    pm.expect(items[0].supplementary).to.eql(false);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/z-reports?branch_id={{branchId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "z-reports"
+              ],
+              "query": [
+                {
+                  "key": "branch_id",
+                  "value": "{{branchId}}"
+                }
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "173 Z text (COPY, audited)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 LAPORAN Z', () => {",
+                  "    pm.response.to.have.status(200);",
+                  "    const text = pm.response.json().text;",
+                  "    pm.expect(text).to.include('LAPORAN Z');",
+                  "    pm.expect(text).to.include('SALINAN');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/z-reports/{{csZ}}/text?copy=true&lang=id",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "z-reports",
+                "{{csZ}}",
+                "text"
+              ],
+              "query": [
+                {
+                  "key": "copy",
+                  "value": "true"
+                },
+                {
+                  "key": "lang",
+                  "value": "id"
+                }
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "174 Nothing left to close today",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 without today', () => {",
+                  "    pm.response.to.have.status(200);",
+                  "    const days = pm.response.json().map((d) => d.day);",
+                  "    pm.expect(days).to.not.include(pm.collectionVariables.get('csDay'));",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/z-reports/pending?branch_id={{branchId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "z-reports",
+                "pending"
+              ],
+              "query": [
+                {
+                  "key": "branch_id",
+                  "value": "{{branchId}}"
+                }
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "175 Create a cash reason (HQ, tender.manage)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201', () => {",
+                  "    pm.response.to.have.status(201);",
+                  "    pm.expect(pm.response.json().name).to.eql('Galon air');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/cash-reasons/{{csReason}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "cash-reasons",
+                "{{csReason}}"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{ \"name\": \" Galon air \", \"direction\": \"out\", \"sort\": 40 }",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "176 Archive the cash reason",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 archived', () => {",
+                  "    pm.response.to.have.status(200);",
+                  "    pm.expect(pm.response.json().archived).to.eql(true);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/cash-reasons/{{csReason}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "cash-reasons",
+                "{{csReason}}"
               ]
             },
             "description": ""

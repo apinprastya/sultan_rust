@@ -156,6 +156,20 @@ impl Problem {
     pub fn max(&self) -> Option<i64> {
         self.int("max")
     }
+
+    /// `sessions_open` (spec 2.7 K15): the numbers of the sessions of the day still open.
+    #[must_use]
+    pub fn sessions(&self) -> Vec<String> {
+        self.extra
+            .get("sessions")
+            .and_then(serde_json::Value::as_array)
+            .map(|a| {
+                a.iter()
+                    .filter_map(|v| v.as_str().map(str::to_owned))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
 }
 
 /// One entry of a catalog rule failure's `errors` (spec 2.2 §12).

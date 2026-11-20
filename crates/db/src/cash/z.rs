@@ -466,7 +466,8 @@ pub struct PendingDay {
 
 /// The days of `branch` still to close (`GET /z-reports/pending`, K18), oldest first: days with
 /// a closed session in no Z, and days before `today` (the branch-local date) with a session still
-/// open. Today with only open sessions is not listed.
+/// open. Today with only open sessions is not listed. With `since` (the branch-local day of
+/// [`super::cash_since`], spec 2.7 §17 reading 10) earlier business days are left out.
 ///
 /// # Errors
 /// The database error.
@@ -474,17 +475,20 @@ pub async fn pending_days<'c>(
     conn: impl Into<Conn<'c>>,
     branch: BranchId,
     today: LocalDay,
+    since: Option<LocalDay>,
 ) -> Result<Vec<PendingDay>> {
+    let since = since.map_or(0, LocalDay::key);
     sql::fetch_all(
         conn.into(),
         "SELECT s.local_day, \
          CAST(SUM(CASE WHEN s.closed_at IS NULL THEN 1 ELSE 0 END) AS SIGNED) AS open_count, \
          CAST(SUM(CASE WHEN s.closed_at IS NULL THEN 0 ELSE 1 END) AS SIGNED) AS closed_count \
          FROM cashier_session s JOIN register r ON r.id = s.register_id \
-         WHERE r.branch_id = ? AND s.z_report_id IS NULL GROUP BY s.local_day \
+         WHERE r.branch_id = ? AND s.z_report_id IS NULL AND s.local_day >= ? \
+         GROUP BY s.local_day \
          HAVING SUM(CASE WHEN s.closed_at IS NULL THEN 0 ELSE 1 END) > 0 OR s.local_day < ? \
          ORDER BY s.local_day",
-        args![branch, today.key()],
+        args![branch, since, today.key()],
         |row| {
             Ok(PendingDay {
                 day: local_day(row, "local_day")?,

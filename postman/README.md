@@ -2,11 +2,12 @@
 
 `sultan-api.postman_collection.json` tests the main flows of spec 2.1 (`docs/spec/2.1-organization-access.md`),
 of the catalog, spec 2.2 (`docs/spec/2.2-catalog.md`), of pricing, spec 2.3
-(`docs/spec/2.3-pricing.md`), of customers, spec 2.5 (`docs/spec/2.5-customers.md`), and of sales,
-spec 2.6 (`docs/spec/2.6-sales.md`), against a running node. Requests and bodies follow the OpenAPI document served at
+(`docs/spec/2.3-pricing.md`), of customers, spec 2.5 (`docs/spec/2.5-customers.md`), of sales, spec 2.6
+(`docs/spec/2.6-sales.md`), and of cash management, spec 2.7 (`docs/spec/2.7-cash-management.md`),
+against a running node. Requests and bodies follow the OpenAPI document served at
 `GET /api/v1/openapi.json` (import that URL into Postman to browse every endpoint).
 
-Flow (157 requests, each with test scripts). Spec 2.1 (requests 01–35):
+Flow (186 requests, each with test scripts). Spec 2.1 (requests 01–35):
 password login → OpenAPI document → create branch (`PUT`, client UUIDv7, time zone
 `Asia/Makassar`) → replay the same `PUT` (idempotent) → a time zone that is not IANA (`WIB`) is
 rejected (`invalid_field`) → create register → issue pairing code → pair (the answer names the branch: `branch_code`,
@@ -95,6 +96,24 @@ create a tender type (`tender.manage`, HQ) → archive it. The owner holds every
 override is asked for; overrides, exchanges, the customer balance and the other refusals are
 covered by the server's tests (`crates/server/tests/api/sales.rs`, `sales_returns.rs`).
 
+**Cash (folder "Cash (spec 2.7)", requests 148–176, phase K3):** the cash reasons with the device
+token → the register's proposed float (`GET /registers/me/float`) → the owner opens a session
+(200 000) → a cash in (`PUT /cash-movements/{id}`, number `…-K-…`) → the same `PUT` replays
+(`200`) → another body with the same ID is `409 conflict` → a cash out with a reason and a note →
+a safe drop → a drop with a reason is `422 invalid_field` → reverse the cash in → reversing it
+again is `409 already_reversed` → the session's movements → the cash-out slip in Indonesian →
+its reprint (COPY, free in its session) → the X report (expected cash 70 000, no count, audited)
+→ its text → close keeping 50 000 as float (both blocks: expected 70 000, the 2.1 `cash_out`
+130 000 with the drop, `cash.drops`, `cash.reversals`, two X reads, 20 000 to the safe) → the
+close report text → an X of the closed session is `409 session_closed` → the days still to close
+list today → run the Z of the day for the branch (`Idempotency-Key`; it covers every session of
+the collection that day) → the retry replays it → another run is `409 nothing_to_close` → a
+future day is `422 invalid_field` → the branch's Z reports → the Z text (COPY, audited) → today
+is no longer pending → create a cash reason (HQ, `tender.manage`) → archive it. The owner holds
+every permission, so no override is asked for; the overrides, a cashier's limits, an open
+session blocking the Z and the supplementary Z are covered by the server's tests
+(`crates/server/tests/api/cash.rs`, `cash_z.rs`).
+
 The upload reads `postman/fixtures/product-800x400.png`, so pass `--working-dir postman`.
 
 IDs and codes are generated fresh in the first request's test script, so the collection can be run
@@ -136,6 +155,8 @@ S5 (2026-11-18) ran the whole collection against `sultan serve` on a fresh SQLit
 (149/149 requests passed).
 S6 (2026-11-18) added the return receipt (139a–b), the names and `status` filter of `GET /sales`
 and the sales settings (145a–f), and ran it again the same way (157/157 requests passed).
+K3 (2026-11-21) added the folder "Cash (spec 2.7)" and ran the whole collection twice in a row
+against one `sultan serve` on a fresh SQLite database (186/186 requests passed both times).
 
 The run needs no Postman login; it only prints a note that results are not published to the cloud.
 

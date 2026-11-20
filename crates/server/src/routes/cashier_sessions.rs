@@ -40,7 +40,16 @@
 //!
 //! `counts` is the optional count per denomination; when given, its total must equal
 //! `counted_cash`. Expected cash and the per-tender totals come from the sales seam
-//! ([`crate::movements`]), which reports no movements until sales exist (spec 2.6).
+//! ([`crate::movements`]): sales, returns, post-voids, cash in / out / drops and payouts.
+//!
+//! **Cash management** (spec 2.7 §3, §4, phase K3): the close and the force close take an optional
+//! `float_kept` (0 up to the count, default the opening cash capped at the count; `422
+//! invalid_field` otherwise), stored with the close-time missing-nota count. The close report adds
+//! the `cash` block (per kind and reason, reversals, drawer opens, X reads, missing notas) and the
+//! `float` block (kept, to the safe, the proposed opening, the float difference) next to the 2.1
+//! block and the `sales` block ([`super::cash::session_figures`]). An open stores
+//! `opening_proposed` when the typed opening cash differs from the float the register's last
+//! session kept (spec 2.7 §18 reading 2); sessions show `opening_proposed` and `float_kept`.
 //!
 //! Every open, close and force close is audited (`cashier_session.open`, `.close`,
 //! `.force_close`, spec 2.1 §7) and pushed as `cashier_session.opened` / `.closed` to the
@@ -55,20 +64,23 @@ use axum::http::StatusCode;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sultan_core::access::{AccessError, BranchScope, Permission};
+use sultan_core::cash::{SessionFigures, float_difference};
 use sultan_core::cashier_session::{
     CashierSession, CloseKind, CloseReport, SessionError, SessionStatus, close_report,
 };
 use sultan_core::ids::{BranchId, CashierSessionId, RegisterId, UserId};
 use sultan_core::money::Money;
-use sultan_core::sale::{CountAmount, SessionEvent, session_report};
+use sultan_core::sale::{CountAmount, SessionEvent};
 use sultan_core::time::Timestamp;
 use sultan_db::audit::{self, AuditEntry};
+use sultan_db::cash::{self as cash_db, SessionCashState};
 use sultan_db::cashier_sessions::{
     self, DenominationCount, ReportContext, SessionFilter, SessionRecord, Visibility,
 };
 use sultan_db::{DbError, Tx};
 use utoipa::{IntoParams, ToSchema};
 
+use super::cash::{CashReportDto, session_figures};
 use super::{parse_id, parse_opt_id, to_json};
 use crate::access::Caller;
 use crate::error::ApiError;
@@ -108,6 +120,10 @@ pub struct CloseSession {
     /// Optional count per denomination; its total must equal `counted_cash`.
     #[serde(default)]
     pub counts: Option<Vec<CountDto>>,
+    /// Cash kept in the drawer as the next session's float (spec 2.7 §3): 0 up to the counted
+    /// cash; default the opening cash (at most the counted cash). The rest goes to the safe.
+    #[serde(default)]
+    pub float_kept: Option<i64>,
 }
 
 /// A cashier session.
@@ -140,6 +156,11 @@ pub struct SessionDto {
     /// `session.view_expected`** (blind close, spec 2.1 §5); the figure of the close once closed.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub expected_cash: Option<i64>,
+    /// The proposed opening cash (the float kept by the register's last session), stored when the
+    /// typed opening cash differed from it (spec 2.7 §3).
+    pub opening_proposed: Option<i64>,
+    /// The cash kept as float at the close (spec 2.7 §3); `null` while open or before 2.7.
+    pub float_kept: Option<i64>,
 }
 
 /// Totals of one tender in the close report.
@@ -204,10 +225,28 @@ pub struct CloseReportDto {
     /// The sales figures (spec 2.6 §10), computed from the session's documents, which never
     /// change after the close.
     pub sales: SalesReportDto,
+    /// The cash movements per kind and reason, drawer opens, X reads and the cash outs missing a
+    /// nota at the close (spec 2.7 §4).
+    pub cash: super::cash::CashReportDto,
+    /// The float kept, to the safe, the proposed opening and the float difference (spec 2.7 §3).
+    pub float: FloatDto,
+}
+
+/// The float of a session (spec 2.7 §3).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct FloatDto {
+    /// Cash kept in the drawer for the next session; `null` for a session closed before 2.7.
+    pub float_kept: Option<i64>,
+    /// `counted − float_kept`, taken to the safe; `null` with `float_kept`.
+    pub to_safe: Option<i64>,
+    /// The proposed opening cash, when the cashier typed another amount at open.
+    pub opening_proposed: Option<i64>,
+    /// `opening_cash − opening_proposed` (0 without a proposal).
+    pub float_difference: i64,
 }
 
 /// A count and an amount.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, ToSchema)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct CountAmountDto {
     /// How many.
     pub count: u32,
@@ -225,7 +264,7 @@ impl From<CountAmount> for CountAmountDto {
 }
 
 /// Sales and refunds of one tender type in the sales figures.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct SalesTenderDto {
     /// The tender type (`null` for the exchange tender).
     pub tender_type_id: Option<String>,
@@ -237,9 +276,13 @@ pub struct SalesTenderDto {
     pub refunds: CountAmountDto,
 }
 
-/// The session's sales figures (spec 2.6 §10, `core::sale::session_report`).
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, ToSchema)]
+/// The session's sales figures (spec 2.6 §10, `core::sale::session_report`, with the cash
+/// movements of spec 2.7 §4).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct SalesReportDto {
+    /// Cash at open.
+    #[serde(default)]
+    pub opening_cash: i64,
     /// Σ cash received on sale tenders.
     pub cash_received: i64,
     /// Σ change handed back.
@@ -250,12 +293,15 @@ pub struct SalesReportDto {
     pub cash_rounding: i64,
     /// Petty cash in.
     pub cash_in: i64,
-    /// Petty cash out.
+    /// Cash out (net of reversals, spec 2.7).
     pub cash_out: i64,
+    /// Safe drops (net of reversals, spec 2.7 §4).
+    #[serde(default)]
+    pub drops: i64,
     /// Customer balance payouts.
     pub payouts: i64,
-    /// `opening_cash + cash_received − change_given − cash_refunds + cash_in − cash_out −
-    /// payouts`.
+    /// `opening_cash + cash_received − change_given − cash_refunds + cash_in − cash_out − drops −
+    /// payouts` (spec 2.7 §4).
     pub expected_cash: i64,
     /// Per tender type.
     pub tenders: Vec<SalesTenderDto>,
@@ -280,7 +326,7 @@ pub struct SalesReportDto {
 }
 
 /// The line and cart voids of `session` (audit entries of `POST /cart-voids`).
-async fn till_voids(
+pub(crate) async fn till_voids(
     tx: &mut Tx,
     session: CashierSessionId,
     events: &mut Vec<SessionEvent>,
@@ -322,52 +368,6 @@ async fn till_voids(
         }
     }
     Ok(())
-}
-
-/// The sales figures of `record` (spec 2.6 §10): its documents, cash movements (spec 2.7, netted
-/// per kind), till voids and payouts.
-///
-/// # Errors
-/// The database error, or `422 amount_overflow`.
-pub async fn sales_report(tx: &mut Tx, record: &SessionRecord) -> Result<SalesReportDto, ApiError> {
-    let id = record.session.id();
-    let mut events = sultan_db::sales::session_events(&mut *tx, id).await?;
-    events.extend(sultan_db::cash::session_cash_events(&mut *tx, id).await?);
-    till_voids(tx, id, &mut events).await?;
-    let payouts = sultan_db::customers::session_payouts(&mut *tx, id).await?;
-    if payouts > Money::ZERO {
-        events.push(SessionEvent::Payout(payouts));
-    }
-    let r = session_report(record.session.opening_cash(), &events)?;
-    Ok(SalesReportDto {
-        cash_received: r.cash_received.minor(),
-        change_given: r.change_given.minor(),
-        cash_refunds: r.cash_refunds.minor(),
-        cash_rounding: r.cash_rounding.minor(),
-        cash_in: r.cash_in.minor(),
-        cash_out: r.cash_out.minor(),
-        payouts: r.payouts.minor(),
-        expected_cash: r.expected_cash.minor(),
-        tenders: r
-            .tenders
-            .iter()
-            .map(|(k, t)| SalesTenderDto {
-                tender_type_id: k.tender_type.map(|t| t.to_string()),
-                kind: k.kind.as_str().to_owned(),
-                sales: t.sales.into(),
-                refunds: t.refunds.into(),
-            })
-            .collect(),
-        line_voids: r.line_voids.into(),
-        cart_voids: r.cart_voids.into(),
-        post_voids: r.post_voids.into(),
-        returns: r.returns.into(),
-        line_discounts: r.line_discounts.into(),
-        cart_discounts: r.cart_discounts.into(),
-        price_overrides: r.price_overrides.into(),
-        saved_change: r.saved_change.minor(),
-        balance_paid: r.balance_paid.minor(),
-    })
 }
 
 /// `GET /cashier-sessions/{id}`: the session and, once closed, its stored close report.
@@ -434,7 +434,29 @@ fn session_dto(record: &SessionRecord, expected: Option<Money>) -> SessionDto {
         close_kind,
         forced_by,
         expected_cash: expected.map(Money::minor),
+        opening_proposed: None,
+        float_kept: None,
     }
+}
+
+/// The float of a closed session from its stored columns (spec 2.7 §3).
+fn float_dto(state: &SessionCashState, opening: Money, counted: Money) -> FloatDto {
+    FloatDto {
+        float_kept: state.float_kept.map(Money::minor),
+        to_safe: state
+            .float_kept
+            .map(|kept| counted.saturating_sub(kept).minor()),
+        opening_proposed: state.opening_proposed.map(Money::minor),
+        float_difference: float_difference(opening, state.opening_proposed)
+            .unwrap_or_default()
+            .minor(),
+    }
+}
+
+/// The parts of a close report besides the stored 2.1 block.
+struct CloseExtras {
+    figures: SessionFigures,
+    state: SessionCashState,
 }
 
 fn report_dto(
@@ -442,11 +464,16 @@ fn report_dto(
     context: ReportContext,
     report: &CloseReport,
     counts: &[DenominationCount],
-    sales: SalesReportDto,
+    extras: &CloseExtras,
 ) -> CloseReportDto {
+    let mut session = session_dto(record, Some(report.expected_cash));
+    session.opening_proposed = extras.state.opening_proposed.map(Money::minor);
+    session.float_kept = extras.state.float_kept.map(Money::minor);
     CloseReportDto {
-        sales,
-        session: session_dto(record, Some(report.expected_cash)),
+        sales: SalesReportDto::from(&extras.figures.sales),
+        cash: CashReportDto::from(&extras.figures),
+        float: float_dto(&extras.state, report.opening_cash, report.counted_cash),
+        session,
         forced: matches!(
             record.session.status(),
             SessionStatus::Closed {
@@ -489,6 +516,16 @@ fn report_dto(
             })
             .collect(),
     }
+}
+
+/// The float kept at a close (spec 2.7 §3, `core::cash::float_kept`): the typed one, or the
+/// opening cash capped at the count.
+fn float_kept(opening: Money, counted: Money, typed: Option<i64>) -> Result<Money, ApiError> {
+    Ok(sultan_core::cash::float_kept(
+        opening,
+        counted,
+        typed.map(Money::from_minor),
+    )?)
 }
 
 /// A non-negative amount field.
@@ -562,7 +599,12 @@ async fn visible_dto(
     } else {
         None
     };
-    Ok(session_dto(record, expected))
+    let mut dto = session_dto(record, expected);
+    if let Some(cash) = cash_db::session_cash_state(&mut *tx, record.session.id()).await? {
+        dto.opening_proposed = cash.opening_proposed.map(Money::minor);
+        dto.float_kept = cash.float_kept.map(Money::minor);
+    }
+    Ok(dto)
 }
 
 /// Whether `caller` (logged in as `user`) may read `record` (see the module docs).
@@ -666,7 +708,15 @@ async fn try_open(
         now,
         &existing,
     )?;
+    // No proposal without a float kept by the register's last session (spec 2.7 §18).
+    let last = cash_db::last_float_kept(&mut tx, register).await?;
     let number = cashier_sessions::insert(&mut tx, &session).await?;
+    let proposed = last.and_then(|kept| {
+        sultan_core::cash::opening_proposed(sultan_core::cash::proposed_float(Some(kept)), opening)
+    });
+    if let Some(p) = proposed {
+        cash_db::set_opening_proposed(&mut tx, session.id(), p).await?;
+    }
     let record = SessionRecord {
         session,
         number,
@@ -674,13 +724,21 @@ async fn try_open(
         expected_at_close: None,
     };
     let dto = visible_dto(state, &mut tx, access, &record).await?;
+    let mut after = session_dto(&record, None);
+    after.opening_proposed = proposed.map(Money::minor);
+    let mut after = to_json(&after);
+    after["float_difference"] = json!(
+        float_difference(opening, proposed)
+            .unwrap_or_default()
+            .minor()
+    );
     let entry = audit(
         &caller.user,
         now,
         "cashier_session.open",
         &record,
         None,
-        to_json(&session_dto(&record, None)),
+        after,
     );
     audit::append(&mut tx, &entry).await?;
     tx.commit().await?;
@@ -779,13 +837,13 @@ pub async fn get(
             let context = cashier_sessions::report_context(&mut tx, id)
                 .await?
                 .ok_or_else(|| ApiError::not_found("cashier session"))?;
-            let sales = sales_report(&mut tx, &record).await?;
+            let extras = stored_extras(&mut tx, &record).await?;
             Some(report_dto(
                 &record,
                 context,
                 &stored.report,
                 &stored.counts,
-                sales,
+                &extras,
             ))
         }
     };
@@ -794,6 +852,51 @@ pub async fn get(
         session,
         close_report,
     }))
+}
+
+/// The cash columns and figures of a closed session: the missing-nota count stored at its close
+/// (0 before 2.7), everything else recomputed from rows that no longer change.
+async fn stored_extras(tx: &mut Tx, record: &SessionRecord) -> Result<CloseExtras, ApiError> {
+    let state = cash_db::session_cash_state(&mut *tx, record.session.id())
+        .await?
+        .unwrap_or_default();
+    let figures = session_figures(tx, record, Some(state.missing_nota.unwrap_or(0))).await?;
+    Ok(CloseExtras { figures, state })
+}
+
+/// The stored close of `record` as `core` figures, with its float (spec 2.7 §3, §4), for the
+/// close report text and the Z. A session closed before 2.7 has no float kept: 0 kept, 0 to the
+/// safe. `None` while open.
+///
+/// # Errors
+/// The database error.
+pub(crate) async fn stored_close_figures(
+    tx: &mut Tx,
+    record: &SessionRecord,
+) -> Result<Option<(sultan_core::cash::CloseFigures, CloseReport)>, ApiError> {
+    let Some(stored) = cashier_sessions::stored_close(&mut *tx, record.session.id()).await? else {
+        return Ok(None);
+    };
+    let extras = stored_extras(tx, record).await?;
+    let report = stored.report;
+    let float_kept = extras.state.float_kept.unwrap_or_default();
+    let figures = sultan_core::cash::CloseFigures {
+        session: extras.figures,
+        counted_cash: report.counted_cash,
+        over_short: report.over_short,
+        float: sultan_core::cash::FloatFigures {
+            float_kept,
+            to_safe: if extras.state.float_kept.is_some() {
+                report.counted_cash.saturating_sub(float_kept)
+            } else {
+                Money::ZERO
+            },
+            opening_proposed: extras.state.opening_proposed,
+            float_difference: float_difference(report.opening_cash, extras.state.opening_proposed)
+                .unwrap_or_default(),
+        },
+    };
+    Ok(Some((figures, report)))
 }
 
 /// `GET /api/v1/cashier-sessions`: the sessions the caller may read, newest first.
@@ -872,10 +975,12 @@ async fn finish_close(
     mut tx: Tx,
     who: &UserSession,
     (record, report, counts): (&SessionRecord, &CloseReport, &[DenominationCount]),
+    float_kept: Money,
     action: &str,
     before: Value,
 ) -> Result<CloseReportDto, ApiError> {
     let session = &record.session;
+    let figures = session_figures(&mut tx, record, None).await?;
     cashier_sessions::close(&mut tx, session, report, counts)
         .await
         .map_err(|e| match e {
@@ -884,11 +989,18 @@ async fn finish_close(
             }),
             other => other.into(),
         })?;
+    cash_db::record_close_cash(&mut tx, session.id(), float_kept, figures.missing_nota).await?;
     let context = cashier_sessions::report_context(&mut tx, session.id())
         .await?
         .ok_or_else(|| ApiError::not_found("cashier session"))?;
-    let sales = sales_report(&mut tx, record).await?;
-    let dto = report_dto(record, context, report, counts, sales);
+    let state_after = cash_db::session_cash_state(&mut tx, session.id())
+        .await?
+        .unwrap_or_default();
+    let extras = CloseExtras {
+        figures,
+        state: state_after,
+    };
+    let dto = report_dto(record, context, report, counts, &extras);
     let now = state.now();
     let entry = audit(who, now, action, record, Some(before), to_json(&dto));
     audit::append(&mut tx, &entry).await?;
@@ -934,6 +1046,7 @@ pub async fn close(
         .ok_or_else(|| ApiError::not_found("cashier session"))?;
     let before = to_json(&session_dto(&record, None));
     let movements = crate::movements::session_movements(&state, &mut tx, id).await?;
+    let opening = record.session.opening_cash();
     let report = record
         .session
         .close(caller.user.user.id, counted, &movements, state.now())?;
@@ -944,11 +1057,13 @@ pub async fn close(
             "the session is open on another register; close it there",
         ));
     }
+    let kept = float_kept(opening, counted, body.float_kept)?;
     let dto = finish_close(
         &state,
         tx,
         &caller.user,
         (&record, &report, &counts),
+        kept,
         "cashier_session.close",
         before,
     )
@@ -988,14 +1103,17 @@ pub async fn force_close(
         .require(Permission::SessionForceClose, None)?;
     let before = to_json(&session_dto(&record, None));
     let movements = crate::movements::session_movements(&state, &mut tx, id).await?;
+    let opening = record.session.opening_cash();
     let report = record
         .session
         .force_close(caller.user.id, counted, &movements, state.now())?;
+    let kept = float_kept(opening, counted, body.float_kept)?;
     let dto = finish_close(
         &state,
         tx,
         &caller,
         (&record, &report, &counts),
+        kept,
         "cashier_session.force_close",
         before,
     )
@@ -1076,6 +1194,7 @@ mod tests {
                     })
                     .collect()
             }),
+            float_kept: None,
         }
     }
 

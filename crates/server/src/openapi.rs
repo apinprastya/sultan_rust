@@ -103,6 +103,9 @@ pub struct Problem {
     /// `no_price`: the resolved price of an open-price line, as a suggestion (or `null`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub suggestion: Option<i64>,
+    /// `sessions_open`: the numbers of the sessions of the day still open (spec 2.7 K15).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sessions: Option<Vec<String>>,
 }
 
 struct SecuritySchemes;
@@ -126,7 +129,8 @@ impl Modify for SecuritySchemes {
 #[openapi(
     info(title = "Sultan POS API", description = "REST/JSON API of a Sultan POS node \
         (docs/plan.md §1, docs/spec/2.1-organization-access.md, docs/spec/2.2-catalog.md, \
-        docs/spec/2.3-pricing.md, docs/spec/2.5-customers.md, docs/spec/2.6-sales.md). \
+        docs/spec/2.3-pricing.md, docs/spec/2.5-customers.md, docs/spec/2.6-sales.md, \
+        docs/spec/2.7-cash-management.md). \
         Quantities and unit factors are integer thousandths (`*_thousandths`), money is integer \
         minor units, times are unix milliseconds."),
     paths(
@@ -253,6 +257,23 @@ impl Modify for SecuritySchemes {
         routes::pricing::get_settings,
         routes::pricing::put_settings,
         routes::pricing_quote::quote,
+        routes::cash_reasons::list,
+        routes::cash_reasons::put,
+        routes::cash_reasons::delete,
+        routes::cash_movements::put,
+        routes::cash_movements::get,
+        routes::cash_movements::list,
+        routes::cash_movements::slip,
+        routes::cash_movements::payout_slip,
+        routes::cash_reports::x_report_json,
+        routes::cash_reports::x_report_text,
+        routes::cash_reports::close_report_text,
+        routes::cash_reports::proposed_float,
+        routes::z_reports::post,
+        routes::z_reports::list,
+        routes::z_reports::get,
+        routes::z_reports::text,
+        routes::z_reports::pending,
         events::events,
         openapi_json,
     ),
@@ -270,6 +291,7 @@ impl Modify for SecuritySchemes {
         (name = "catalog", description = "Products, variants, units, barcodes, images, categories, brands, assortment, lookup and search (spec 2.2)"),
         (name = "customers", description = "Customers, groups, membership tiers, lookup, merge, erase and the customer balance (spec 2.5)"),
         (name = "pricing", description = "Price lists, entries and tiers, tax rates, pricing settings and the quote (spec 2.3)"),
+        (name = "cash", description = "Cash in / out / safe drop, cash reasons, slips, the X report, the close report text, the float and the Z report (spec 2.7)"),
         (name = "events", description = "WebSocket event notifications (docs/plan.md §1)"),
         (name = "meta", description = "API description"),
     )
