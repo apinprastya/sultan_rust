@@ -700,6 +700,39 @@ async fn close_report_counts_cash_and_keeps_the_float(h: &Harness) {
         )
         .await;
     assert_eq!(r.body["close_report"], report);
+    // Renaming or re-sorting a reason after the close changes neither the stored report nor its
+    // reprint: the close stored the reasons as they were (§4).
+    let r = h
+        .call(
+            &owner,
+            Method::PUT,
+            &format!("/api/v1/cash-reasons/{PARKING}"),
+            Some(json!({ "name": "Transport", "direction": "out", "sort": 1 })),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    let r = h
+        .call(
+            &owner,
+            Method::GET,
+            &format!("/api/v1/cashier-sessions/{session}"),
+            None,
+        )
+        .await;
+    assert_eq!(r.body["close_report"], report);
+    let r = h
+        .call(
+            &owner,
+            Method::GET,
+            &format!("/api/v1/cashier-sessions/{session}/report/text?width=42"),
+            None,
+        )
+        .await;
+    let text = r.body["text"].as_str().unwrap();
+    assert!(
+        text.contains("parkir") && !text.contains("Transport"),
+        "{text}"
+    );
     // Its text.
     let r = h
         .call(

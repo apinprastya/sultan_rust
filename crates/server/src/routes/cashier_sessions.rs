@@ -854,8 +854,9 @@ pub async fn get(
     }))
 }
 
-/// The cash columns and figures of a closed session: the missing-nota count stored at its close
-/// (0 before 2.7), everything else recomputed from rows that no longer change.
+/// The cash columns and figures of a closed session: the missing-nota count and the reason names
+/// stored at its close (0 and the live names before 2.7), everything else recomputed from rows
+/// that no longer change.
 async fn stored_extras(tx: &mut Tx, record: &SessionRecord) -> Result<CloseExtras, ApiError> {
     let state = cash_db::session_cash_state(&mut *tx, record.session.id())
         .await?
@@ -990,6 +991,7 @@ async fn finish_close(
             other => other.into(),
         })?;
     cash_db::record_close_cash(&mut tx, session.id(), float_kept, figures.missing_nota).await?;
+    cash_db::record_close_reasons(&mut tx, session.id(), &figures.cash.reasons).await?;
     let context = cashier_sessions::report_context(&mut tx, session.id())
         .await?
         .ok_or_else(|| ApiError::not_found("cashier session"))?;

@@ -93,7 +93,9 @@ where
 }
 
 /// The session's figures (see the module docs). `stored_missing` replaces the live missing-nota
-/// count (a closed session's count at its close).
+/// count (a closed session's count at its close); with it, the reason names and sort orders
+/// stored at the close (`record_close_reasons`) also replace the live ones, so a stored close
+/// report and a Z never change when a reason is renamed (spec 2.7 §4).
 ///
 /// # Errors
 /// The database error, or `422 amount_overflow`.
@@ -110,11 +112,16 @@ pub async fn session_figures(
         events.push(SessionEvent::Payout(payouts));
     }
     let inputs = cash::session_cash(&mut *tx, id).await?;
-    let reasons: Vec<CashReason> = cash::list_cash_reasons(&mut *tx, true)
+    let mut reasons: Vec<CashReason> = cash::list_cash_reasons(&mut *tx, true)
         .await?
         .into_iter()
         .map(|r| r.reason)
         .collect();
+    if stored_missing.is_some() {
+        let stored = cash::close_reasons(&mut *tx, id).await?;
+        reasons.retain(|live| stored.iter().all(|s| s.id != live.id));
+        reasons.extend(stored);
+    }
     let flag = cash::nota_flag_above(&mut *tx).await?;
     let mut figures = sultan_core::cash::session_figures(&SessionInput {
         opening_cash: record.session.opening_cash(),

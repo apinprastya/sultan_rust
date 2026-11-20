@@ -58,6 +58,7 @@ Persistence for Sultan POS: sqlx migrations and repositories for SQLite and MySQ
 | `cash_movement_photo` | Nota photo records (append-only by trigger): sha256, size, who, when; `photo_no` 1–3 under `UNIQUE (movement_id, photo_no)`, so a movement never has a fourth. The file itself lives on the node's disk (K6). |
 | `z_report` | The Z of a branch's business day (append-only by trigger): number `<BRANCH>-Z-<YYMMDD>-<NN>` under `UNIQUE (branch_id, business_day, seq)`, `supplementary` (= `seq > 1`), headline totals and the server's JSON snapshot `figures`. |
 | `cashier_session` + | `float_kept`, `missing_nota` (written at the close), `opening_proposed` (at the open), `z_report_id` (the Z that covers it). |
+| `cashier_session_reason` | The cash reasons of a close report as at the close (name, direction, sort; `record_close_reasons`, once), read back by `close_reasons` so a renamed reason never changes a stored report or a later Z (migration `20261121000002_session_reasons`). |
 | `sales_settings` + | `nota_flag_above` (Rp, default 100 000, `0` = off); `cash_since` (unix ms, migration `20261121000001_cash_since`, K3): when cash management was installed, the time that migration ran. |
 
 - **Posting** (`post_cash_movement`) re-checks the open session, the reason (exists, active, not

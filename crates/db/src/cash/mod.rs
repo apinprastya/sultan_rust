@@ -66,9 +66,9 @@ pub use reasons::{
     list_cash_reasons, put_cash_reason,
 };
 pub use sessions::{
-    DRAWER_OPEN_ACTION, SessionCash, SessionCashState, X_REPORT_ACTION, cash_since,
-    last_float_kept, nota_flag_above, proposed_float, record_close_cash, session_cash,
-    session_cash_events, session_cash_state, set_opening_proposed,
+    DRAWER_OPEN_ACTION, SessionCash, SessionCashState, X_REPORT_ACTION, cash_since, close_reasons,
+    last_float_kept, nota_flag_above, proposed_float, record_close_cash, record_close_reasons,
+    session_cash, session_cash_events, session_cash_state, set_opening_proposed,
 };
 pub use z::{
     DaySession, NewZReport, PendingDay, ZFilter, ZNumber, ZReportRecord, day_sessions,
