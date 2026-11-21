@@ -9,15 +9,19 @@
 //!   `core::tax::line_tax` at the rate of the sold line (tax-inclusive, since a refund is what the
 //!   customer paid; no tax when the sold line had none). A return without a receipt has no sold
 //!   line and so no known rate: it is left out of the tax summary.
+//!
+//! Per-rate sums that overflow are [`CashError::AmountOverflow`] (`422 amount_overflow`), never
+//! clamped (spec 2.7 §16 reading 8).
 
 use std::collections::BTreeMap;
 
-use sultan_core::cash::{SaleRef, SessionSales};
+use sultan_core::cash::{CashError, SaleRef, SessionSales};
 use sultan_core::ids::CashierSessionId;
 use sultan_core::money::Money;
 use sultan_core::sale::TaxLine;
 use sultan_core::tax::{TaxSettings, line_tax};
 
+use super::CashResult;
 use crate::conn::Conn;
 use crate::error::{DbError, Result};
 use crate::sql::{self, Row, args};
@@ -27,24 +31,33 @@ fn rate(row: &dyn Row) -> Result<u16> {
     u16::try_from(value).map_err(|_| DbError::Corrupt(format!("tax rate {value} out of range")))
 }
 
-fn add_line(by_rate: &mut BTreeMap<u16, TaxLine>, rate_bp: u16, base: Money, tax: Money) {
+fn add_line(
+    by_rate: &mut BTreeMap<u16, TaxLine>,
+    rate_bp: u16,
+    base: Money,
+    tax: Money,
+) -> CashResult<()> {
     let line = by_rate.entry(rate_bp).or_insert(TaxLine {
         rate_bp,
         base: Money::ZERO,
         tax: Money::ZERO,
     });
-    line.base = line.base.saturating_add(base);
-    line.tax = line.tax.saturating_add(tax);
+    line.base = line
+        .base
+        .checked_add(base)
+        .ok_or(CashError::AmountOverflow)?;
+    line.tax = line.tax.checked_add(tax).ok_or(CashError::AmountOverflow)?;
+    Ok(())
 }
 
 /// The sales figures of `session` for its Z (see the module docs).
 ///
 /// # Errors
-/// The database error.
+/// The database error, or [`CashError::AmountOverflow`] when a per-rate sum overflows.
 pub async fn session_sales<'c>(
     conn: impl Into<Conn<'c>>,
     session: CashierSessionId,
-) -> Result<SessionSales> {
+) -> CashResult<SessionSales> {
     let mut conn = conn.into();
     let sales = sql::fetch_all(
         conn.reborrow(),
@@ -99,7 +112,7 @@ pub async fn session_sales<'c>(
     )
     .await?;
     for t in voided {
-        add_line(&mut returned, t.rate_bp, t.base, t.tax);
+        add_line(&mut returned, t.rate_bp, t.base, t.tax)?;
     }
     let lines = sql::fetch_all(
         conn,
@@ -123,7 +136,7 @@ pub async fn session_sales<'c>(
             registered: taxed,
         };
         let t = line_tax(refund, rate_bp, settings);
-        add_line(&mut returned, rate_bp, t.net, t.tax);
+        add_line(&mut returned, rate_bp, t.net, t.tax)?;
     }
     Ok(SessionSales {
         count: u32::try_from(sales.len()).unwrap_or(u32::MAX),
@@ -133,4 +146,52 @@ pub async fn session_sales<'c>(
         tax,
         returns_tax: returned.into_values().collect(),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::cash::CashDbError;
+
+    #[test]
+    fn per_rate_sums_add_up_and_never_clamp() {
+        let mut by_rate = BTreeMap::new();
+        add_line(
+            &mut by_rate,
+            1100,
+            Money::from_minor(900),
+            Money::from_minor(99),
+        )
+        .unwrap();
+        add_line(
+            &mut by_rate,
+            1100,
+            Money::from_minor(100),
+            Money::from_minor(11),
+        )
+        .unwrap();
+        add_line(&mut by_rate, 0, Money::from_minor(5), Money::ZERO).unwrap();
+        assert_eq!(
+            by_rate[&1100],
+            TaxLine {
+                rate_bp: 1100,
+                base: Money::from_minor(1_000),
+                tax: Money::from_minor(110),
+            }
+        );
+        assert_eq!(by_rate.len(), 2);
+        for (base, tax) in [(i64::MAX, 0), (0, i64::MAX)] {
+            let mut by_rate = by_rate.clone();
+            let r = add_line(
+                &mut by_rate,
+                1100,
+                Money::from_minor(base),
+                Money::from_minor(tax),
+            );
+            assert!(
+                matches!(r, Err(CashDbError::Rule(CashError::AmountOverflow))),
+                "{r:?}"
+            );
+        }
+    }
 }
