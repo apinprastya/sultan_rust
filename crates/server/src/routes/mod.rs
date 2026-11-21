@@ -14,6 +14,9 @@
 //! - S3 (spec 2.6): tender types ([`tender_types`]), sales and post-voids, till voids and
 //!   receipts ([`sales`], built by [`sale_post`]), returns and exchanges ([`returns`]), held carts
 //!   ([`held_carts`]), the purchase history ([`customers`]).
+//! - K3 (spec 2.7): cash reasons ([`cash_reasons`]), cash in / out / drop and slips
+//!   ([`cash_movements`]), the X report, the close report text and the proposed float
+//!   ([`cash_reports`]), the Z report ([`z_reports`]), sharing the figures of [`cash`].
 //!
 //! Master-data writes follow one pattern (`docs/plan.md` §1, spec 2.1 §1, §7):
 //! - `PUT /{resource}/{uuid}` creates (`201`) or overwrites (`200`) the record with a
@@ -26,6 +29,10 @@
 pub mod audit;
 pub mod auth;
 pub mod branches;
+pub mod cash;
+pub mod cash_movements;
+pub mod cash_reasons;
+pub mod cash_reports;
 pub mod cashier_sessions;
 pub mod catalog;
 pub mod customer_balance;
@@ -49,6 +56,7 @@ pub mod sales_settings;
 pub mod taxonomy;
 pub mod tender_types;
 pub mod users;
+pub mod z_reports;
 
 use std::str::FromStr;
 

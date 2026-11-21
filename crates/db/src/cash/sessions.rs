@@ -1,14 +1,18 @@
 //! What cash management adds to a cashier session (spec 2.7 §3, §4, §5): its cash movements,
 //! photo counts, no-sale drawer opens and X reads (the inputs of `core::cash::session_figures`),
 //! the float kept at the close and proposed at the next open (K20), and the close-time
-//! missing-nota count.
+//! missing-nota count and cash reasons ([`record_close_reasons`]: a stored close report keeps the
+//! reason names it was made with, §4).
 
 use std::collections::BTreeMap;
 
-use sultan_core::cash::{CashFigures, CashMovement, proposed_float as propose};
-use sultan_core::ids::{CashMovementId, CashierSessionId, RegisterId, ZReportId};
+use sultan_core::cash::{
+    CashFigures, CashMovement, CashReason, Direction, ReasonLine, proposed_float as propose,
+};
+use sultan_core::ids::{CashMovementId, CashReasonId, CashierSessionId, RegisterId, ZReportId};
 use sultan_core::money::Money;
 use sultan_core::sale::SessionEvent;
+use sultan_core::time::Timestamp;
 
 use super::count;
 use super::movements::map_movement;
@@ -143,6 +147,24 @@ pub async fn nota_flag_above<'c>(conn: impl Into<Conn<'c>>) -> Result<Money> {
     .ok_or_else(|| DbError::Corrupt("sales_settings row is missing".into()))
 }
 
+/// When cash management was installed (`sales_settings.cash_since`, migration
+/// `20261121000001_cash_since`): the upgrade of an existing install or the first migration run of
+/// a fresh one. The days still to close start at its branch-local day (spec 2.7 §17 reading 10,
+/// [`super::pending_days`]); `None` lists every day.
+///
+/// # Errors
+/// The database error.
+pub async fn cash_since<'c>(conn: impl Into<Conn<'c>>) -> Result<Option<Timestamp>> {
+    Ok(sql::fetch_optional(
+        conn.into(),
+        "SELECT cash_since FROM sales_settings WHERE id = 1",
+        args![],
+        |row| sql::opt_ts(row, "cash_since"),
+    )
+    .await?
+    .flatten())
+}
+
 /// The cash columns of a session; `None` for an unknown session.
 ///
 /// # Errors
@@ -179,7 +201,20 @@ pub async fn session_cash_state<'c>(
 /// # Errors
 /// The database error.
 pub async fn proposed_float<'c>(conn: impl Into<Conn<'c>>, register: RegisterId) -> Result<Money> {
-    let last = sql::fetch_optional(
+    Ok(propose(last_float_kept(conn, register).await?))
+}
+
+/// The float kept by the last closed session of `register` (by close time); `None` when the
+/// register has no closed session or the last one kept none (closed before 2.7). The server stores
+/// no `opening_proposed` then (spec 2.7 §18): there is nothing to compare the opening cash with.
+///
+/// # Errors
+/// The database error.
+pub async fn last_float_kept<'c>(
+    conn: impl Into<Conn<'c>>,
+    register: RegisterId,
+) -> Result<Option<Money>> {
+    Ok(sql::fetch_optional(
         conn.into(),
         "SELECT float_kept FROM cashier_session WHERE register_id = ? AND closed_at IS NOT NULL \
          ORDER BY closed_at DESC, id DESC LIMIT 1",
@@ -188,8 +223,7 @@ pub async fn proposed_float<'c>(conn: impl Into<Conn<'c>>, register: RegisterId)
     )
     .await?
     .flatten()
-    .map(Money::from_minor);
-    Ok(propose(last))
+    .map(Money::from_minor))
 }
 
 /// Stores the proposal of an open session whose typed opening cash differed from it (§3,
@@ -238,4 +272,77 @@ pub async fn record_close_cash(
         return Err(DbError::NotFound("closed cashier session"));
     }
     Ok(())
+}
+
+/// Stores the cash reasons of a session's close report as they are at the close (name, direction,
+/// sort; §4, §17 reading 5), in the close transaction after [`record_close_cash`], so renaming a
+/// reason later changes neither the stored report nor a Z run on it ([`close_reasons`]).
+///
+/// # Errors
+/// [`DbError::NotFound`] when the session is not closed; [`DbError::Conflict`] when they were
+/// stored already; or the database error.
+pub async fn record_close_reasons(
+    tx: &mut Tx,
+    session: CashierSessionId,
+    lines: &BTreeMap<CashReasonId, ReasonLine>,
+) -> Result<()> {
+    let closed = sql::fetch_optional(
+        Conn::Tx(&mut *tx),
+        "SELECT id FROM cashier_session WHERE id = ? AND closed_at IS NOT NULL",
+        args![session],
+        |_| Ok(()),
+    )
+    .await?;
+    if closed.is_none() {
+        return Err(DbError::NotFound("closed cashier session"));
+    }
+    for (id, line) in lines {
+        sql::execute(
+            Conn::Tx(&mut *tx),
+            "INSERT INTO cashier_session_reason \
+             (cashier_session_id, reason_id, name, direction, sort_order) VALUES (?, ?, ?, ?, ?)",
+            args![
+                session,
+                *id,
+                line.name.as_str(),
+                line.direction.as_str(),
+                i64::from(line.sort)
+            ],
+        )
+        .await?;
+    }
+    Ok(())
+}
+
+/// The cash reasons stored at the close of `session` ([`record_close_reasons`]), as
+/// `core::cash::CashReason`s for `core::cash::session_figures` (inactive, no note required: only
+/// the name, direction and sort count). Empty while open and for a session closed before 2.7.
+///
+/// # Errors
+/// The database error; [`DbError::Corrupt`] for a bad direction or sort.
+pub async fn close_reasons<'c>(
+    conn: impl Into<Conn<'c>>,
+    session: CashierSessionId,
+) -> Result<Vec<CashReason>> {
+    sql::fetch_all(
+        conn.into(),
+        "SELECT reason_id, name, direction, sort_order FROM cashier_session_reason \
+         WHERE cashier_session_id = ? ORDER BY reason_id",
+        args![session],
+        |row| {
+            let direction = row.text("direction")?;
+            let sort = row.i64("sort_order")?;
+            Ok(CashReason {
+                id: sql::id(row, "reason_id")?,
+                name: row.text("name")?,
+                direction: Direction::from_key(&direction)
+                    .ok_or_else(|| DbError::Corrupt(format!("unknown direction `{direction}`")))?,
+                active: false,
+                sort: i32::try_from(sort)
+                    .map_err(|_| DbError::Corrupt(format!("sort_order {sort} out of range")))?,
+                note_required: false,
+            })
+        },
+    )
+    .await
 }

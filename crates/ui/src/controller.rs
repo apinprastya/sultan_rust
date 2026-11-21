@@ -171,8 +171,11 @@ pub fn value_text(action: &str, value: Option<i64>) -> String {
     }
 }
 
-/// API codes shown with a message of the same code (spec 2.6: the sale's rules).
-const PLAIN_CODES: [&str; 11] = [
+/// API codes shown with a message of the same code (spec 2.6: the sale's rules; spec 2.7: cash).
+const PLAIN_CODES: [&str; 14] = [
+    "nothing_to_close",
+    "already_reversed",
+    "photo_limit",
     "tender_reference_required",
     "insufficient_balance",
     "balance_limit",
@@ -230,6 +233,7 @@ pub fn notice_for(error: &ClientError) -> Notice {
             problem.permission().unwrap_or_default().to_owned(),
             Tone::Bad,
         ),
+        "sessions_open" => Notice::new("sessions_open", problem.sessions().join(", "), Tone::Bad),
         code if PLAIN_CODES.contains(&code) => Notice::bad(
             PLAIN_CODES
                 .iter()
@@ -1899,6 +1903,11 @@ mod tests {
             (api(p(409, "session_closed")), "session_closed", ""),
             (api(p(409, "no_open_session")), "no_open_session", ""),
             (api(p(422, "invalid_field")), "invalid_amount", ""),
+            (api(p(409, "sessions_open").with("sessions", vec!["A-S-1", "B-S-2"])), "sessions_open",
+                "A-S-1, B-S-2"),
+            (api(p(409, "nothing_to_close")), "nothing_to_close", ""),
+            (api(p(409, "already_reversed")), "already_reversed", ""),
+            (api(p(409, "photo_limit")), "photo_limit", ""),
             (api(p(500, "internal")), "error", "internal"),
         ];
         for (error, code, arg) in cases {

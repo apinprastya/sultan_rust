@@ -63,6 +63,11 @@
 //! | 422 | `tender_over_rest` | a non-cash tender above the rest (spec 2.6 §5); `field: amount`, `rest` |
 //! | 422 | `cart_too_large` | more than 300 lines (spec 2.6 §2); `max` |
 //! | 422 | `invalid_qty` | a sale or return quantity ≤ 0, above 99 999.999 or with decimals for an integer unit (spec 2.6 §19 item 1); `field: qty` |
+//! | 409 | `already_reversed` | the cash movement was reversed already (spec 2.7 K10); `field: reverses` |
+//! | 409 | `sessions_open` | a Z of a day with a cashier session still open (spec 2.7 K15); `sessions` lists their numbers |
+//! | 409 | `nothing_to_close` | no closed session of the day is left without a Z (spec 2.7 §6) |
+//! | 409 | `photo_limit` | a fourth nota photo of a cash movement (spec 2.7 §2a; the upload route comes with K6); `max` |
+//! | 409 | `conflict` / `archived` | also: a cash movement ID posted again with another body; an archived cash reason cannot be edited (spec 2.7 §11) |
 //! | 423 | `locked_out` | too many failures; `locked_until` (unix ms) is included (§4) |
 //! | 500 | `internal` | database or other unexpected error (details are not exposed) |
 
@@ -71,10 +76,12 @@ use axum::http::{HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use serde_json::{Map, Value, json};
 use sultan_core::access::{AccessError, Limit};
+use sultan_core::cash::CashError;
 use sultan_core::cashier_session::{OpenConflict, SessionError};
 use sultan_core::catalog::CatalogError;
 use sultan_core::customer::{CustomerCode, CustomerError, Phone};
 use sultan_db::DbError;
+use sultan_db::cash::CashDbError;
 use sultan_db::catalog::{CatalogDbError, Duplicate};
 use sultan_db::customers::CustomerDbError;
 use sultan_db::pricing::PricingDbError;
@@ -631,6 +638,44 @@ impl From<SaleDbError> for ApiError {
     }
 }
 
+impl From<CashError> for ApiError {
+    fn from(error: CashError) -> Self {
+        let status = match &error {
+            CashError::InvalidField { .. } | CashError::AmountOverflow => {
+                StatusCode::UNPROCESSABLE_ENTITY
+            }
+            CashError::AlreadyReversed
+            | CashError::PhotoLimit { .. }
+            | CashError::SessionsOpen { .. }
+            | CashError::NothingToClose => StatusCode::CONFLICT,
+        };
+        let mut api = Self::new(status, error.code(), error.to_string());
+        if let Some(field) = error.field() {
+            api = api.with("field", field);
+        }
+        match error {
+            CashError::SessionsOpen { numbers } => api.with("sessions", numbers),
+            CashError::PhotoLimit { max } => api.with("max", max),
+            _ => api,
+        }
+    }
+}
+
+impl From<CashDbError> for ApiError {
+    fn from(error: CashDbError) -> Self {
+        let detail = error.to_string();
+        match error {
+            CashDbError::NotFound(what) => Self::not_found(what),
+            CashDbError::Invalid { field, message } => Self::invalid_field(field, message),
+            CashDbError::Archived => Self::new(StatusCode::CONFLICT, "archived", detail),
+            CashDbError::NoOpenSession => SessionError::NoOpenSession.into(),
+            CashDbError::Rule(rule) => rule.into(),
+            CashDbError::Conflict(..) => Self::new(StatusCode::CONFLICT, "conflict", detail),
+            CashDbError::Db(e) => e.into(),
+        }
+    }
+}
+
 impl From<JsonRejection> for ApiError {
     fn from(rejection: JsonRejection) -> Self {
         Self::new(rejection.status(), "invalid_body", rejection.body_text())
@@ -726,6 +771,71 @@ mod tests {
             assert_eq!(error.status().as_u16(), status, "{code}");
             assert_eq!(error.code(), code);
         }
+    }
+
+    #[test]
+    fn cash_errors_map_to_status_code_and_members() {
+        let cases: Vec<(ApiError, u16, &str)> = vec![
+            (
+                CashError::InvalidField {
+                    field: "amount",
+                    reason: "x",
+                }
+                .into(),
+                422,
+                "invalid_field",
+            ),
+            (CashError::AmountOverflow.into(), 422, "amount_overflow"),
+            (CashError::AlreadyReversed.into(), 409, "already_reversed"),
+            (CashError::PhotoLimit { max: 3 }.into(), 409, "photo_limit"),
+            (
+                CashError::SessionsOpen {
+                    numbers: vec!["A".into()],
+                }
+                .into(),
+                409,
+                "sessions_open",
+            ),
+            (CashError::NothingToClose.into(), 409, "nothing_to_close"),
+            (CashDbError::NotFound("x").into(), 404, "not_found"),
+            (
+                CashDbError::Invalid {
+                    field: "reason",
+                    message: "x".into(),
+                }
+                .into(),
+                422,
+                "invalid_field",
+            ),
+            (CashDbError::Archived.into(), 409, "archived"),
+            (CashDbError::NoOpenSession.into(), 409, "no_open_session"),
+            (
+                CashDbError::Rule(CashError::NothingToClose).into(),
+                409,
+                "nothing_to_close",
+            ),
+            (
+                CashDbError::Conflict("cash movement", uuid::Uuid::nil()).into(),
+                409,
+                "conflict",
+            ),
+            (
+                CashDbError::Db(DbError::NotFound("x")).into(),
+                404,
+                "not_found",
+            ),
+        ];
+        for (api, status, code) in cases {
+            assert_eq!((api.status().as_u16(), api.code()), (status, code));
+        }
+        let open = ApiError::from(CashError::SessionsOpen {
+            numbers: vec!["A-S-1".into()],
+        });
+        assert_eq!(open.extensions["sessions"], json!(["A-S-1"]));
+        let reversed = ApiError::from(CashError::AlreadyReversed);
+        assert_eq!(reversed.extensions["field"], "reverses");
+        let limit = ApiError::from(CashError::PhotoLimit { max: 3 });
+        assert_eq!(limit.extensions["max"], 3);
     }
 
     #[test]

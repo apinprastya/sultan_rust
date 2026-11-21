@@ -25,6 +25,7 @@
 //! (read-only in the catalog), the core catalog rules and the server's error shapes.
 
 mod backoffice;
+mod cash;
 mod customers;
 mod sales;
 
@@ -37,11 +38,12 @@ use sultan_core::time::Timestamp;
 use crate::{
     Branch, CashierSession, ClientError, CloseReport, CloseRequest, EventSink, LockUser, Login,
     OverrideGrant, OverrideRequest, Problem, ProtectedAction, ProtectedResult, ServerEvent,
-    Service, SessionDetail, SessionPage, SessionQuery, TenderTotal,
+    Service, SessionDetail, SessionPage, SessionQuery,
 };
 
 pub use backoffice::{BackOfficeUser, EXEMPT_TAX_CLASS, OTHER_BRANCH_ID, STANDARD_TAX_CLASS};
 pub use backoffice::{PriceCustomer, PricingDemo};
+pub use cash::SEED_REASONS;
 pub use customers::{ERASED_NAME, SEED_BUDI, SEED_GOLD, SEED_GROUP, SEED_SILVER, SEED_SITI};
 pub use sales::{SalesDemo, TENDER_BALANCE, TENDER_CARD, TENDER_CASH, TENDER_QRIS};
 
@@ -119,6 +121,7 @@ struct State {
     catalog: backoffice::Catalog,
     customers: customers::Customers,
     sales: sales::Sales,
+    cash: cash::Cash,
 }
 
 /// The fake service; see the module docs.
@@ -281,6 +284,8 @@ impl State {
             status: "open".to_owned(),
             closed_at: None,
             expected_cash: None,
+            opening_proposed: None,
+            float_kept: None,
         }
     }
 
@@ -433,7 +438,8 @@ impl Service for FakeService {
                 .with("session_id", open.id.clone())
                 .into()));
         }
-        let session = s.new_session(&user.id, opening_cash);
+        let mut session = s.new_session(&user.id, opening_cash);
+        s.propose(&mut session);
         s.session = Some(session.clone());
         s.history.push((session.clone(), None));
         s.opened_by_key.insert(key.to_owned(), session.clone());
@@ -456,7 +462,7 @@ impl Service for FakeService {
             Ok(u) => u,
             Err(e) => return ready(Err(e)),
         };
-        let Some(mut session) = s.session.clone().filter(|o| o.id == session_id) else {
+        let Some(session) = s.session.clone().filter(|o| o.id == session_id) else {
             return ready(Err(Problem::new(409, "session_closed", "closed")
                 .with("session_id", session_id)
                 .into()));
@@ -464,50 +470,7 @@ impl Service for FakeService {
         if session.user_id != user.id {
             return ready(Err(api(403, "not_session_owner")));
         }
-        // Balance payouts (spec 2.5 §11) are cash out of the drawer.
-        let cash_out = s.customers.paid_out(&session.id);
-        let expected = session.opening_cash + s.cash_sales - cash_out;
-        "closed".clone_into(&mut session.status);
-        session.closed_at = Some(s.now);
-        session.expected_cash = Some(expected);
-        s.session = None;
-        let tenders = if s.cash_sales > 0 {
-            vec![TenderTotal {
-                tender: "cash".to_owned(),
-                sales: s.cash_sales,
-                refunds: 0,
-                net: s.cash_sales,
-                count: 3,
-            }]
-        } else {
-            Vec::new()
-        };
-        let report = CloseReport {
-            forced: false,
-            branch_code: "JKT01".to_owned(),
-            branch_name: "Toko Jakarta".to_owned(),
-            timezone: "Asia/Jakarta".to_owned(),
-            register_code: "R1".to_owned(),
-            register_name: "Register 1".to_owned(),
-            cashier_name: user.name,
-            forced_by_name: None,
-            opening_cash: session.opening_cash,
-            cash_sales: s.cash_sales,
-            cash_refunds: 0,
-            cash_in: 0,
-            cash_out,
-            expected_cash: expected,
-            counted_cash: body.counted_cash,
-            over_short: body.counted_cash - expected,
-            transactions: if s.cash_sales > 0 { 3 } else { 0 },
-            tenders,
-            counts: body.counts.clone().unwrap_or_default(),
-            session,
-        };
-        if let Some(entry) = s.history.iter_mut().find(|(h, _)| h.id == session_id) {
-            *entry = (report.session.clone(), Some(report.clone()));
-        }
-        ready(Ok(report))
+        ready(s.close_with_cash(&user.name, session_id, body, None))
     }
 
     fn session(&self, token: &str, session_id: &str) -> crate::BoxFuture<SessionDetail> {
@@ -604,9 +567,17 @@ impl Service for FakeService {
             return ready(Err(e));
         }
         // The approver's limit is a percentage (basis points); Rupiah limits such as
-        // `refund.no_receipt` are unlimited for a manager here.
-        let percentage = !body.action.starts_with("refund.");
-        if percentage && body.value.unwrap_or(0) > approver.discount_limit {
+        // `refund.no_receipt` are unlimited for a manager here. Cash actions follow the fake's
+        // Manager and Cashier grants (`cash`).
+        if cash::is_cash_action(&body.action) {
+            if !cash::may_approve(&approver, &body.action, body.value) {
+                return ready(Err(Problem::new(403, "override_limit_exceeded", "limit")
+                    .with("permission", body.action.clone())
+                    .into()));
+            }
+        } else if !body.action.starts_with("refund.")
+            && body.value.unwrap_or(0) > approver.discount_limit
+        {
             return ready(Err(Problem::new(403, "override_limit_exceeded", "limit")
                 .with("permission", body.action.clone())
                 .with("limit", approver.discount_limit)
@@ -896,6 +867,116 @@ impl Service for FakeService {
     ) -> crate::BoxFuture<crate::DrawerOpen> {
         self.drawer_call(token, body, key, override_token)
     }
+
+    fn cash_reasons(&self, token: &str) -> crate::BoxFuture<Vec<crate::CashReason>> {
+        self.cash_reasons_call(token, false)
+    }
+
+    fn post_cash_movement(
+        &self,
+        token: &str,
+        id: &str,
+        body: &crate::CashMovementRequest,
+        override_token: Option<&str>,
+    ) -> crate::BoxFuture<crate::CashMovement> {
+        self.post_cash_call(token, id, body, override_token)
+    }
+
+    fn cash_movement(&self, token: &str, id: &str) -> crate::BoxFuture<crate::CashMovement> {
+        self.cash_movement_call(token, id)
+    }
+
+    fn cash_movements(
+        &self,
+        token: &str,
+        query: &crate::CashQuery,
+    ) -> crate::BoxFuture<crate::CashMovementPage> {
+        self.cash_movements_call(token, query)
+    }
+
+    fn cash_slip(
+        &self,
+        token: &str,
+        id: &str,
+        copy: bool,
+        lang: &str,
+        override_token: Option<&str>,
+    ) -> crate::BoxFuture<crate::CashText> {
+        self.cash_slip_call(token, id, copy, lang, override_token)
+    }
+
+    fn payout_slip(
+        &self,
+        token: &str,
+        customer_id: &str,
+        entry_id: &str,
+        copy: bool,
+        lang: &str,
+        override_token: Option<&str>,
+    ) -> crate::BoxFuture<crate::CashText> {
+        self.payout_slip_call(token, customer_id, entry_id, copy, lang, override_token)
+    }
+
+    fn x_report(
+        &self,
+        token: &str,
+        session_id: &str,
+        override_token: Option<&str>,
+    ) -> crate::BoxFuture<crate::XReport> {
+        self.x_report_call(token, session_id, override_token)
+    }
+
+    fn x_report_text(
+        &self,
+        token: &str,
+        session_id: &str,
+        lang: &str,
+        override_token: Option<&str>,
+    ) -> crate::BoxFuture<crate::CashText> {
+        self.x_report_text_call(token, session_id, lang, override_token)
+    }
+
+    fn close_report_text(
+        &self,
+        token: &str,
+        session_id: &str,
+        copy: bool,
+        lang: &str,
+    ) -> crate::BoxFuture<crate::CashText> {
+        self.close_report_text_call(token, session_id, copy, lang)
+    }
+
+    fn proposed_float(&self, token: &str) -> crate::BoxFuture<crate::ProposedFloat> {
+        self.proposed_float_call(token)
+    }
+
+    fn run_z(
+        &self,
+        token: &str,
+        body: &crate::ZRunRequest,
+        key: &str,
+        override_token: Option<&str>,
+    ) -> crate::BoxFuture<crate::ZReport> {
+        self.run_z_call(token, body, key, override_token)
+    }
+
+    fn z_report_text(
+        &self,
+        token: &str,
+        id: &str,
+        copy: bool,
+        lang: &str,
+    ) -> crate::BoxFuture<crate::CashText> {
+        self.z_report_text_call(token, id, copy, lang)
+    }
+
+    fn pending_days(
+        &self,
+        token: &str,
+        branch_id: Option<&str>,
+    ) -> crate::BoxFuture<Vec<crate::PendingDay>> {
+        self.pending_days_call(token, branch_id)
+    }
 }
 
 #[cfg(test)]
@@ -916,6 +997,7 @@ mod tests {
         let body = CloseRequest {
             counted_cash: 0,
             counts: None,
+            float_kept: None,
         };
         now(fake.close_session(token, id, &body, "k")).unwrap()
     }

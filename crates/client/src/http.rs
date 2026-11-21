@@ -26,6 +26,10 @@ use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::tungstenite::http::HeaderValue;
 
+use crate::cash::{
+    CashMovement, CashMovementPage, CashMovementRequest, CashQuery, CashReason, CashReasonBody,
+    CashText, PendingDay, ProposedFloat, XReport, ZQuery, ZReport, ZReportPage, ZRunRequest,
+};
 use crate::catalog::{
     Brand, BrandBody, CatalogSettings, Category, CategoryBody, CategoryNode, Generate, ImageInfo,
     Lookup, Me, Product, ProductPage, ProductQuery, SearchPage, TaxClass,
@@ -553,6 +557,171 @@ impl Service for HttpService {
         Box::pin(send(with_override(request, override_token)))
     }
 
+    fn cash_reasons(&self, token: &str) -> crate::BoxFuture<Vec<CashReason>> {
+        Box::pin(send(self.request(
+            Method::GET,
+            "/cash-reasons",
+            Some(token),
+        )))
+    }
+
+    fn post_cash_movement(
+        &self,
+        token: &str,
+        id: &str,
+        body: &CashMovementRequest,
+        override_token: Option<&str>,
+    ) -> crate::BoxFuture<CashMovement> {
+        let request = self
+            .request(Method::PUT, &format!("/cash-movements/{id}"), Some(token))
+            .json(body);
+        Box::pin(send(with_override(request, override_token)))
+    }
+
+    fn cash_movement(&self, token: &str, id: &str) -> crate::BoxFuture<CashMovement> {
+        Box::pin(send(self.request(
+            Method::GET,
+            &format!("/cash-movements/{id}"),
+            Some(token),
+        )))
+    }
+
+    fn cash_movements(&self, token: &str, query: &CashQuery) -> crate::BoxFuture<CashMovementPage> {
+        let request = self
+            .request(Method::GET, "/cash-movements", Some(token))
+            .query(query);
+        Box::pin(send(request))
+    }
+
+    fn cash_slip(
+        &self,
+        token: &str,
+        id: &str,
+        copy: bool,
+        lang: &str,
+        override_token: Option<&str>,
+    ) -> crate::BoxFuture<CashText> {
+        let request = self
+            .request(
+                Method::GET,
+                &format!("/cash-movements/{id}/slip"),
+                Some(token),
+            )
+            .query(&text_query(copy, lang));
+        Box::pin(send(with_override(request, override_token)))
+    }
+
+    fn payout_slip(
+        &self,
+        token: &str,
+        customer_id: &str,
+        entry_id: &str,
+        copy: bool,
+        lang: &str,
+        override_token: Option<&str>,
+    ) -> crate::BoxFuture<CashText> {
+        let path = format!("/customers/{customer_id}/balance/payouts/{entry_id}/slip");
+        let request = self
+            .request(Method::GET, &path, Some(token))
+            .query(&text_query(copy, lang));
+        Box::pin(send(with_override(request, override_token)))
+    }
+
+    fn x_report(
+        &self,
+        token: &str,
+        session_id: &str,
+        override_token: Option<&str>,
+    ) -> crate::BoxFuture<XReport> {
+        let request = self.request(
+            Method::GET,
+            &format!("/cashier-sessions/{session_id}/x-report"),
+            Some(token),
+        );
+        Box::pin(send(with_override(request, override_token)))
+    }
+
+    fn x_report_text(
+        &self,
+        token: &str,
+        session_id: &str,
+        lang: &str,
+        override_token: Option<&str>,
+    ) -> crate::BoxFuture<CashText> {
+        let request = self
+            .request(
+                Method::GET,
+                &format!("/cashier-sessions/{session_id}/x-report/text"),
+                Some(token),
+            )
+            .query(&[("lang", lang)]);
+        Box::pin(send(with_override(request, override_token)))
+    }
+
+    fn close_report_text(
+        &self,
+        token: &str,
+        session_id: &str,
+        copy: bool,
+        lang: &str,
+    ) -> crate::BoxFuture<CashText> {
+        let request = self
+            .request(
+                Method::GET,
+                &format!("/cashier-sessions/{session_id}/report/text"),
+                Some(token),
+            )
+            .query(&text_query(copy, lang));
+        Box::pin(send(request))
+    }
+
+    fn proposed_float(&self, token: &str) -> crate::BoxFuture<ProposedFloat> {
+        Box::pin(send(self.request(
+            Method::GET,
+            "/registers/me/float",
+            Some(token),
+        )))
+    }
+
+    fn run_z(
+        &self,
+        token: &str,
+        body: &ZRunRequest,
+        key: &str,
+        override_token: Option<&str>,
+    ) -> crate::BoxFuture<ZReport> {
+        let request = self
+            .request(Method::POST, "/z-reports", Some(token))
+            .header(IDEMPOTENCY_HEADER, key)
+            .json(body);
+        Box::pin(send(with_override(request, override_token)))
+    }
+
+    fn z_report_text(
+        &self,
+        token: &str,
+        id: &str,
+        copy: bool,
+        lang: &str,
+    ) -> crate::BoxFuture<CashText> {
+        let request = self
+            .request(Method::GET, &format!("/z-reports/{id}/text"), Some(token))
+            .query(&text_query(copy, lang));
+        Box::pin(send(request))
+    }
+
+    fn pending_days(
+        &self,
+        token: &str,
+        branch_id: Option<&str>,
+    ) -> crate::BoxFuture<Vec<PendingDay>> {
+        let mut request = self.request(Method::GET, "/z-reports/pending", Some(token));
+        if let Some(b) = branch_id {
+            request = request.query(&[("branch_id", b)]);
+        }
+        Box::pin(send(request))
+    }
+
     fn post_return(
         &self,
         token: &str,
@@ -622,6 +791,15 @@ impl Service for HttpService {
             Some(token),
         )))
     }
+}
+
+/// The query of a text route: `lang`, and `copy=true` for a reprint.
+fn text_query(copy: bool, lang: &str) -> Vec<(&'static str, String)> {
+    let mut query = vec![("lang", lang.to_owned())];
+    if copy {
+        query.push(("copy", "true".to_owned()));
+    }
+    query
 }
 
 /// Adds `X-Override` when a token (or several, comma separated) is given.
@@ -1159,6 +1337,66 @@ impl BackOffice for HttpService {
     ) -> crate::BoxFuture<SalesSettings> {
         let request = self
             .request(Method::PUT, "/settings/sales", Some(token))
+            .json(body);
+        Box::pin(send(request))
+    }
+
+    fn all_cash_reasons(&self, token: &str) -> crate::BoxFuture<Vec<CashReason>> {
+        let request = self
+            .request(Method::GET, "/cash-reasons", Some(token))
+            .query(&[("archived", "true")]);
+        Box::pin(send(request))
+    }
+
+    fn put_cash_reason(
+        &self,
+        token: &str,
+        id: &str,
+        body: &CashReasonBody,
+    ) -> crate::BoxFuture<CashReason> {
+        let request = self
+            .request(Method::PUT, &format!("/cash-reasons/{id}"), Some(token))
+            .json(body);
+        Box::pin(send(request))
+    }
+
+    fn delete_cash_reason(&self, token: &str, id: &str) -> crate::BoxFuture<CashReason> {
+        Box::pin(send(self.request(
+            Method::DELETE,
+            &format!("/cash-reasons/{id}"),
+            Some(token),
+        )))
+    }
+
+    fn z_reports(&self, token: &str, query: &ZQuery) -> crate::BoxFuture<ZReportPage> {
+        let request = self
+            .request(Method::GET, "/z-reports", Some(token))
+            .query(query);
+        Box::pin(send(request))
+    }
+
+    fn z_report(&self, token: &str, id: &str) -> crate::BoxFuture<ZReport> {
+        Box::pin(send(self.request(
+            Method::GET,
+            &format!("/z-reports/{id}"),
+            Some(token),
+        )))
+    }
+
+    fn force_close_session(
+        &self,
+        token: &str,
+        session_id: &str,
+        body: &CloseRequest,
+        key: &str,
+    ) -> crate::BoxFuture<CloseReport> {
+        let request = self
+            .request(
+                Method::POST,
+                &format!("/cashier-sessions/{session_id}/force-close"),
+                Some(token),
+            )
+            .header(IDEMPOTENCY_HEADER, key)
             .json(body);
         Box::pin(send(request))
     }

@@ -4,8 +4,8 @@
 use std::collections::BTreeMap;
 
 use sultan_core::cash::{
-    CashError, CashKind, CashMovement, CashReason, Direction, SEED_REASONS, SessionInput,
-    session_figures,
+    CashError, CashKind, CashMovement, CashReason, Direction, ReasonLine, SEED_REASONS,
+    SessionInput, session_figures,
 };
 use sultan_core::ids::{
     CashMovementId, CashReasonId, CashierSessionId, NotaPhotoId, RegisterId, UserId,
@@ -35,6 +35,7 @@ db_tests!(
     movements_are_append_only,
     session_inputs_feed_the_figures,
     float_between_sessions,
+    close_keeps_the_reasons,
 );
 
 /// An hour in milliseconds.
@@ -1080,4 +1081,78 @@ async fn float_between_sessions(db: &Db) {
     let third = open_session(db, till.o.cashier.id, r1, NOV16 + 3 * HOUR).await;
     close(third, NOV16 + 4 * HOUR, Some(1_000_000)).await;
     assert_eq!(cash::proposed_float(db, r1).await.unwrap(), rp(1_000_000));
+}
+
+/// Spec 2.7 §4: the close stores its reasons as they are, once, and only on a closed session.
+async fn close_keeps_the_reasons(db: &Db) {
+    let till = till(db).await;
+    let parking = SEED_REASON_IDS[3];
+    let line = |name: &str, direction, sort| ReasonLine {
+        name: name.to_owned(),
+        direction,
+        sort,
+        count: 1,
+        amount: rp(30_000),
+        reversals: 0,
+    };
+    let lines = BTreeMap::from([
+        (parking, line("Ongkos kirim / parkir", Direction::Out, 20)),
+        (
+            SEED_REASON_IDS[0],
+            line("Tambahan modal", Direction::In, -5),
+        ),
+    ]);
+    assert!(
+        cash::close_reasons(db, till.session)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    // Open: refused.
+    let mut tx = db.begin().await.unwrap();
+    assert!(matches!(
+        cash::record_close_reasons(&mut tx, till.session, &lines).await,
+        Err(sultan_db::DbError::NotFound(_))
+    ));
+    drop(tx);
+    let mut s = cashier_sessions::get(db, till.session)
+        .await
+        .unwrap()
+        .unwrap()
+        .session;
+    let report = s.close(s.user(), rp(1), &[], t(NOV16)).unwrap();
+    let mut tx = db.begin().await.unwrap();
+    cashier_sessions::close(&mut tx, &s, &report, &[])
+        .await
+        .unwrap();
+    cash::record_close_reasons(&mut tx, till.session, &lines)
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+    let stored = cash::close_reasons(db, till.session).await.unwrap();
+    assert_eq!(stored.len(), 2);
+    let p = stored.iter().find(|r| r.id == parking).unwrap();
+    assert_eq!(
+        (p.name.as_str(), p.direction, p.sort, p.active),
+        ("Ongkos kirim / parkir", Direction::Out, 20, false)
+    );
+    assert!(
+        stored
+            .iter()
+            .any(|r| r.direction == Direction::In && r.sort == -5)
+    );
+    // Written once.
+    let mut tx = db.begin().await.unwrap();
+    assert!(
+        cash::record_close_reasons(&mut tx, till.session, &lines)
+            .await
+            .is_err()
+    );
+    drop(tx);
+    assert!(
+        cash::close_reasons(db, CashierSessionId::generate())
+            .await
+            .unwrap()
+            .is_empty()
+    );
 }

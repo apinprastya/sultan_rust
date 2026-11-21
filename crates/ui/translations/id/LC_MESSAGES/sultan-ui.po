@@ -2640,6 +2640,18 @@ msgstr "Penjualan {} dibatalkan."
 msgid "This sale has returns, so it cannot be voided. Return the rest instead."
 msgstr "Penjualan ini sudah ada returnya, jadi tidak bisa dibatalkan. Retur sisanya saja."
 
+msgid "Sessions of this day are still open: {}. Close them first."
+msgstr "Sesi hari ini masih terbuka: {}. Tutup dulu sesinya."
+
+msgid "Every closed session of this day is in a Z already."
+msgstr "Semua sesi yang sudah ditutup pada hari ini sudah masuk laporan Z."
+
+msgid "This cash movement was reversed already."
+msgstr "Mutasi kas ini sudah dibatalkan."
+
+msgid "A cash movement has at most 3 nota photos."
+msgstr "Satu mutasi kas paling banyak 3 foto nota."
+
 msgid "More than what can still be returned."
 msgstr "Melebihi jumlah yang masih bisa diretur."
 

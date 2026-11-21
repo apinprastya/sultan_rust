@@ -74,6 +74,12 @@ pub struct CashierSession {
     /// the close.
     #[serde(default)]
     pub expected_cash: Option<i64>,
+    /// The proposed opening cash, stored when the typed opening cash differed (spec 2.7 §3).
+    #[serde(default)]
+    pub opening_proposed: Option<i64>,
+    /// The cash kept as float at the close (spec 2.7 §3).
+    #[serde(default)]
+    pub float_kept: Option<i64>,
 }
 
 /// `GET /cashier-sessions/{id}`: a session and, once closed, its stored close report (the source
@@ -141,6 +147,9 @@ pub struct CloseRequest {
     /// Optional count per denomination; must add up to `counted_cash`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub counts: Option<Vec<Count>>,
+    /// Cash kept in the drawer for the next session (spec 2.7 §3); default the opening cash.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub float_kept: Option<i64>,
 }
 
 /// Totals of one tender in the close report.
@@ -208,6 +217,15 @@ pub struct CloseReport {
     pub tenders: Vec<TenderTotal>,
     /// The count per denomination, if entered.
     pub counts: Vec<Count>,
+    /// The sales block (spec 2.6 §10; absent from an older server).
+    #[serde(default)]
+    pub sales: crate::cash::SalesReport,
+    /// The cash block (spec 2.7 §4; absent before 2.7).
+    #[serde(default)]
+    pub cash: crate::cash::CashReport,
+    /// The float (spec 2.7 §3; absent before 2.7).
+    #[serde(default)]
+    pub float: crate::cash::FloatInfo,
 }
 
 /// Body of `POST /overrides` (spec 2.1 §6).
@@ -341,6 +359,7 @@ mod tests {
         }))
         .unwrap();
         assert_eq!((old.number.as_str(), old.closed_at), ("", None));
+        assert_eq!((old.opening_proposed, old.float_kept), (None, None));
     }
 
     #[test]
@@ -348,6 +367,7 @@ mod tests {
         let body = CloseRequest {
             counted_cash: 5,
             counts: None,
+            float_kept: None,
         };
         assert_eq!(
             serde_json::to_value(&body).unwrap(),

@@ -5,8 +5,14 @@ and `docs/spec/2.1-organization-access.md`.
 
 - `src/routes/`: one module per resource (spec 2.1 §8); the catalog (spec 2.2) and customers
   (spec 2.5: `customers.rs`, `customer_groups.rs`, `customer_balance.rs`).
-- `src/movements.rs`: what a cashier session's close report counts. Customer balance payouts are
-  added as cash out (`session_movements`); sales plug in later (spec 2.6).
+- `src/movements.rs`: what a cashier session's close report counts (the 2.1 block): sales,
+  returns and post-voids (spec 2.6), cash in / out / safe drops (spec 2.7) and customer balance
+  payouts as cash out (`session_movements`).
+- Cash management (spec 2.7, phase K3): `routes/cash.rs` (the session figures of the close
+  report, the X and the Z, their DTOs, the texts, the retry loop), `routes/cash_reasons.rs`,
+  `routes/cash_movements.rs` (cash in / out / drop, slips, the payout slip),
+  `routes/cash_reports.rs` (X report, close report text, `GET /registers/me/float`) and
+  `routes/z_reports.rs` (run, list, read, text, days still to close).
 - `src/routes/`: one module per resource (spec 2.1 §8); pricing (spec 2.3) is
   `routes/pricing.rs` (price lists, entries, tax rates, settings, `price.changed`) and
   `routes/pricing_quote.rs` (`POST /pricing/quote` and the lookup's `unit_price`).

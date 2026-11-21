@@ -32,8 +32,12 @@
 //! The session inputs of `core::cash::session_figures` come from [`session_cash`] (the movements,
 //! photo counts, no-sale drawer opens and X reads) and [`session_cash_events`] (the netted cash
 //! in / out / drop events that the close report's two blocks add to the sales events of
-//! [`crate::sales::session_events`]).
+//! [`crate::sales::session_events`]). A Z adds each session's sales documents
+//! ([`session_sales`], phase K3: count, gross, first / last sale, tax per rate minus returns and
+//! post-voids). [`cash_since`] is when cash management was installed: the days still to close
+//! ([`pending_days`]) start there (spec 2.7 §17 reading 10).
 
+mod figures;
 mod movements;
 mod photos;
 mod reasons;
@@ -51,6 +55,7 @@ use crate::error::{DbError, Result};
 use crate::outbox;
 
 pub use crate::catalog::{Actor, Written};
+pub use figures::session_sales;
 pub use movements::{
     CashFilter, CashMovementRecord, MAX_CASH_PAGE, NewCashMovement, get_cash_movement,
     get_cash_movement_by_number, list_cash_movements, post_cash_movement, replayed_cash_movement,
@@ -61,9 +66,9 @@ pub use reasons::{
     list_cash_reasons, put_cash_reason,
 };
 pub use sessions::{
-    DRAWER_OPEN_ACTION, SessionCash, SessionCashState, X_REPORT_ACTION, nota_flag_above,
-    proposed_float, record_close_cash, session_cash, session_cash_events, session_cash_state,
-    set_opening_proposed,
+    DRAWER_OPEN_ACTION, SessionCash, SessionCashState, X_REPORT_ACTION, cash_since, close_reasons,
+    last_float_kept, nota_flag_above, proposed_float, record_close_cash, record_close_reasons,
+    session_cash, session_cash_events, session_cash_state, set_opening_proposed,
 };
 pub use z::{
     DaySession, NewZReport, PendingDay, ZFilter, ZNumber, ZReportRecord, day_sessions,

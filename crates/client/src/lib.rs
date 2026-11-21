@@ -39,8 +39,16 @@
 //!   management, returns). Several override tokens for one request go comma separated.
 //!   [`Service::open_drawer`] records an audited drawer open (F5, phase S5).
 //!
+//! - Cash management (phase K3, spec 2.7; types in [`cash`]): the till's calls are on [`Service`]
+//!   (cash reasons, cash in / out / drop and reversals with `X-Override`, the session's movements,
+//!   slips and payout slips, the X report, the close report text, the proposed float, the Z run
+//!   from the close report, Z texts, days still to close); the back office's on [`BackOffice`]
+//!   (cash reason management, Z lists and reads, force close with the float kept).
+//!   [`CloseRequest::float_kept`] keeps the float at a close.
+//!
 //! Amounts are minor units (`i64`, Rupiah minor unit = 1, `docs/plan.md` §1); times are unix ms.
 
+pub mod cash;
 pub mod catalog;
 pub mod customers;
 pub mod error;
@@ -54,6 +62,12 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 
+pub use cash::{
+    CashMovement, CashMovementPage, CashMovementRequest, CashQuery, CashReason, CashReasonBody,
+    CashReport, CashText, CountAmount, FloatInfo, PendingDay, ProposedFloat, ReasonLine, SaleRef,
+    SalesReport, SalesTender, TaxLine, XReport, ZQuery, ZRegister, ZReport, ZReportPage,
+    ZRunRequest, ZSessionLine, ZSnapshot, ZSummary, ZTotals,
+};
 pub use catalog::{
     Brand, BrandBody, CatalogSettings, Category, CategoryBody, CategoryNode, Generate, ImageInfo,
     Lookup, LookupUnit, Me, Product, ProductPage, ProductQuery, ProductSummary, SearchHit,
@@ -291,6 +305,84 @@ pub trait Service: Send + Sync {
         key: &str,
         override_token: Option<&str>,
     ) -> BoxFuture<DrawerOpen>;
+    /// `GET /cash-reasons`: the active cash reasons, in before out (spec 2.7 §2).
+    fn cash_reasons(&self, token: &str) -> BoxFuture<Vec<CashReason>>;
+    /// `PUT /cash-movements/{id}`: a cash in / out / drop or a reversal from the caller's open
+    /// session (spec 2.7 §2). `override_token` approves `cash.in` / `cash.out` / `cash.drop` for
+    /// the movement ID. A replay of the same body answers the stored movement. Errors:
+    /// `409 no_open_session` / `already_reversed` / `conflict`, `403 needs_override`,
+    /// `422 invalid_field`.
+    fn post_cash_movement(
+        &self,
+        token: &str,
+        id: &str,
+        body: &CashMovementRequest,
+        override_token: Option<&str>,
+    ) -> BoxFuture<CashMovement>;
+    /// `GET /cash-movements/{id}`.
+    fn cash_movement(&self, token: &str, id: &str) -> BoxFuture<CashMovement>;
+    /// `GET /cash-movements?…`: one page; a cashier lists their own session.
+    fn cash_movements(&self, token: &str, query: &CashQuery) -> BoxFuture<CashMovementPage>;
+    /// `GET /cash-movements/{id}/slip?copy=&lang=`: the slip text; a copy outside the movement's
+    /// open session needs `sale.reprint` (`override_token`).
+    fn cash_slip(
+        &self,
+        token: &str,
+        id: &str,
+        copy: bool,
+        lang: &str,
+        override_token: Option<&str>,
+    ) -> BoxFuture<CashText>;
+    /// `GET /customers/{id}/balance/payouts/{entry_id}/slip?copy=&lang=`: the payout slip.
+    fn payout_slip(
+        &self,
+        token: &str,
+        customer_id: &str,
+        entry_id: &str,
+        copy: bool,
+        lang: &str,
+        override_token: Option<&str>,
+    ) -> BoxFuture<CashText>;
+    /// `GET /cashier-sessions/{id}/x-report`: the X of an open session (`session.view_expected`,
+    /// a manager approves a cashier's read with `override_token`; `409 session_closed`).
+    fn x_report(
+        &self,
+        token: &str,
+        session_id: &str,
+        override_token: Option<&str>,
+    ) -> BoxFuture<XReport>;
+    /// `GET /cashier-sessions/{id}/x-report/text?lang=`: the X as text (another read).
+    fn x_report_text(
+        &self,
+        token: &str,
+        session_id: &str,
+        lang: &str,
+        override_token: Option<&str>,
+    ) -> BoxFuture<CashText>;
+    /// `GET /cashier-sessions/{id}/report/text?copy=&lang=`: the stored close report as text.
+    fn close_report_text(
+        &self,
+        token: &str,
+        session_id: &str,
+        copy: bool,
+        lang: &str,
+    ) -> BoxFuture<CashText>;
+    /// `GET /registers/me/float`: the opening cash the open screen proposes (spec 2.7 §3).
+    fn proposed_float(&self, token: &str) -> BoxFuture<ProposedFloat>;
+    /// `POST /z-reports` with `Idempotency-Key: key`: the Z of a business day (spec 2.7 §6); at
+    /// the till `override_token` approves `day.close` for `<branch_id>:<day>`. Errors:
+    /// `409 sessions_open` (with [`Problem::sessions`]) / `nothing_to_close`, `422 invalid_field`.
+    fn run_z(
+        &self,
+        token: &str,
+        body: &ZRunRequest,
+        key: &str,
+        override_token: Option<&str>,
+    ) -> BoxFuture<ZReport>;
+    /// `GET /z-reports/{id}/text?copy=&lang=`: a Z as text; a copy needs `report.sales`.
+    fn z_report_text(&self, token: &str, id: &str, copy: bool, lang: &str) -> BoxFuture<CashText>;
+    /// `GET /z-reports/pending[?branch_id=]`: the days still to close (K18).
+    fn pending_days(&self, token: &str, branch_id: Option<&str>) -> BoxFuture<Vec<PendingDay>>;
 }
 
 /// What the back office needs from the server (phase C4, spec 2.2 §12). `token` is the password
@@ -529,4 +621,28 @@ pub trait BackOffice: Service {
     fn sales_settings(&self, token: &str) -> BoxFuture<SalesSettings>;
     /// `PUT /settings/sales` (HQ, `tender.manage`).
     fn put_sales_settings(&self, token: &str, body: &SalesSettings) -> BoxFuture<SalesSettings>;
+    /// `GET /cash-reasons?archived=true`: every cash reason (`tender.manage`).
+    fn all_cash_reasons(&self, token: &str) -> BoxFuture<Vec<CashReason>>;
+    /// `PUT /cash-reasons/{id}` (HQ, `tender.manage`).
+    fn put_cash_reason(
+        &self,
+        token: &str,
+        id: &str,
+        body: &CashReasonBody,
+    ) -> BoxFuture<CashReason>;
+    /// `DELETE /cash-reasons/{id}`: archive.
+    fn delete_cash_reason(&self, token: &str, id: &str) -> BoxFuture<CashReason>;
+    /// `GET /z-reports?…`: one page (`report.sales`).
+    fn z_reports(&self, token: &str, query: &ZQuery) -> BoxFuture<ZReportPage>;
+    /// `GET /z-reports/{id}`.
+    fn z_report(&self, token: &str, id: &str) -> BoxFuture<ZReport>;
+    /// `POST /cashier-sessions/{id}/force-close` with `Idempotency-Key: key`
+    /// (`session.force_close`; the float kept too, spec 2.7 §3).
+    fn force_close_session(
+        &self,
+        token: &str,
+        session_id: &str,
+        body: &CloseRequest,
+        key: &str,
+    ) -> BoxFuture<CloseReport>;
 }

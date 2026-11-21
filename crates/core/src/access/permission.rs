@@ -199,7 +199,9 @@ impl Permission {
     /// `sale.create` are not: a manager does those under their own login. The customer
     /// permissions are not either (spec 2.5 §12): a balance payout is done by a manager under
     /// their own login. A safe drop and the Z (`cash.drop`, `day.close`) are approved at the till
-    /// too (spec 2.7 §2, §6).
+    /// too (spec 2.7 §2, §6), and so is `session.view_expected` for the X report of the cashier's
+    /// own session (spec 2.7 K11, §5); where it only shows a figure (the blind close of spec 2.1
+    /// §5) the server checks that it is held, without an override.
     #[must_use]
     pub const fn is_overridable(self) -> bool {
         matches!(
@@ -218,6 +220,7 @@ impl Permission {
                 | Self::DrawerOpen
                 | Self::CashDrop
                 | Self::DayClose
+                | Self::SessionViewExpected
         )
     }
 }
@@ -400,7 +403,8 @@ mod tests {
         assert!(Permission::SaleReprint.is_overridable());
         assert!(!Permission::SaleCreate.is_overridable());
         assert!(!Permission::UserManage.is_overridable());
-        assert!(!Permission::SessionViewExpected.is_overridable());
+        assert!(Permission::SessionViewExpected.is_overridable());
+        assert!(!Permission::SessionForceClose.is_overridable());
         assert!(!Permission::CatalogManage.is_overridable());
         assert!(!Permission::CatalogViewArchived.is_overridable());
     }

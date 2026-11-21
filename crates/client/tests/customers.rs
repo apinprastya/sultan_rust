@@ -377,6 +377,7 @@ async fn contract_two(c: &dyn BackOffice, s: &Setup) {
     let close = CloseRequest {
         counted_cash: 97_800,
         counts: None,
+        float_kept: None,
     };
     let report = c
         .close_session(budi, &session.id, &close, &new_id())

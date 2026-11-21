@@ -368,8 +368,11 @@ async fn days_still_to_close(db: &Db) {
         day(20_261_117),
         day(20_261_118),
     );
-    let pending =
-        |today| async move { cash::pending_days(db, till.o.jkt.id, today).await.unwrap() };
+    let pending = |today| async move {
+        cash::pending_days(db, till.o.jkt.id, today, None)
+            .await
+            .unwrap()
+    };
     // Today with only an open session is not pending; tomorrow it is.
     assert!(pending(d16).await.is_empty());
     assert_eq!(
@@ -401,13 +404,26 @@ async fn days_still_to_close(db: &Db) {
             },
         ]
     );
+    // Days before the install day of cash management are left out (§17 reading 10).
+    assert_eq!(
+        cash::pending_days(db, till.o.jkt.id, d16, Some(d16))
+            .await
+            .unwrap(),
+        [PendingDay {
+            day: d16,
+            open: 1,
+            closed: 1
+        }]
+    );
+    // The migration recorded when it ran.
+    assert!(cash::cash_since(db).await.unwrap().is_some());
     // The Z of the 15th (a catch-up) takes it off the list.
     let z = run_z(db, &till, d15, d16, NOV16).await.unwrap();
     assert_eq!(z.number, "JKT01-Z-261115-01");
     assert_eq!(pending(d16).await.len(), 1);
     // Another branch has nothing.
     assert!(
-        cash::pending_days(db, till.o.bdg.id, d18)
+        cash::pending_days(db, till.o.bdg.id, d18, None)
             .await
             .unwrap()
             .is_empty()

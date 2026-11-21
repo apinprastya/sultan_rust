@@ -95,6 +95,7 @@ impl CountForm {
         CloseRequest {
             counted_cash: self.counted(),
             counts: (!counts.is_empty()).then_some(counts),
+            float_kept: None,
         }
     }
 
@@ -157,7 +158,8 @@ mod tests {
             form.request(),
             CloseRequest {
                 counted_cash: 750_000,
-                counts: None
+                counts: None,
+                float_kept: None,
             }
         );
 

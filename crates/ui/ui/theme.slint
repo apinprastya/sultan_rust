@@ -287,6 +287,18 @@ export global Strings {
         if (code == "has_returns") {
             return @tr("This sale has returns, so it cannot be voided. Return the rest instead.");
         }
+        if (code == "sessions_open") {
+            return @tr("Sessions of this day are still open: {}. Close them first.", arg);
+        }
+        if (code == "nothing_to_close") {
+            return @tr("Every closed session of this day is in a Z already.");
+        }
+        if (code == "already_reversed") {
+            return @tr("This cash movement was reversed already.");
+        }
+        if (code == "photo_limit") {
+            return @tr("A cash movement has at most 3 nota photos.");
+        }
         if (code == "return_qty_exceeded") {
             return @tr("More than what can still be returned.");
         }

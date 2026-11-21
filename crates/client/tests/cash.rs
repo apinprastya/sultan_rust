@@ -1,0 +1,624 @@
+//! Cash management (phase K3, spec 2.7): every cash call of [`HttpService`] against the real
+//! router (in-memory `SQLite`), and the same flow against [`FakeService`], so the register and
+//! back-office screens of K4 and K5 see the server's answers: cash reasons, cash in / out / drop
+//! with overrides, replays and reversals, slips, the X report, the close with the float kept,
+//! the close report text, the proposed float, the Z with its text and the days still to close,
+//! and the back office's cash reasons, Z list and force close.
+
+use std::sync::Arc;
+
+use sultan_client::fake::{FakeService, SEED_REASONS};
+use sultan_client::{
+    BackOffice, CashMovementRequest, CashQuery, CashReasonBody, ClientError, CloseRequest,
+    HttpService, OverrideRequest, Service, ZQuery, ZRunRequest,
+};
+use sultan_core::access::BranchScope;
+use sultan_core::doc_number::{BranchTimeZone, LocalDay};
+use sultan_core::ids::{BranchId, CompanyId, ProductId, RegisterId, UserId};
+use sultan_db::org::{Branch, Company, Register};
+use sultan_db::users::User;
+use sultan_db::{Db, devices, org, roles, seed, users};
+use sultan_server::{AppState, Clock, NodeRole, SystemClock, credentials, router, token};
+
+const TOP_UP: &str = SEED_REASONS[0];
+const SHOP: &str = SEED_REASONS[2];
+
+struct Server {
+    root: String,
+    device: String,
+    branch: String,
+    task: tokio::task::JoinHandle<()>,
+}
+
+impl Drop for Server {
+    fn drop(&mut self) {
+        self.task.abort();
+    }
+}
+
+fn user(username: &str, password: Option<&str>, pin: Option<&str>) -> User {
+    User {
+        id: UserId::generate(),
+        username: username.to_owned(),
+        display_name: username.to_owned(),
+        pin_hash: pin.map(|p| credentials::hash_pin(p).unwrap()),
+        password_hash: password.map(|p| credentials::hash_password(p).unwrap()),
+        active: true,
+    }
+}
+
+/// JKT01 with register R1: `owner` (password), Ani (cashier, PIN 1234), Budi (manager, PIN
+/// 9999). Answers the server, Ani's and Budi's IDs.
+async fn serve() -> (Server, String, String) {
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    db.migrate().await.unwrap();
+    let now = SystemClock.now();
+    seed::seed_defaults(&db, now).await.unwrap();
+    let company = Company {
+        id: CompanyId::generate(),
+        name: "PT Sultan".to_owned(),
+    };
+    let jkt = Branch {
+        id: BranchId::generate(),
+        company: company.id,
+        code: "JKT01".to_owned(),
+        name: "JKT01".to_owned(),
+        address: String::new(),
+        npwp: None,
+        receipt_header: String::new(),
+        receipt_footer: String::new(),
+        timezone: "Asia/Jakarta".to_owned(),
+        archived: false,
+    };
+    let register = Register {
+        id: RegisterId::generate(),
+        branch: jkt.id,
+        code: "R1".to_owned(),
+        name: "Kasir 1".to_owned(),
+        default_location: None,
+        archived: false,
+    };
+    let device = token::generate();
+    let ani = user("ani", None, Some("1234"));
+    let budi = user("budi", None, Some("9999"));
+    let (ani_id, budi_id) = (ani.id.to_string(), budi.id.to_string());
+    let mut tx = db.begin().await.unwrap();
+    org::save_company(&mut tx, &company, now).await.unwrap();
+    org::save_branch(&mut tx, &jkt, now).await.unwrap();
+    org::save_register(&mut tx, &register, now).await.unwrap();
+    for (u, role, scope) in [
+        (
+            user("owner", Some("owner-pass-1"), None),
+            seed::OWNER_ROLE,
+            BranchScope::All,
+        ),
+        (ani, seed::CASHIER_ROLE, BranchScope::Branch(jkt.id)),
+        (budi, seed::MANAGER_ROLE, BranchScope::Branch(jkt.id)),
+    ] {
+        users::save_user(&mut tx, &u, now).await.unwrap();
+        roles::replace_assignments(&mut tx, u.id, &[(role, scope)], now)
+            .await
+            .unwrap();
+    }
+    devices::insert_device_token(&mut tx, &token::hash(&device), register.id, now)
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+    let state = AppState::new(db, NodeRole::Standalone, Arc::new(SystemClock));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let task = tokio::spawn(async move {
+        axum::serve(listener, router(state)).await.unwrap();
+    });
+    (
+        Server {
+            root: format!("http://{addr}"),
+            device,
+            branch: jkt.id.to_string(),
+            task,
+        },
+        ani_id,
+        budi_id,
+    )
+}
+
+fn new_id() -> String {
+    ProductId::generate().to_string()
+}
+
+#[track_caller]
+fn code_of<T: std::fmt::Debug>(result: Result<T, ClientError>) -> (u16, String) {
+    let err = result.unwrap_err();
+    let p = err.problem().unwrap_or_else(|| panic!("{err:?}"));
+    (p.status, p.code.clone())
+}
+
+fn cash(kind: &str, amount: i64, reason: Option<&str>) -> CashMovementRequest {
+    CashMovementRequest {
+        kind: Some(kind.to_owned()),
+        amount: Some(amount),
+        reason_id: reason.map(str::to_owned),
+        ..CashMovementRequest::default()
+    }
+}
+
+/// Who approves overrides at the till.
+struct Approver<'a> {
+    id: &'a str,
+    pin: &'a str,
+}
+
+async fn approve(
+    register: &dyn Service,
+    token: &str,
+    approver: &Approver<'_>,
+    action: &str,
+    value: Option<i64>,
+    context: &str,
+) -> String {
+    register
+        .request_override(
+            token,
+            &OverrideRequest {
+                action: action.to_owned(),
+                value,
+                context_ref: context.to_owned(),
+                approver_id: approver.id.to_owned(),
+                approver_pin: approver.pin.to_owned(),
+            },
+        )
+        .await
+        .unwrap()
+        .token
+}
+
+/// The register flow shared by the server and the fake (see the module docs). Answers the Z's ID
+/// and the second session's ID (left open).
+#[allow(clippy::too_many_lines)] // one flow, step by step
+async fn flow(
+    register: &dyn Service,
+    ani: &str,
+    approver: &Approver<'_>,
+    branch: &str,
+    today: &str,
+) -> (String, String) {
+    let reasons = register.cash_reasons(ani).await.unwrap();
+    assert_eq!(reasons.len(), 6);
+    assert_eq!(reasons[0].direction, "in");
+    let float = register.proposed_float(ani).await.unwrap();
+    assert_eq!((float.proposed_float, float.has_proposal), (0, false));
+    assert_eq!(
+        code_of(
+            register
+                .post_cash_movement(ani, &new_id(), &cash("in", 1, Some(TOP_UP)), None)
+                .await
+        ),
+        (409, "no_open_session".to_owned())
+    );
+    let session = register
+        .open_session(ani, 200_000, &new_id())
+        .await
+        .unwrap();
+    // A cash in, its replay and a conflicting body.
+    let in_id = new_id();
+    let body = cash("in", 20_000, Some(TOP_UP));
+    let cash_in = register
+        .post_cash_movement(ani, &in_id, &body, None)
+        .await
+        .unwrap();
+    assert_eq!((cash_in.effect, cash_in.kind.as_str()), (20_000, "in"));
+    assert!(
+        cash_in.number.starts_with("JKT01-R1-K-"),
+        "{}",
+        cash_in.number
+    );
+    assert_eq!(
+        register
+            .post_cash_movement(ani, &in_id, &body, None)
+            .await
+            .unwrap(),
+        cash_in
+    );
+    assert_eq!(
+        code_of(
+            register
+                .post_cash_movement(ani, &in_id, &cash("in", 1, Some(TOP_UP)), None)
+                .await
+        ),
+        (409, "conflict".to_owned())
+    );
+    // A cash out above the cashier's limit and a drop need a manager.
+    let out_id = new_id();
+    let out = cash("out", 75_000, Some(SHOP));
+    let err = register
+        .post_cash_movement(ani, &out_id, &out, None)
+        .await
+        .unwrap_err();
+    let p = err.problem().unwrap();
+    assert_eq!(
+        (p.code.as_str(), p.permission(), p.limit()),
+        ("needs_override", Some("cash.out"), Some(50_000))
+    );
+    let t = approve(register, ani, approver, "cash.out", Some(75_000), &out_id).await;
+    let cash_out = register
+        .post_cash_movement(ani, &out_id, &out, Some(&t))
+        .await
+        .unwrap();
+    assert_eq!(cash_out.approved_by.as_deref(), Some(approver.id));
+    let drop_id = new_id();
+    let drop = cash("drop", 30_000, None);
+    assert_eq!(
+        code_of(
+            register
+                .post_cash_movement(ani, &drop_id, &drop, None)
+                .await
+        ),
+        (403, "needs_override".to_owned())
+    );
+    let t = approve(register, ani, approver, "cash.drop", None, &drop_id).await;
+    register
+        .post_cash_movement(ani, &drop_id, &drop, Some(&t))
+        .await
+        .unwrap();
+    // A reversal of the cash in, once.
+    let reversal = CashMovementRequest {
+        reverses: Some(in_id.clone()),
+        note: Some("salah input".to_owned()),
+        ..CashMovementRequest::default()
+    };
+    let back = register
+        .post_cash_movement(ani, &new_id(), &reversal, None)
+        .await
+        .unwrap();
+    assert_eq!(
+        (back.effect, back.reverses_number.as_deref()),
+        (-20_000, Some(cash_in.number.as_str()))
+    );
+    assert_eq!(
+        code_of(
+            register
+                .post_cash_movement(ani, &new_id(), &reversal, None)
+                .await
+        ),
+        (409, "already_reversed".to_owned())
+    );
+    let err = register
+        .post_cash_movement(ani, &new_id(), &cash("in", 0, Some(TOP_UP)), None)
+        .await
+        .unwrap_err();
+    assert_eq!(err.problem().unwrap().field(), Some("amount"));
+    // Reads and slips.
+    let read = register.cash_movement(ani, &in_id).await.unwrap();
+    assert_eq!(read.reversed_by.as_deref(), Some(back.id.as_str()));
+    let page = register
+        .cash_movements(
+            ani,
+            &CashQuery {
+                cashier_session_id: Some(session.id.clone()),
+                ..CashQuery::default()
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(page.items.len(), 4);
+    assert_eq!(
+        code_of(register.cash_movements(ani, &CashQuery::default()).await),
+        (403, "permission_denied".to_owned())
+    );
+    let slip = register
+        .cash_slip(ani, &out_id, false, "en", None)
+        .await
+        .unwrap();
+    assert!(slip.text.contains("CASH OUT"), "{}", slip.text);
+    let copy = register
+        .cash_slip(ani, &out_id, true, "id", None)
+        .await
+        .unwrap();
+    assert!(copy.copy && copy.text.contains("SALINAN"), "{}", copy.text);
+    // The X: a cashier needs a manager.
+    assert_eq!(
+        code_of(register.x_report(ani, &session.id, None).await),
+        (403, "needs_override".to_owned())
+    );
+    let t = approve(
+        register,
+        ani,
+        approver,
+        "session.view_expected",
+        None,
+        &session.id,
+    )
+    .await;
+    let x = register.x_report(ani, &session.id, Some(&t)).await.unwrap();
+    assert_eq!((x.expected_cash, x.cash.x_reports), (95_000, 1));
+    let t = approve(
+        register,
+        ani,
+        approver,
+        "session.view_expected",
+        None,
+        &session.id,
+    )
+    .await;
+    let text = register
+        .x_report_text(ani, &session.id, "en", Some(&t))
+        .await
+        .unwrap();
+    assert!(text.text.contains("X REPORT"), "{}", text.text);
+    // The close keeps a float, at most the count.
+    let mut close = CloseRequest {
+        counted_cash: 95_000,
+        counts: None,
+        float_kept: Some(200_000),
+    };
+    let err = register
+        .close_session(ani, &session.id, &close, &new_id())
+        .await
+        .unwrap_err();
+    assert_eq!(err.problem().unwrap().field(), Some("float_kept"));
+    close.float_kept = Some(50_000);
+    let report = register
+        .close_session(ani, &session.id, &close, &new_id())
+        .await
+        .unwrap();
+    assert_eq!(report.expected_cash, 95_000);
+    assert_eq!(
+        (report.float.float_kept, report.float.to_safe),
+        (Some(50_000), Some(45_000))
+    );
+    assert_eq!(
+        (
+            report.cash.drops.count,
+            report.cash.reversals.count,
+            report.cash.x_reports
+        ),
+        (1, 1, 2)
+    );
+    assert_eq!(report.sales.drops, 30_000);
+    let text = register
+        .close_report_text(ani, &session.id, true, "id")
+        .await
+        .unwrap();
+    assert!(text.text.contains("LAPORAN TUTUP KAS"), "{}", text.text);
+    assert_eq!(
+        code_of(register.x_report(ani, &session.id, None).await),
+        (409, "session_closed".to_owned())
+    );
+    let float = register.proposed_float(ani).await.unwrap();
+    assert_eq!((float.proposed_float, float.has_proposal), (50_000, true));
+    // The Z at the till, with a manager's approval.
+    let z_body = ZRunRequest {
+        day: today.to_owned(),
+        branch_id: None,
+    };
+    assert_eq!(
+        code_of(register.run_z(ani, &z_body, "z-0", None).await),
+        (403, "needs_override".to_owned())
+    );
+    let t = approve(
+        register,
+        ani,
+        approver,
+        "day.close",
+        None,
+        &format!("{branch}:{today}"),
+    )
+    .await;
+    let z = register.run_z(ani, &z_body, "z-1", Some(&t)).await.unwrap();
+    assert!(z.report.number.ends_with("-01"), "{}", z.report.number);
+    assert_eq!(z.session_ids, std::slice::from_ref(&session.id));
+    assert_eq!(z.report.branch.cash_to_deposit, 75_000);
+    assert_eq!(register.run_z(ani, &z_body, "z-1", None).await.unwrap(), z);
+    let t = approve(
+        register,
+        ani,
+        approver,
+        "day.close",
+        None,
+        &format!("{branch}:{today}"),
+    )
+    .await;
+    assert_eq!(
+        code_of(register.run_z(ani, &z_body, "z-2", Some(&t)).await),
+        (409, "nothing_to_close".to_owned())
+    );
+    let text = register
+        .z_report_text(ani, &z.id, false, "en")
+        .await
+        .unwrap();
+    assert!(text.text.contains("Z REPORT"), "{}", text.text);
+    assert_eq!(
+        code_of(register.z_report_text(ani, &z.id, true, "en").await),
+        (403, "permission_denied".to_owned())
+    );
+    assert_eq!(
+        code_of(register.pending_days(ani, None).await),
+        (403, "permission_denied".to_owned())
+    );
+    // The next session proposes the float kept.
+    let next = register.open_session(ani, 60_000, &new_id()).await.unwrap();
+    assert_eq!(next.opening_proposed, Some(50_000));
+    (z.id, next.id)
+}
+
+/// The back office's part, shared by the server and the fake.
+async fn back_office(office: &dyn BackOffice, owner: &str, branch: &str, z_id: &str, open: &str) {
+    assert_eq!(office.all_cash_reasons(owner).await.unwrap().len(), 6);
+    let id = new_id();
+    let body = CashReasonBody {
+        name: "Galon".to_owned(),
+        direction: "out".to_owned(),
+        note_required: false,
+        active: true,
+        sort: 40,
+    };
+    let reason = office.put_cash_reason(owner, &id, &body).await.unwrap();
+    assert_eq!((reason.name.as_str(), reason.archived), ("Galon", false));
+    let archived = office.delete_cash_reason(owner, &id).await.unwrap();
+    assert!(archived.archived);
+    assert_eq!(
+        code_of(office.put_cash_reason(owner, &id, &body).await),
+        (409, "archived".to_owned())
+    );
+    let page = office
+        .z_reports(
+            owner,
+            &ZQuery {
+                branch_id: Some(branch.to_owned()),
+                ..ZQuery::default()
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(page.items.len(), 1);
+    assert_eq!(office.z_report(owner, z_id).await.unwrap().id, z_id);
+    let text = office.z_report_text(owner, z_id, true, "en").await.unwrap();
+    assert!(text.copy);
+    assert_eq!(office.pending_days(owner, Some(branch)).await.unwrap(), []);
+    let report = office
+        .force_close_session(
+            owner,
+            open,
+            &CloseRequest {
+                counted_cash: 60_000,
+                counts: None,
+                float_kept: None,
+            },
+            &new_id(),
+        )
+        .await
+        .unwrap();
+    assert!(report.forced);
+    assert_eq!(report.float.float_kept, Some(60_000));
+    assert_eq!(report.float.opening_proposed, Some(50_000));
+}
+
+fn today(now_ms: i64) -> String {
+    let day = LocalDay::of(
+        sultan_core::time::Timestamp::from_unix_millis(now_ms),
+        BranchTimeZone::default(),
+    );
+    let (y, m, d) = day.ymd();
+    format!("{y:04}-{m:02}-{d:02}")
+}
+
+#[tokio::test]
+async fn cash_calls_over_http() {
+    let (server, ani_id, budi_id) = serve().await;
+    let register = HttpService::new(&server.root, &server.device);
+    let ani = register.pin_login(&ani_id, "1234").await.unwrap().token;
+    let approver = Approver {
+        id: &budi_id,
+        pin: "9999",
+    };
+    let day = today(SystemClock.now().unix_millis());
+    let (z, open) = flow(&register, &ani, &approver, &server.branch, &day).await;
+    let office = HttpService::user(&server.root);
+    let owner = office
+        .password_login("owner", "owner-pass-1")
+        .await
+        .unwrap()
+        .token;
+    back_office(&office, &owner, &server.branch, &z, &open).await;
+    // The payout slip of an unknown entry.
+    assert_eq!(
+        code_of(
+            register
+                .payout_slip(ani.as_str(), &new_id(), &new_id(), false, "en", None)
+                .await
+        ),
+        (404, "not_found".to_owned())
+    );
+}
+
+#[tokio::test]
+async fn cash_calls_on_the_fake() {
+    let fake = FakeService::default();
+    let ani = fake.pin_login("u-ani", "1234").await.unwrap().token;
+    let approver = Approver {
+        id: "u-budi",
+        pin: "9999",
+    };
+    let (z, open) = flow(
+        &fake,
+        &ani,
+        &approver,
+        sultan_client::fake::BRANCH_ID,
+        &today(1_800_000_000_000),
+    )
+    .await;
+    assert_eq!(fake.cash_movements_posted().len(), 4);
+    let owner = fake
+        .password_login("owner", "owner-pass-1")
+        .await
+        .unwrap()
+        .token;
+    back_office(&fake, &owner, sultan_client::fake::BRANCH_ID, &z, &open).await;
+    // A cashier in the back office manages no reasons and runs no Z.
+    let kasir = fake
+        .password_login("kasir", "kasir-pass-1")
+        .await
+        .unwrap()
+        .token;
+    assert_eq!(
+        code_of(fake.all_cash_reasons(&kasir).await),
+        (403, "permission_denied".to_owned())
+    );
+    let body = ZRunRequest {
+        day: today(1_800_000_000_000),
+        branch_id: Some(sultan_client::fake::BRANCH_ID.to_owned()),
+    };
+    assert_eq!(
+        code_of(fake.run_z(&kasir, &body, "k", None).await),
+        (403, "permission_denied".to_owned())
+    );
+    assert_eq!(
+        code_of(
+            fake.run_z(
+                &owner,
+                &ZRunRequest {
+                    day: "2027-1-1".into(),
+                    branch_id: None
+                },
+                "k2",
+                None
+            )
+            .await
+        ),
+        (422, "invalid_field".to_owned())
+    );
+    // A payout and its slip (Budi, a manager, at the till).
+    let budi = fake.pin_login("u-budi", "9999").await.unwrap().token;
+    let session = fake.open_session(&budi, 0, "b-open").await.unwrap();
+    let payout = fake
+        .balance_payout(&budi, sultan_client::fake::SEED_BUDI, 1_000, "pay-1")
+        .await
+        .unwrap();
+    let slip = fake
+        .payout_slip(
+            &budi,
+            sultan_client::fake::SEED_BUDI,
+            &payout.entry.id,
+            true,
+            "en",
+            None,
+        )
+        .await
+        .unwrap();
+    assert!(slip.text.contains("BALANCE PAYOUT"), "{}", slip.text);
+    // The manager reads every movement and the X of his own session without approval.
+    let x = fake.x_report(&budi, &session.id, None).await.unwrap();
+    assert_eq!(x.sales.payouts, 1_000);
+    let all = fake
+        .cash_movements(&budi, &CashQuery::default())
+        .await
+        .unwrap();
+    assert_eq!(all.items.len(), 4);
+    assert_eq!(
+        code_of(
+            fake.payout_slip(&budi, "nobody", "nothing", false, "en", None)
+                .await
+        ),
+        (404, "not_found".to_owned())
+    );
+}

@@ -58,7 +58,8 @@ Persistence for Sultan POS: sqlx migrations and repositories for SQLite and MySQ
 | `cash_movement_photo` | Nota photo records (append-only by trigger): sha256, size, who, when; `photo_no` 1–3 under `UNIQUE (movement_id, photo_no)`, so a movement never has a fourth. The file itself lives on the node's disk (K6). |
 | `z_report` | The Z of a branch's business day (append-only by trigger): number `<BRANCH>-Z-<YYMMDD>-<NN>` under `UNIQUE (branch_id, business_day, seq)`, `supplementary` (= `seq > 1`), headline totals and the server's JSON snapshot `figures`. |
 | `cashier_session` + | `float_kept`, `missing_nota` (written at the close), `opening_proposed` (at the open), `z_report_id` (the Z that covers it). |
-| `sales_settings` + | `nota_flag_above` (Rp, default 100 000, `0` = off). |
+| `cashier_session_reason` | The cash reasons of a close report as at the close (name, direction, sort; `record_close_reasons`, once), read back by `close_reasons` so a renamed reason never changes a stored report or a later Z (migration `20261121000002_session_reasons`). |
+| `sales_settings` + | `nota_flag_above` (Rp, default 100 000, `0` = off); `cash_since` (unix ms, migration `20261121000001_cash_since`, K3): when cash management was installed, the time that migration ran. |
 
 - **Posting** (`post_cash_movement`) re-checks the open session, the reason (exists, active, not
   archived, right direction) and a reversal's target, allocates the number like sales (a lost
@@ -70,7 +71,14 @@ Persistence for Sultan POS: sqlx migrations and repositories for SQLite and MySQ
   `Drop` events the server's close report adds to `sales::session_events`).
 - **Z:** `day_sessions` / `z_candidates` / `open_day_sessions` by business day (the session's
   `local_day`), `next_z_number`, `insert_z_report` (links each session with a guarded `UPDATE`),
-  `pending_days` (K18: days with closed sessions in no Z, or past days with an open session).
+  `pending_days` (K18: days with closed sessions in no Z, or past days with an open session; with
+  `since`, the branch-local day of `cash_since`, earlier days are left out: spec 2.7 §17 reading
+  10). `session_sales` (K3) gives a Z each session's sales documents: count, Σ gross, first and
+  last sale, tax per rate, and the tax of the returns and post-voids paid in it.
+- **Float:** `last_float_kept` (K3) is the float of the register's last closed session or `None`;
+  the server stores an `opening_proposed` only when there is one.
+- **Payout slip** (K3): `customers::get_balance_entry` and `balance_after` (the balance right
+  after an entry, in ID order).
 - **Grants:** the migration gives Manager `cash.drop` and `day.close`, and Cashier `cash.out`
   ≤ Rp 50 000 only when Cashier has no `cash.out` grant yet; `seed_defaults` does the same on a
   fresh install and keeps rewriting Owner.

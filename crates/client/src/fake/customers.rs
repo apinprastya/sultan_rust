@@ -185,6 +185,30 @@ impl Customers {
     pub(super) fn paid_out(&self, session: &str) -> i64 {
         self.paid_out.get(session).copied().unwrap_or_default()
     }
+
+    /// A payout entry of `customer` (spec 2.7 K7: its slip), the customer's line (name and
+    /// masked phone) and the balance right after the entry.
+    pub(super) fn payout_entry(
+        &self,
+        customer: &str,
+        entry: &str,
+    ) -> Option<(BalanceEntry, String, i64)> {
+        let at = self
+            .entries
+            .iter()
+            .position(|e| e.id == entry && e.customer_id == customer && e.kind == "payout")?;
+        let c = self.list.iter().find(|c| c.id == customer)?;
+        let line = match c.phone.as_deref().and_then(|p| Phone::parse(p).ok()) {
+            Some(phone) => format!("{} · {}", c.name, phone.masked()),
+            None => c.name.clone(),
+        };
+        let balance = self.entries[..=at]
+            .iter()
+            .filter(|e| e.customer_id == customer)
+            .map(|e| e.amount)
+            .sum();
+        Some((self.entries[at].clone(), line, balance))
+    }
 }
 
 /// `K7QH29XM` → `K7QH-29XM`.

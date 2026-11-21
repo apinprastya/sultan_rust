@@ -228,6 +228,7 @@ async fn open_conflict_and_blind_close() {
                 quantity: 1,
             },
         ]),
+        float_kept: None,
     };
     assert_code(
         c.close_session(&budi, &opened.id, &body, "close-0").await,
@@ -260,6 +261,7 @@ async fn open_conflict_and_blind_close() {
             denomination: 2,
             quantity: 1,
         }]),
+        float_kept: None,
     };
     let problem = assert_code(
         c.close_session(&ani, &reopened.id, &bad, "close-3").await,
@@ -290,6 +292,7 @@ async fn past_sessions_and_reports() {
     let body = CloseRequest {
         counted_cash: 99_000,
         counts: None,
+        float_kept: None,
     };
     let report = c
         .close_session(&ani, &opened.id, &body, "close-a")
@@ -478,6 +481,7 @@ async fn events_report_the_logout() {
     let zero = CloseRequest {
         counted_cash: 0,
         counts: None,
+        float_kept: None,
     };
     let mut subscribed = false;
     for attempt in 0..50 {
