@@ -143,6 +143,15 @@ async fn cash_movements_post_replay_and_permissions(h: &Harness) {
     put_cash(h, at, &id, &cash("in", 50_001, Some(TOP_UP)), None)
         .await
         .assert_problem(409, "conflict");
+    // A replay answers only who may read the movement (like `GET`): another branch's cashier
+    // with the same ID and body is refused; a manager with `report.sales` at JKT01 gets it.
+    let cici = h.pin_token(&h.bdg_device, &h.cici, ANI_PIN).await;
+    put_cash(h, (&cici, &h.bdg_device), &id, &body, None)
+        .await
+        .assert_problem(403, "permission_denied");
+    let budi = h.pin_token(&h.jkt_device, &h.budi, BUDI_PIN).await;
+    let r = put_cash(h, (&budi, &h.jkt_device), &id, &body, None).await;
+    assert_eq!((r.status, &r.body), (StatusCode::OK, &first.body));
     // Case 28: one audit row and one outbox row per movement, none for the replay.
     assert_eq!(h.outbox_count().await, outbox + 1);
     assert_eq!(h.audit_count("cash_movement.post").await, audits + 1);

@@ -10,7 +10,8 @@
 //!   reversal, not reversed yet: `409 already_reversed`) and needs a note; it takes the original's
 //!   kind, amount and reason (`kind` / `amount` may be left out; when sent they must match,
 //!   `422 invalid_field` `reverses`) and its permission. The same ID with the same body again →
-//!   `200` with the stored movement (even after the session closed); another body →
+//!   `200` with the stored movement (even after the session closed) to whoever may read it (its
+//!   poster, or `report.sales` at its branch; else `403 permission_denied`); another body →
 //!   `409 conflict`. A lost race on the number or the reversal reruns the transaction (2.1 §5).
 //!   The movement, its audit row `cash_movement.post` and its outbox row `cash_movement.posted`
 //!   are one transaction. Publishes `cash.moved {session_id}` to the branch.
@@ -290,6 +291,7 @@ pub async fn put(
     let replayed = cash::replayed_cash_movement(&mut tx, id, &hash).await?;
     tx.commit().await?;
     if let Some(stored) = replayed {
+        let stored = may_read(&state, &caller.user, stored).await?;
         return Ok((StatusCode::OK, Json(one_dto(&state, &stored).await?)));
     }
     let till = till(&state, &caller).await?;
@@ -362,6 +364,16 @@ async fn readable(
     let record = cash::get_cash_movement(&state.db, id)
         .await?
         .ok_or_else(|| ApiError::not_found("cash movement"))?;
+    may_read(state, caller, record).await
+}
+
+/// `record` when `caller` may read it: its own poster, or `report.sales` at its branch. A replayed
+/// `PUT` answers through this too, so knowing a movement's ID and body is not a way around it.
+async fn may_read(
+    state: &AppState,
+    caller: &UserSession,
+    record: CashMovementRecord,
+) -> Result<CashMovementRecord, ApiError> {
     if record.user == caller.user.id {
         return Ok(record);
     }
