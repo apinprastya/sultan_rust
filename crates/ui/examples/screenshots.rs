@@ -195,6 +195,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     scans(&app, &shot)?;
     sell(&app, &shot)?;
     after(&app, &shot)?;
+    cash(&app, &shot)?;
     ctrl(&app, Key::F10);
     press(&app, Key::DownArrow);
     digits(&app, "17");
@@ -205,8 +206,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     digits(&app, "4");
     shot("7-blind-close")?;
     press(&app, Key::Return);
+    shot("7a-keep-float")?;
     press(&app, Key::Return);
     shot("8-report")?;
+    // End of day (Z): Budi approves for the cashier.
+    press(&app, "z");
+    shot("8a-z-confirm")?;
+    press(&app, Key::Return);
+    digits(&app, "9999");
+    press(&app, Key::Return);
+    shot("8b-z-report")?;
     press(&app, Key::Return);
 
     // Someone else's session blocks the register.
@@ -355,6 +364,36 @@ fn after(app: &App, shot: &dyn Fn(&str) -> Shot) -> Shot {
     Ok(())
 }
 
+/// Cash management (spec 2.7, phase K4): a cash out above the cashier's limit (Budi approves)
+/// with its slip, and the X report.
+fn cash(app: &App, shot: &dyn Fn(&str) -> Shot) -> Shot {
+    shift(app, Key::F5);
+    press(app, "o");
+    press(app, Key::DownArrow);
+    digits(app, "75000");
+    press(app, Key::Tab);
+    digits(app, "parkir truk");
+    shot("12a-cash-dialog")?;
+    press(app, Key::Return);
+    press(app, Key::Return);
+    digits(app, "9999");
+    press(app, Key::Return);
+    shot("12b-cash-slip")?;
+    press(app, Key::Escape);
+    press(app, Key::Escape);
+    shift(app, Key::F12);
+    digits(app, "9999");
+    press(app, Key::Return);
+    shot("12c-x-report")?;
+    press(app, Key::Escape);
+    Ok(())
+}
+
+/// Shift + `k` on the register.
+fn shift(app: &App, k: impl Into<SharedString>) {
+    key(app.ui.window(), &[Key::Shift.into(), k.into()]);
+}
+
 /// The customer step (spec 2.5, phase M5), from the "register in use" screen, as Budi (a
 /// manager: name search and payout).
 fn customers(app: &App, shot: &dyn Fn(&str) -> Shot) -> Shot {
@@ -376,6 +415,8 @@ fn customers(app: &App, shot: &dyn Fn(&str) -> Shot) -> Shot {
     digits(app, "2200");
     press(app, Key::Return);
     shot("10c-customer-payout")?;
+    press(app, Key::Return);
+    shot("10f-payout-slip")?;
     press(app, Key::Return);
     press(app, Key::Escape);
     press(app, Key::F6);

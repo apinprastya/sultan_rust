@@ -34,6 +34,8 @@ export struct LockView {
 }
 
 export struct OpenView {
+    // The float kept at the register's last close (spec 2.7 §3), "" without one.
+    proposed: string,
     amount: string,
     blocked: bool,
     blocked-name: string,
@@ -60,7 +62,7 @@ export struct CustomerRow {
 }
 
 // The customer dialog (spec 2.5 M5; `crates/ui/src/customer.rs`).
-// page: find, shown, sign-up, payout.
+// page: find, shown, sign-up, payout, slip.
 export struct CustomerView {
     open: bool,
     page: string,
@@ -226,6 +228,9 @@ export struct CloseView {
     total: string,
     total-locked: bool,
     confirm: bool,
+    // Spec 2.7 §3: the cash kept as float (asked with the confirmation) and the rest to the safe.
+    float: string,
+    to-safe: string,
     note: Note,
 }
 
@@ -242,6 +247,41 @@ export struct ReportView {
     tone: int,
     forced: bool,
     has-tenders: bool,
+    // End of day (spec 2.7 §6): hidden, offered, confirm, done; the business day and the Z's
+    // number once run; the printable text beside (`text-lines`): the close report, then the Z.
+    z: string,
+    day: string,
+    z-number: string,
+    note: Note,
+}
+
+// A cash movement in the cash dialog's list (spec 2.7 K4; `crates/ui/src/cash.rs`).
+export struct CashRow {
+    number: string,
+    // in, out, drop.
+    kind: string,
+    detail: string,
+}
+
+// The cash dialog (Shift+F5) and the X report (Shift+F12) (spec 2.7 K4; `crates/ui/src/cash.rs`).
+export struct CashView {
+    open: bool,
+    // cash or x.
+    mode: string,
+    // in, out, drop.
+    kind: string,
+    // form, confirm, reverse, slip.
+    step: string,
+    // amount, note, list.
+    focus: string,
+    amount: string,
+    text: string,
+    reason-cursor: int,
+    list-cursor: int,
+    // What is confirmed, reversed or shown (a number, a reason).
+    subject: string,
+    reverse-note: string,
+    note: Note,
 }
 
 export struct OverrideView {
@@ -492,6 +532,14 @@ component OpenPage inherits Rectangle {
             }
             if !root.view.blocked: Subtitle {
                 text: @tr("Count the cash in the drawer and type the opening amount. Enter opens the session.");
+            }
+            if !root.view.blocked && root.view.proposed != "": Text {
+                text: @tr("Proposed: {}, the float kept at the last close. Type another amount if the drawer holds something else.", root.view.proposed);
+                accessible-role: text;
+                accessible-label: @tr("Proposed float");
+                color: Theme.accent;
+                font-size: 14px;
+                wrap: word-wrap;
             }
             if !root.view.blocked: Rectangle {
                 height: 84px;
@@ -1725,6 +1773,25 @@ component DonePanel inherits Rectangle {
 }
 
 // A text field of the customer dialog: drawn here, edited in Rust like the barcode field.
+// A printable text (a slip, the X, the close report, the Z) on screen until 2.11 prints it.
+component TextPanel inherits Rectangle {
+    in property <[string]> lines;
+    in property <string> label;
+    background: #fbfaf6;
+    border-radius: 6px;
+    accessible-role: text;
+    accessible-label: root.label;
+    ListView {
+        for l in root.lines: Text {
+            x: 12px;
+            text: l;
+            color: #222222;
+            font-family: Theme.mono;
+            font-size: 13px;
+        }
+    }
+}
+
 component TypedField inherits Rectangle {
     in property <string> label;
     in property <string> value;
@@ -1829,6 +1896,7 @@ component CustomerLine inherits Rectangle {
 component CustomerDialog inherits Rectangle {
     in property <CustomerView> view;
     in property <[CustomerRow]> rows;
+    in property <[string]> slip;
     in property <[Chip]> chips;
     callback key(string);
     callback pick(string, int);
@@ -2072,6 +2140,29 @@ component CustomerDialog inherits Rectangle {
                     }
                 }
             }
+            if root.view.page == "slip": HorizontalLayout {
+                vertical-stretch: 1;
+                spacing: 24px;
+                VerticalLayout {
+                    horizontal-stretch: 1;
+                    spacing: 12px;
+                    Title {
+                        text: @tr("Payout slip");
+                        font-size: 22px;
+                    }
+                    Subtitle {
+                        text: @tr("Have the customer sign the slip for the cash paid out to {}. Printing comes with the printer setup.", root.view.name);
+                    }
+                    Rectangle {
+                        vertical-stretch: 1;
+                    }
+                }
+                TextPanel {
+                    width: 360px;
+                    lines: root.slip;
+                    label: @tr("Payout slip");
+                }
+            }
             NoteLine {
                 note: root.view.note;
                 horizontal-alignment: left;
@@ -2236,6 +2327,14 @@ component ClosePage inherits Rectangle {
                     Subtitle {
                         text: @tr("This cannot be undone. The report shows the expected cash after closing.");
                     }
+                    TypedField {
+                        label: @tr("Keep as float");
+                        value: root.view.float;
+                        placeholder: "Rp 0";
+                    }
+                    Subtitle {
+                        text: @tr("Cash left in the drawer for the next session (at most the counted cash). To the safe: {}.", root.view.to-safe);
+                    }
                 }
             }
             if !root.view.confirm: Keypad {
@@ -2273,68 +2372,369 @@ component ReportRow inherits HorizontalLayout {
 component ReportPage inherits Rectangle {
     in property <[ReportLine]> lines;
     in property <[ReportLine]> tenders;
+    in property <[string]> text;
     in property <ReportView> view;
     callback action(string);
     Card {
-        width: 620px;
+        width: min(root.width - 32px, 1080px);
         height: min(root.height - 32px, 660px);
-        VerticalLayout {
+        HorizontalLayout {
             padding: 28px;
-            spacing: 10px;
-            Title {
-                text: @tr("Session closed");
-            }
-            if root.view.number != "": Subtitle {
-                text: @tr("Session {}", root.view.number);
-            }
-            if root.view.forced: Subtitle {
-                text: @tr("Force-closed by a manager.");
-            }
-            Rectangle {
-                height: 72px;
-                border-radius: 12px;
-                background: root.view.tone > 0 ? Theme.success-soft : root.view.tone < 0 ? Theme.danger-soft : Theme.raised;
-                HorizontalLayout {
-                    padding-left: 18px;
-                    padding-right: 18px;
-                    Text {
-                        text: root.view.tone > 0 ? @tr("Over") : root.view.tone < 0 ? @tr("Short") : @tr("Balanced");
-                        color: Theme.tone-color(root.view.tone);
-                        font-size: 18px;
-                        font-weight: 700;
-                        vertical-alignment: center;
-                        horizontal-stretch: 1;
+            spacing: 24px;
+            VerticalLayout {
+                horizontal-stretch: 1;
+                spacing: 8px;
+                Title {
+                    text: root.view.z == "done" ? @tr("End of day (Z) done") : @tr("Session closed");
+                }
+                if root.view.number != "": Subtitle {
+                    text: root.view.z == "done" ? @tr("{} · business day {}", root.view.z-number, root.view.day) : @tr("Session {}", root.view.number);
+                }
+                if root.view.forced: Subtitle {
+                    text: @tr("Force-closed by a manager.");
+                }
+                Rectangle {
+                    height: 72px;
+                    border-radius: 12px;
+                    background: root.view.tone > 0 ? Theme.success-soft : root.view.tone < 0 ? Theme.danger-soft : Theme.raised;
+                    HorizontalLayout {
+                        padding-left: 18px;
+                        padding-right: 18px;
+                        Text {
+                            text: root.view.tone > 0 ? @tr("Over") : root.view.tone < 0 ? @tr("Short") : @tr("Balanced");
+                            color: Theme.tone-color(root.view.tone);
+                            font-size: 18px;
+                            font-weight: 700;
+                            vertical-alignment: center;
+                            horizontal-stretch: 1;
+                        }
+                        Text {
+                            text: root.view.over-short;
+                            color: root.view.tone == 0 ? Theme.text : Theme.tone-color(root.view.tone);
+                            font-size: 30px;
+                            font-weight: 800;
+                            vertical-alignment: center;
+                        }
                     }
-                    Text {
-                        text: root.view.over-short;
-                        color: root.view.tone == 0 ? Theme.text : Theme.tone-color(root.view.tone);
-                        font-size: 30px;
-                        font-weight: 800;
-                        vertical-alignment: center;
+                }
+                for l in root.lines: ReportRow {
+                    line: l;
+                }
+                Rectangle {
+                    height: 1px;
+                    background: Theme.border;
+                }
+                Text {
+                    text: @tr("TENDERS");
+                    color: Theme.muted;
+                    font-size: 12px;
+                    font-weight: 700;
+                }
+                if !root.view.has-tenders: Subtitle {
+                    text: @tr("No sales in this session.");
+                }
+                for t in root.tenders: ReportRow {
+                    line: t;
+                }
+                Rectangle {
+                    vertical-stretch: 1;
+                }
+                if root.view.z == "confirm": Text {
+                    text: @tr("Run the end of day (Z) for {}? It covers every closed session of the day at this branch; a manager approves.", root.view.day);
+                    color: Theme.warn;
+                    font-size: 15px;
+                    font-weight: 700;
+                    wrap: word-wrap;
+                }
+                if root.view.z == "offered": Subtitle {
+                    text: @tr("Z runs the end of day of the branch once every session of the day is closed.");
+                }
+                NoteLine {
+                    note: root.view.note;
+                    horizontal-alignment: left;
+                }
+            }
+            TextPanel {
+                width: 400px;
+                lines: root.text;
+                label: root.view.z == "done" ? @tr("Z report") : @tr("Close report");
+            }
+        }
+    }
+}
+
+// The kind of a cash movement, a tab of the cash dialog.
+component KindTab inherits Rectangle {
+    in property <string> label;
+    in property <bool> selected;
+    callback clicked();
+    height: 44px;
+    horizontal-stretch: 1;
+    border-radius: 10px;
+    border-width: 2px;
+    border-color: root.selected ? Theme.accent : Theme.border;
+    background: root.selected ? Theme.accent-soft : Theme.raised;
+    accessible-role: button;
+    accessible-label: root.label;
+    accessible-action-default => { root.clicked(); }
+    TouchArea {
+        clicked => {
+            root.clicked();
+        }
+    }
+    Text {
+        text: root.label;
+        color: root.selected ? Theme.text : Theme.muted;
+        font-size: 16px;
+        font-weight: 700;
+    }
+}
+
+// The cash dialog (Shift+F5) and the X report (Shift+F12) (spec 2.7 K4; `crates/ui/src/cash.rs`).
+component CashDialog inherits Rectangle {
+    in property <CashView> view;
+    in property <[SellRow]> reasons;
+    in property <[CashRow]> movements;
+    in property <[string]> text;
+    in property <[Chip]> chips;
+    in property <[Chip]> chips-b;
+    callback pick(string, int);
+    callback action(string);
+    background: #000000a0;
+    TouchArea { }
+    Card {
+        width: min(root.width - 32px, 1000px);
+        height: min(root.height - 32px, 660px);
+        accessible-role: groupbox;
+        accessible-label: root.view.mode == "x" ? @tr("X report") : @tr("Cash in / out");
+        HorizontalLayout {
+            padding: 24px;
+            spacing: 20px;
+            VerticalLayout {
+                horizontal-stretch: 1;
+                spacing: 12px;
+                Title {
+                    text: root.view.mode == "x" ? @tr("X report: not a close") : @tr("Cash in / out");
+                    overflow: elide;
+                }
+                if root.view.mode == "x": Subtitle {
+                    text: @tr("The session as of now, with the expected cash. Nothing is closed or counted.");
+                }
+                if root.view.mode == "x": TextPanel {
+                    vertical-stretch: 1;
+                    lines: root.text;
+                    label: @tr("X report");
+                }
+                if root.view.mode == "cash": HorizontalLayout {
+                    spacing: 8px;
+                    KindTab {
+                        label: @tr("Cash in");
+                        selected: root.view.kind == "in";
+                        clicked => {
+                            root.pick("kind", 0);
+                        }
+                    }
+                    KindTab {
+                        label: @tr("Cash out");
+                        selected: root.view.kind == "out";
+                        clicked => {
+                            root.pick("kind", 1);
+                        }
+                    }
+                    KindTab {
+                        label: @tr("Safe drop");
+                        selected: root.view.kind == "drop";
+                        clicked => {
+                            root.pick("kind", 2);
+                        }
+                    }
+                }
+                if root.view.mode == "cash" && (root.view.step == "form" || root.view.step == "confirm") && root.view.kind != "drop": ListView {
+                    vertical-stretch: 1;
+                    for r[i] in root.reasons: Rectangle {
+                        height: 36px;
+                        border-radius: 8px;
+                        background: i == root.view.reason-cursor ? Theme.accent-soft : transparent;
+                        accessible-role: list-item;
+                        accessible-label: r.label;
+                        accessible-action-default => { root.pick("reason", i); }
+                        TouchArea {
+                            clicked => {
+                                root.pick("reason", i);
+                            }
+                        }
+                        Text {
+                            x: 12px;
+                            text: r.label;
+                            color: Theme.text;
+                            font-size: 15px;
+                            font-weight: i == root.view.reason-cursor ? 700 : 400;
+                            vertical-alignment: center;
+                        }
+                    }
+                }
+                if root.view.mode == "cash" && (root.view.step == "form" || root.view.step == "confirm") && root.view.kind == "drop": Subtitle {
+                    vertical-stretch: 1;
+                    text: @tr("A safe drop takes cash from the drawer to the safe. It has no reason; a note is optional.");
+                }
+                if root.view.mode == "cash" && (root.view.step == "form" || root.view.step == "confirm"): HorizontalLayout {
+                    spacing: 12px;
+                    TypedField {
+                        width: 220px;
+                        label: @tr("Amount");
+                        value: root.view.amount;
+                        placeholder: "Rp 0";
+                        focused: root.view.focus == "amount" && root.view.step == "form";
+                        clicked => {
+                            root.pick("cash-field", 0);
+                        }
+                    }
+                    TypedField {
+                        horizontal-stretch: 1;
+                        label: @tr("Note");
+                        value: root.view.text;
+                        placeholder: @tr("Optional (required for Other)");
+                        focused: root.view.focus == "note" && root.view.step == "form";
+                        clicked => {
+                            root.pick("cash-field", 1);
+                        }
+                    }
+                }
+                if root.view.mode == "cash" && root.view.step == "confirm": Rectangle {
+                    border-radius: 12px;
+                    border-width: 1px;
+                    border-color: Theme.warn;
+                    background: Theme.raised;
+                    VerticalLayout {
+                        padding: 12px;
+                        spacing: 2px;
+                        Text {
+                            text: root.view.kind == "in" ? @tr("Put {} into the drawer?", root.view.amount) : root.view.kind == "out" ? @tr("Take {} out of the drawer?", root.view.amount) : @tr("Drop {} to the safe?", root.view.amount);
+                            color: Theme.text;
+                            font-size: 17px;
+                            font-weight: 700;
+                            wrap: word-wrap;
+                        }
+                        Subtitle {
+                            text: root.view.subject;
+                        }
+                    }
+                }
+                if root.view.mode == "cash" && root.view.step == "reverse": VerticalLayout {
+                    vertical-stretch: 1;
+                    spacing: 12px;
+                    Subtitle {
+                        text: @tr("Reverse {}: it is undone with a movement the other way. Why?", root.view.subject);
+                    }
+                    TypedField {
+                        label: @tr("Note");
+                        value: root.view.reverse-note;
+                        placeholder: @tr("Why is it reversed?");
+                    }
+                    Rectangle {
+                        vertical-stretch: 1;
+                    }
+                }
+                if root.view.mode == "cash" && root.view.step == "slip": VerticalLayout {
+                    vertical-stretch: 1;
+                    spacing: 8px;
+                    Subtitle {
+                        text: @tr("Slip of {}. Have it signed; printing comes with the printer setup.", root.view.subject);
+                    }
+                    Rectangle {
+                        vertical-stretch: 1;
+                    }
+                }
+                NoteLine {
+                    note: root.view.note;
+                    horizontal-alignment: left;
+                }
+                HorizontalLayout {
+                    spacing: 8px;
+                    alignment: end;
+                    for c in root.chips: KeyChip {
+                        keys: c.keys;
+                        label: Strings.chip(c.label);
+                        clicked => {
+                            root.action(c.id);
+                        }
+                    }
+                }
+                if root.chips-b.length > 0: HorizontalLayout {
+                    spacing: 8px;
+                    alignment: end;
+                    for c in root.chips-b: KeyChip {
+                        keys: c.keys;
+                        label: Strings.chip(c.label);
+                        clicked => {
+                            root.action(c.id);
+                        }
                     }
                 }
             }
-            for l in root.lines: ReportRow {
-                line: l;
+            if root.view.mode == "cash" && root.view.step == "slip": TextPanel {
+                width: 360px;
+                lines: root.text;
+                label: @tr("Slip");
             }
-            Rectangle {
-                height: 1px;
-                background: Theme.border;
-            }
-            Text {
-                text: @tr("TENDERS");
-                color: Theme.muted;
-                font-size: 12px;
-                font-weight: 700;
-            }
-            if !root.view.has-tenders: Subtitle {
-                text: @tr("No sales in this session.");
-            }
-            for t in root.tenders: ReportRow {
-                line: t;
-            }
-            Rectangle {
-                vertical-stretch: 1;
+            if root.view.mode == "cash" && root.view.step != "slip": VerticalLayout {
+                width: 360px;
+                spacing: 8px;
+                Text {
+                    text: @tr("THIS SESSION");
+                    color: Theme.muted;
+                    font-size: 12px;
+                    font-weight: 700;
+                }
+                if root.movements.length == 0: Subtitle {
+                    text: @tr("No cash movements yet.");
+                }
+                ListView {
+                    vertical-stretch: 1;
+                    for m[i] in root.movements: Rectangle {
+                        height: 52px;
+                        border-radius: 8px;
+                        border-width: i == root.view.list-cursor && root.view.focus == "list" ? 2px : 0px;
+                        border-color: Theme.accent;
+                        background: i == root.view.list-cursor && root.view.focus == "list" ? Theme.accent-soft : transparent;
+                        accessible-role: list-item;
+                        accessible-label: m.number;
+                        accessible-value: m.detail;
+                        accessible-action-default => { root.pick("movement", i); }
+                        TouchArea {
+                            clicked => {
+                                root.pick("movement", i);
+                            }
+                        }
+                        VerticalLayout {
+                            padding-left: 10px;
+                            padding-right: 10px;
+                            alignment: center;
+                            HorizontalLayout {
+                                spacing: 8px;
+                                Text {
+                                    text: m.kind == "in" ? @tr("Cash in") : m.kind == "out" ? @tr("Cash out") : @tr("Safe drop");
+                                    color: Theme.accent;
+                                    font-size: 13px;
+                                    font-weight: 700;
+                                }
+                                Text {
+                                    horizontal-stretch: 1;
+                                    text: m.number;
+                                    color: Theme.muted;
+                                    font-size: 12px;
+                                    overflow: elide;
+                                }
+                            }
+                            Text {
+                                text: m.detail;
+                                color: Theme.text;
+                                font-size: 14px;
+                                overflow: elide;
+                            }
+                        }
+                    }
+                }
             }
         }
     }
@@ -2514,6 +2914,12 @@ export component MainWindow inherits Window {
     // A sell dialog's chips, in two rows when there are more than four.
     in property <[Chip]> dialog-chips;
     in property <[Chip]> dialog-chips-b;
+    // Spec 2.7 K4: the cash dialog and the X report, its rows, and the printable text on screen
+    // (a slip, the X, the close report, the Z, a payout slip).
+    in property <CashView> cash;
+    in property <[SellRow]> cash-reasons;
+    in property <[CashRow]> cash-rows;
+    in property <[string]> text-lines;
     out property <bool> has-focus: keys.has-focus;
 
     // A key (Slint key text and modifiers); true = handled.
@@ -2604,6 +3010,7 @@ export component MainWindow inherits Window {
                 if root.screen == "report": ReportPage {
                     lines: root.report-lines;
                     tenders: root.report-tenders;
+                    text: root.text-lines;
                     view: root.report;
                     action(a) => {
                         root.action(a);
@@ -2622,7 +3029,7 @@ export component MainWindow inherits Window {
                 }
                 // The home page shows its actions as buttons (the bar has the field's or the
                 // lines' keys); the dialogs have their own.
-                if !root.approval.open && !root.customer.open && root.sell.modal == "" && !root.sell.pay-open && !root.sell.done: HorizontalLayout {
+                if !root.approval.open && !root.customer.open && !root.cash.open && root.sell.modal == "" && !root.sell.pay-open && !root.sell.done: HorizontalLayout {
                     padding-left: 20px;
                     padding-right: 20px;
                     padding-top: 10px;
@@ -2640,7 +3047,7 @@ export component MainWindow inherits Window {
             }
         }
 
-        if root.screen == "home" && root.sell.modal != "": SellDialog {
+        if root.screen == "home" && root.sell.modal != "" && !root.cash.open: SellDialog {
             width: 100%;
             height: 100%;
             view: root.sell;
@@ -2650,6 +3057,23 @@ export component MainWindow inherits Window {
             receipt: root.receipt-lines;
             pick(i) => {
                 root.pick("item", i);
+            }
+            action(a) => {
+                root.action(a);
+            }
+        }
+
+        if root.screen == "home" && root.cash.open: CashDialog {
+            width: 100%;
+            height: 100%;
+            view: root.cash;
+            reasons: root.cash-reasons;
+            movements: root.cash-rows;
+            text: root.text-lines;
+            chips: root.dialog-chips;
+            chips-b: root.dialog-chips-b;
+            pick(kind, i) => {
+                root.pick(kind, i);
             }
             action(a) => {
                 root.action(a);
@@ -2686,6 +3110,7 @@ export component MainWindow inherits Window {
             height: 100%;
             view: root.customer;
             rows: root.customers;
+            slip: root.text-lines;
             chips: root.chips;
             key(k) => {
                 root.key(k, false, false);

@@ -27,6 +27,7 @@ use tokio::runtime::Handle;
 
 use crate::after::{Call as AfterCall, Reply as AfterReply, ReturnStep};
 use crate::amount::{rupiah, signed_rupiah};
+use crate::cash::{Call as CashCall, Reply as CashReply, ZStep};
 use crate::controller::{Controller, Effect, Msg, Notice, Screen, TILE_COLUMNS, Tone, value_text};
 use crate::count::{CountForm, DENOMINATIONS, is_coin};
 use crate::customer::{Call, Dialog, Perms, Reply, receipt_line};
@@ -35,8 +36,9 @@ use crate::scan::{CustomerPrice, ScanField, line_amount, match_kind, percent_off
 use crate::sell::{Line, PayStep};
 use crate::till::{EntryKind, Modal, Sell, VOID_REASONS, VoidTarget};
 use crate::{
-    CartRow, Chip, CloseView, CustomerRow, CustomerView, DenomRow, HomeView, LockView, MainWindow,
-    Note, OpenView, OverrideView, ReportLine, ReportView, ScanView, SellRow, SellView, UserTile,
+    CartRow, CashRow, CashView, Chip, CloseView, CustomerRow, CustomerView, DenomRow, HomeView,
+    LockView, MainWindow, Note, OpenView, OverrideView, ReportLine, ReportView, ScanView, SellRow,
+    SellView, UserTile,
 };
 
 /// How service calls run; see the module docs.
@@ -124,6 +126,10 @@ struct Models {
     /// A sell dialog's chips in two rows when there are more than four.
     dialog_chips: Rc<VecModel<Chip>>,
     dialog_chips_b: Rc<VecModel<Chip>>,
+    /// Spec 2.7 K4: the cash dialog's reasons and movements, and the printable text on screen.
+    cash_reasons: Rc<VecModel<SellRow>>,
+    cash_rows: Rc<VecModel<CashRow>>,
+    text_lines: Rc<VecModel<SharedString>>,
 }
 
 /// Replaces the rows of `model` if they changed.
@@ -370,6 +376,81 @@ fn after_call(
     }
 }
 
+/// Starts a call of [`crate::cash`]; `lang` is the window language for the texts.
+fn cash_call(
+    service: &dyn Service,
+    token: &str,
+    call: CashCall,
+    lang: &str,
+) -> Pin<Box<dyn Future<Output = CashReply> + Send>> {
+    macro_rules! reply {
+        ($future:expr, $reply:path) => {{
+            let future = $future;
+            Box::pin(async move { $reply(future.await) })
+        }};
+    }
+    match call {
+        CashCall::Reasons => reply!(service.cash_reasons(token), CashReply::Reasons),
+        CashCall::Movements(session) => reply!(
+            service.cash_movements(token, &crate::cash::session_query(&session)),
+            CashReply::Movements
+        ),
+        CashCall::Post {
+            id,
+            body,
+            override_token,
+        } => {
+            let future = service.post_cash_movement(token, &id, &body, override_token.as_deref());
+            Box::pin(async move { CashReply::Posted(future.await.map(Box::new)) })
+        }
+        CashCall::Slip {
+            id,
+            copy,
+            override_token,
+        } => {
+            let future = service.cash_slip(token, &id, copy, lang, override_token.as_deref());
+            Box::pin(async move { CashReply::Slip(copy, future.await) })
+        }
+        CashCall::XText {
+            session_id,
+            override_token,
+        } => reply!(
+            service.x_report_text(token, &session_id, lang, override_token.as_deref()),
+            CashReply::X
+        ),
+        CashCall::CloseText(session) => reply!(
+            service.close_report_text(token, &session, false, lang),
+            CashReply::CloseText
+        ),
+        CashCall::Pending => reply!(service.pending_days(token, None), CashReply::Pending),
+        CashCall::RunZ {
+            day,
+            key,
+            override_token,
+        } => {
+            let future = service.run_z(
+                token,
+                &crate::cash::run_z_request(&day),
+                &key,
+                override_token.as_deref(),
+            );
+            Box::pin(async move { CashReply::Z(future.await.map(Box::new)) })
+        }
+        CashCall::ZText(id) => reply!(
+            service.z_report_text(token, &id, false, lang),
+            CashReply::ZText
+        ),
+        CashCall::Float => reply!(service.proposed_float(token), CashReply::Float),
+        CashCall::PayoutSlip {
+            customer_id,
+            entry_id,
+        } => {
+            let future = service.payout_slip(token, &customer_id, &entry_id, false, lang, None);
+            Box::pin(async move { CashReply::PayoutSlip(customer_id, future.await) })
+        }
+    }
+}
+
 /// Starts the service call of `effect`. Calls happen now (the fake does its work here); the
 /// returned future only waits for the answer.
 #[allow(clippy::too_many_lines)] // one arm per service call
@@ -485,7 +566,8 @@ fn start(service: &dyn Service, effect: Effect) -> Option<MsgFuture> {
         | Effect::SaveCart(_)
         | Effect::DeleteCart
         | Effect::LoadCart { .. }
-        | Effect::After { .. } => None,
+        | Effect::After { .. }
+        | Effect::Cash { .. } => None,
     }
 }
 
@@ -568,6 +650,18 @@ impl State {
                     let future = after_call(self.service.as_ref(), &token, call, &lang);
                     let future: MsgFuture =
                         Box::pin(async move { Msg::After(generation, Box::new(future.await)) });
+                    self.spawn_or_block(future);
+                    continue;
+                }
+                Effect::Cash {
+                    token,
+                    call,
+                    generation,
+                } => {
+                    let lang = receipt_language(&self.options);
+                    let future = cash_call(self.service.as_ref(), &token, call, &lang);
+                    let future: MsgFuture =
+                        Box::pin(async move { Msg::Cash(generation, Box::new(future.await)) });
                     self.spawn_or_block(future);
                     continue;
                 }
@@ -710,6 +804,14 @@ fn report_lines(r: &CloseReport) -> (Vec<ReportLine>, Vec<ReportLine>) {
         line("counted_cash", rupiah(r.counted_cash), true),
         line("transactions", r.transactions.to_string(), false),
     ];
+    let mut lines = lines;
+    // Spec 2.7 §3: the float kept and the rest to the safe (none before 2.7).
+    if let Some(kept) = r.float.float_kept {
+        lines.push(line("float_kept", rupiah(kept), false));
+    }
+    if let Some(safe) = r.float.to_safe {
+        lines.push(line("to_safe", rupiah(safe), true));
+    }
     let tenders = r
         .tenders
         .iter()
@@ -1072,12 +1174,15 @@ fn render_sell(
                             ("F6 → T", "start_return"),
                             ("F10 → F9", "exchange"),
                             ("F3 → F9", "history"),
+                            ("Shift+F5 → R", "reverse"),
+                            ("Shift+F5 → P", "reprint"),
                         ]
                         .map(|(k, l)| sell_row(k, l)),
                     )
                     .collect();
                 ("help", "help")
             }
+            Modal::Cash(_) | Modal::XReport(_) => ("cash", "cash"),
             other => after_view(other, c, &mut view, &mut list, &mut receipt),
         };
         view.modal = kind.into();
@@ -1499,6 +1604,12 @@ fn customer_view(d: &Dialog, perms: Perms, attached: Option<&Customer>, now: i64
     view
 }
 
+/// The cash that goes to the safe when a session closes with `float` left in the drawer: never
+/// negative, because the float is only refused (when above the count) once Enter is pressed.
+fn to_safe(counted: i64, float: i64) -> i64 {
+    counted.saturating_sub(float).max(0)
+}
+
 fn denominations(form: &CountForm) -> Vec<DenomRow> {
     DENOMINATIONS
         .iter()
@@ -1522,6 +1633,103 @@ fn denominations(form: &CountForm) -> Vec<DenomRow> {
             }
         })
         .collect()
+}
+
+/// The cash dialog or the X report (spec 2.7 K4), and the printable text on screen: the payout
+/// slip of the customer dialog, the cash dialog's slip or X, or the close report / Z.
+fn render_cash(ui: &MainWindow, c: &Controller, now: i64, models: &Models) {
+    let home_notice = match &c.screen {
+        Screen::Home(h) => h.notice.as_ref(),
+        _ => None,
+    };
+    let modal = c.sell().and_then(|s| s.modal.as_ref());
+    let mut view = CashView::default();
+    let mut reasons = Vec::new();
+    let mut rows = Vec::new();
+    let mut text: Vec<SharedString> = Vec::new();
+    match modal {
+        Some(Modal::XReport(x)) => {
+            view.open = true;
+            view.mode = "x".into();
+            view.note = note(home_notice, now);
+            text = x.lines.iter().map(|l| l.as_str().into()).collect();
+        }
+        Some(Modal::Cash(d)) => {
+            use crate::cash::{Focus, Step};
+            view.open = true;
+            view.mode = "cash".into();
+            view.kind = d.kind.key().into();
+            view.step = match d.step {
+                Step::Form => "form",
+                Step::Confirm => "confirm",
+                Step::Reverse => "reverse",
+                Step::Slip => "slip",
+            }
+            .into();
+            view.focus = match d.focus {
+                Focus::Amount => "amount",
+                Focus::Note => "note",
+                Focus::List => "list",
+            }
+            .into();
+            view.amount = if d.amount.is_empty() {
+                SharedString::new()
+            } else {
+                rupiah(d.amount.value()).into()
+            };
+            view.text = d.note.as_str().into();
+            view.reason_cursor = index(d.reason);
+            view.list_cursor = index(d.cursor);
+            view.reverse_note = d.reverse_note.as_str().into();
+            view.note = note(home_notice, now);
+            let shown = d.shown_reasons();
+            reasons = shown
+                .iter()
+                .map(|r| sell_row(r.name.as_str(), ""))
+                .collect();
+            view.subject = match d.step {
+                Step::Confirm => shown
+                    .get(d.reason)
+                    .map(|r| r.name.clone())
+                    .unwrap_or_default()
+                    .into(),
+                Step::Reverse => d
+                    .movements
+                    .get(d.cursor)
+                    .map(|m| format!("{} · {}", m.number, rupiah(m.amount)))
+                    .unwrap_or_default()
+                    .into(),
+                Step::Slip => d.slip_number.as_str().into(),
+                Step::Form => SharedString::new(),
+            };
+            rows = d
+                .movements
+                .iter()
+                .map(|m| CashRow {
+                    number: m.number.as_str().into(),
+                    kind: m.kind.as_str().into(),
+                    detail: crate::cash::movement_detail(m).into(),
+                })
+                .collect();
+            if d.step == Step::Slip {
+                text = d.slip.iter().map(|l| l.as_str().into()).collect();
+            }
+        }
+        _ => {}
+    }
+    if let Some(d) = c
+        .dialog
+        .as_ref()
+        .filter(|d| d.page == crate::customer::Page::Slip)
+    {
+        text = d.slip.iter().map(|l| l.as_str().into()).collect();
+    } else if let Screen::Report(r) = &c.screen {
+        text = r.text.iter().map(|l| l.as_str().into()).collect();
+    }
+    ui.set_cash(view);
+    sync(&models.cash_reasons, reasons);
+    sync(&models.cash_rows, rows);
+    sync(&models.text_lines, text);
 }
 
 #[allow(clippy::too_many_lines)] // one assignment per window property
@@ -1609,6 +1817,12 @@ fn render(ui: &MainWindow, c: &Controller, now: i64, models: &Models, options: &
                     .unwrap_or_default()
                     .into(),
                 note: note(o.notice.as_ref(), now),
+                proposed: o
+                    .proposed
+                    .filter(|p| *p > 0)
+                    .map(rupiah)
+                    .unwrap_or_default()
+                    .into(),
             });
         }
         Screen::Home(h) => {
@@ -1657,10 +1871,14 @@ fn render(ui: &MainWindow, c: &Controller, now: i64, models: &Models, options: &
                 total: rupiah(close.form.counted()).into(),
                 total_locked: close.form.uses_denominations(),
                 confirm: close.confirm,
+                float: rupiah(close.float.value()).into(),
+                // The float is only checked on Enter: never show a negative amount meanwhile.
+                to_safe: rupiah(to_safe(close.form.counted(), close.float.value())).into(),
                 note: note(close.notice.as_ref(), now),
             });
         }
-        Screen::Report(report) => {
+        Screen::Report(screen) => {
+            let report = &screen.report;
             let (lines, tenders) = report_lines(report);
             ui.set_report(ReportView {
                 number: report.session.number.as_str().into(),
@@ -1668,6 +1886,19 @@ fn render(ui: &MainWindow, c: &Controller, now: i64, models: &Models, options: &
                 tone: Tone::of_amount(report.over_short).value(),
                 forced: report.forced,
                 has_tenders: !tenders.is_empty(),
+                z: match &screen.z {
+                    ZStep::Hidden => "hidden",
+                    ZStep::Offered => "offered",
+                    ZStep::Confirm => "confirm",
+                    ZStep::Done(_) => "done",
+                }
+                .into(),
+                day: screen.day().into(),
+                z_number: match &screen.z {
+                    ZStep::Done(z) => z.report.number.as_str().into(),
+                    _ => SharedString::new(),
+                },
+                note: note(screen.notice.as_ref(), now),
             });
             sync(&models.report_lines, lines);
             sync(&models.report_tenders, tenders);
@@ -1692,6 +1923,8 @@ fn render(ui: &MainWindow, c: &Controller, now: i64, models: &Models, options: &
             .map(|d| d.find.results.iter().map(customer_row).collect())
             .unwrap_or_default(),
     );
+
+    render_cash(ui, c, now, models);
 
     let approvers: Vec<UserTile> = c
         .approvers()
@@ -1749,6 +1982,10 @@ fn connect(ui: &MainWindow, state: &Rc<State>) {
                 "line" => Msg::PickSell("line", i),
                 "item" => Msg::PickSell("item", i),
                 "tender" => Msg::PickSell("tender", i),
+                "reason" => Msg::PickSell("reason", i),
+                "movement" => Msg::PickSell("movement", i),
+                "kind" => Msg::PickSell("kind", i),
+                "cash-field" => Msg::PickSell("field", i),
                 _ => return,
             };
             s.dispatch(msg);
@@ -1798,6 +2035,9 @@ pub fn build_app(
         receipt_lines: Rc::default(),
         dialog_chips: Rc::default(),
         dialog_chips_b: Rc::default(),
+        cash_reasons: Rc::default(),
+        cash_rows: Rc::default(),
+        text_lines: Rc::default(),
     };
     ui.set_users(ModelRc::from(models.users.clone()));
     ui.set_managers(ModelRc::from(models.managers.clone()));
@@ -1815,6 +2055,9 @@ pub fn build_app(
     ui.set_receipt_lines(ModelRc::from(models.receipt_lines.clone()));
     ui.set_dialog_chips(ModelRc::from(models.dialog_chips.clone()));
     ui.set_dialog_chips_b(ModelRc::from(models.dialog_chips_b.clone()));
+    ui.set_cash_reasons(ModelRc::from(models.cash_reasons.clone()));
+    ui.set_cash_rows(ModelRc::from(models.cash_rows.clone()));
+    ui.set_text_lines(ModelRc::from(models.text_lines.clone()));
     ui.set_columns(index(TILE_COLUMNS));
 
     let wake: Wake = match &runner {
@@ -1885,6 +2128,20 @@ pub fn run(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn to_the_safe_is_never_negative() {
+        let cases = [
+            (700_000, 500_000, 200_000),
+            (700_000, 700_000, 0),
+            (700_000, 800_000, 0),
+            (0, 0, 0),
+            (i64::MIN, 1, 0),
+        ];
+        for (counted, float, want) in cases {
+            assert_eq!(to_safe(counted, float), want, "{counted} - {float}");
+        }
+    }
 
     #[tokio::test]
     async fn watchers_are_aborted_when_replaced_or_stopped() {

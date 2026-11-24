@@ -7,8 +7,11 @@
 //! - `returns_tax`: the tax per rate of the returns and post-voids **paid in** the session. A
 //!   post-void takes the voided sale's stored lines; a return line takes its refund through
 //!   `core::tax::line_tax` at the rate of the sold line (tax-inclusive, since a refund is what the
-//!   customer paid; no tax when the sold line had none). A return without a receipt has no sold
-//!   line and so no known rate: it is left out of the tax summary.
+//!   customer paid; no tax when the sold line had none). A return **without a receipt** has no
+//!   sold line: its refund takes the returned product's tax class at the rate valid on the
+//!   return's local day (`tax_rate.valid_from` ≤ the day; 0% when the class has no rate yet),
+//!   tax-inclusive as well, taxed when the company is tax-registered (decided 2026-11-21, spec 2.7
+//!   §18 reading 13).
 //!
 //! Per-rate sums that overflow are [`CashError::AmountOverflow`] (`422 amount_overflow`), never
 //! clamped (spec 2.7 §16 reading 8).
@@ -48,6 +51,53 @@ fn add_line(
         .ok_or(CashError::AmountOverflow)?;
     line.tax = line.tax.checked_add(tax).ok_or(CashError::AmountOverflow)?;
     Ok(())
+}
+
+/// The returned lines paid back in `session`: refund, tax rate and whether it was taxed. A line
+/// by receipt takes its sold line's rate (taxed when the sold line had tax); a line without a
+/// receipt takes the product's tax class at the rate valid on the return's local day (0% when
+/// the class has no rate yet), taxed when the company is tax-registered (decided 2026-11-21).
+async fn return_lines(
+    mut conn: Conn<'_>,
+    session: CashierSessionId,
+) -> Result<Vec<(Money, u16, bool)>> {
+    let lines = sql::fetch_all(
+        conn.reborrow(),
+        "SELECT rl.refund, l.tax_rate_bp, l.tax FROM sale_return_line rl \
+         JOIN sale_return r ON r.id = rl.return_id \
+         JOIN sale_line l ON l.sale_id = r.sale_id AND l.line_no = rl.sale_line_no \
+         WHERE r.cashier_session_id = ? AND r.status = 'posted'",
+        args![session],
+        |row| {
+            Ok((
+                sql::money(row, "refund")?,
+                rate(row)?,
+                sql::money(row, "tax")? != Money::ZERO,
+            ))
+        },
+    )
+    .await?;
+    let registered = sql::fetch_optional(
+        conn.reborrow(),
+        "SELECT tax_registered FROM pricing_settings WHERE id = 1",
+        args![],
+        |row| row.bool("tax_registered"),
+    )
+    .await?
+    .unwrap_or(true);
+    let no_receipt = sql::fetch_all(
+        conn,
+        "SELECT rl.refund, COALESCE((SELECT t.rate_bp FROM tax_rate t \
+         WHERE t.tax_class_id = p.tax_class_id AND t.valid_from <= r.local_day \
+         ORDER BY t.valid_from DESC LIMIT 1), 0) AS tax_rate_bp \
+         FROM sale_return_line rl JOIN sale_return r ON r.id = rl.return_id \
+         JOIN variant v ON v.id = rl.variant_id JOIN product p ON p.id = v.product_id \
+         WHERE r.cashier_session_id = ? AND r.status = 'posted' AND rl.sale_line_no IS NULL",
+        args![session],
+        |row| Ok((sql::money(row, "refund")?, rate(row)?, registered)),
+    )
+    .await?;
+    Ok(lines.into_iter().chain(no_receipt).collect())
 }
 
 /// The sales figures of `session` for its Z (see the module docs).
@@ -114,23 +164,7 @@ pub async fn session_sales<'c>(
     for t in voided {
         add_line(&mut returned, t.rate_bp, t.base, t.tax)?;
     }
-    let lines = sql::fetch_all(
-        conn,
-        "SELECT rl.refund, l.tax_rate_bp, l.tax FROM sale_return_line rl \
-         JOIN sale_return r ON r.id = rl.return_id \
-         JOIN sale_line l ON l.sale_id = r.sale_id AND l.line_no = rl.sale_line_no \
-         WHERE r.cashier_session_id = ? AND r.status = 'posted'",
-        args![session],
-        |row| {
-            Ok((
-                sql::money(row, "refund")?,
-                rate(row)?,
-                sql::money(row, "tax")? != Money::ZERO,
-            ))
-        },
-    )
-    .await?;
-    for (refund, rate_bp, taxed) in lines {
+    for (refund, rate_bp, taxed) in return_lines(conn, session).await? {
         let settings = TaxSettings {
             inclusive: true,
             registered: taxed,

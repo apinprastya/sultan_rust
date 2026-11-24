@@ -198,6 +198,10 @@ pub enum Modal {
     PostVoid(Box<crate::after::PostVoid>),
     /// A return or exchange (F10).
     Return(Box<crate::after::Return>),
+    /// The cash dialog (Shift+F5, spec 2.7).
+    Cash(Box<crate::cash::CashDialog>),
+    /// The X report (Shift+F12).
+    XReport(crate::cash::XView),
 }
 
 /// The posted sale, shown until Enter.
@@ -260,6 +264,8 @@ pub enum Retry {
     Sale,
     /// The waiting call of [`crate::after`].
     After,
+    /// The waiting call of [`crate::cash`].
+    Cash,
 }
 
 /// The message for a cart or payment rule (`core::sale::SaleError`).
@@ -336,6 +342,7 @@ impl Controller {
             keys.push(s(Key::Ctrl('d'), Action::CartDiscount, "cart_discount"));
         }
         keys.push(s(Key::F(5), Action::Drawer, "drawer"));
+        keys.push(s(Key::ShiftF(5), Action::Cash, "cash"));
         keys.push(s(Key::F(6), Action::Receipts, "receipts"));
         keys.push(s(Key::F(7), Action::PriceCheck, "price_check"));
         let exchange = self.sell().is_some_and(|s| s.exchange.is_some());
@@ -351,6 +358,7 @@ impl Controller {
             keys.push(s(Key::ShiftF(11), Action::Resume, "resume"));
         }
         keys.push(s(Key::F(12), Action::Lock, "lock"));
+        keys.push(s(Key::ShiftF(12), Action::XReport, "x_report"));
         if empty {
             keys.push(s(Key::CtrlF(10), Action::CloseSession, "close_session"));
         }
@@ -370,6 +378,9 @@ impl Controller {
             return vec![s(Key::Enter, Confirm, "new_sale")];
         }
         if let Some(keys) = self.after_shortcuts() {
+            return keys;
+        }
+        if let Some(keys) = self.cash_shortcuts() {
             return keys;
         }
         if let Some(pay) = &state.pay {
@@ -469,6 +480,11 @@ impl Controller {
     pub(crate) fn sell_edit(&mut self, key: Key) -> bool {
         if self.sell().is_some_and(|s| s.done.is_none())
             && let Some(used) = self.after_edit(key)
+        {
+            return used;
+        }
+        if self.sell().is_some_and(|s| s.done.is_none())
+            && let Some(used) = self.cash_edit(key)
         {
             return used;
         }
@@ -632,7 +648,15 @@ impl Controller {
 
     /// The line shortcuts take letters in either case.
     pub(crate) fn sell_key(&self, key: Key) -> Key {
+        let cash_keys = match self.sell().and_then(|s| s.modal.as_ref()) {
+            Some(Modal::Cash(d)) => {
+                d.step == crate::cash::Step::Slip
+                    || (d.step == crate::cash::Step::Form && d.focus != crate::cash::Focus::Note)
+            }
+            _ => matches!(self.screen, Screen::Report(_)),
+        };
         match key {
+            Key::Char(c) if cash_keys => Key::Char(c.to_ascii_lowercase()),
             Key::Char(c)
                 if self.sell().is_some_and(|s| {
                     (s.focus.is_some() && s.modal.is_none())
@@ -656,6 +680,10 @@ impl Controller {
         }
         if kind == "item" && self.in_after() {
             self.after_pick(index);
+            return;
+        }
+        if self.in_cash() {
+            self.cash_pick(kind, index);
             return;
         }
         let Some(state) = self.sell_mut() else {
@@ -685,6 +713,9 @@ impl Controller {
         let in_done = self.sell().is_some_and(|s| s.done.is_some());
         if self.in_after() && !in_done {
             return self.after_action(action);
+        }
+        if self.in_cash() && !in_done {
+            return self.cash_action(action);
         }
         match action {
             Action::Confirm if self.sell().is_some_and(|s| s.done.is_some()) => {
@@ -731,6 +762,8 @@ impl Controller {
             Action::Drawer | Action::Hold | Action::Resume | Action::Receipts | Action::Return => {
                 self.after_action(action)
             }
+            Action::Cash => self.open_cash(),
+            Action::XReport => self.open_x(),
             Action::Lines => {
                 if let Some(s) = self.sell_mut() {
                     let last = s.cart.lines.len().saturating_sub(1);
@@ -1072,7 +1105,9 @@ impl Controller {
             | Modal::Docs(_)
             | Modal::Receipt(_)
             | Modal::PostVoid(_)
-            | Modal::Return(_) => Vec::new(),
+            | Modal::Return(_)
+            | Modal::Cash(_)
+            | Modal::XReport(_) => Vec::new(),
             Modal::Entry(e) => {
                 let result: Result<usize, SaleError> = match &e.kind {
                     EntryKind::Qty(i) => match e.qty() {
@@ -1332,6 +1367,7 @@ impl Controller {
                 self.post()
             }
             Some(Retry::After) => self.after_retry(token),
+            Some(Retry::Cash) => self.cash_retry(token),
             None => {
                 self.busy = false;
                 Vec::new()
@@ -1342,6 +1378,10 @@ impl Controller {
     /// The override dialog was closed without approval.
     pub(crate) fn approval_cancelled(&mut self) {
         let retry = self.retry.take();
+        if retry == Some(Retry::Cash) {
+            self.cash_wait = None;
+            return;
+        }
         if let Some(s) = self.sell_mut() {
             match retry {
                 Some(Retry::Void) => s.voiding = None,
@@ -1351,7 +1391,7 @@ impl Controller {
                     }
                 }
                 Some(Retry::After) => s.waiting = None,
-                None => {}
+                Some(Retry::Cash) | None => {}
             }
         }
     }

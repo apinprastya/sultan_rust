@@ -19,7 +19,8 @@
 //! `422 invalid_field`), numbered `JKT01-Z-<YYMMDD>-<NN>`, with an idempotency key. Texts come
 //! from `core::cash` (slip, X, close report, Z) with the fake's branch block.
 //!
-//! **Simplified:** one register, no photos (`missing_nota` at the default Rp 100 000), no
+//! **Simplified:** one register (a session on another register, which only blocks the Z of its
+//! day, comes from [`FakeService::open_elsewhere`]), no photos (`missing_nota` at the default Rp 100 000), no
 //! events, a session's sales are the fake's `cash_sales`, and a Z has no sales documents (no
 //! sales count or tax lines).
 

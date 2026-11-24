@@ -20,6 +20,9 @@
 //!    with an `Idempotency-Key` that is kept for a retry after a network error and renewed after
 //!    any other answer. The server checks the balance (`insufficient_balance`) and the open
 //!    session (`no_open_session`).
+//! 5. **Slip** — after a payout, its slip (spec 2.7 K7, `GET …/payouts/{entry_id}/slip`, loaded
+//!    by the controller) in monospace until 2.11 prints it; Enter or Esc goes back to the
+//!    customer.
 //!
 //! Esc goes back one page, and closes the dialog from Find.
 
@@ -206,6 +209,8 @@ pub enum Page {
     SignUp,
     /// Paying the balance out.
     Payout,
+    /// The payout's slip.
+    Slip,
 }
 
 impl Page {
@@ -217,6 +222,7 @@ impl Page {
             Self::Shown => "shown",
             Self::SignUp => "sign-up",
             Self::Payout => "payout",
+            Self::Slip => "slip",
         }
     }
 }
@@ -299,6 +305,8 @@ pub struct Dialog {
     pub payout: PayoutForm,
     /// The last result or error.
     pub notice: Option<Notice>,
+    /// The payout slip's text (the Slip page).
+    pub slip: Vec<String>,
     /// The last phone or code looked up (for its error message and the sign-up's phone).
     asked: Option<Lookup>,
 }
@@ -324,7 +332,17 @@ impl Dialog {
             },
             payout: PayoutForm::new(),
             notice: None,
+            slip: Vec::new(),
             asked: None,
+        }
+    }
+
+    /// Shows a payout's slip (after the payout, while the customer who was paid is still
+    /// shown). A slip that arrives after the dialog moved on to another customer is dropped.
+    pub fn show_slip(&mut self, customer_id: &str, lines: Vec<String>) {
+        if self.page == Page::Shown && self.shown.as_ref().is_some_and(|c| c.id == customer_id) {
+            self.slip = lines;
+            self.page = Page::Slip;
         }
     }
 
@@ -382,6 +400,10 @@ impl Dialog {
             }
             Page::Payout => {
                 keys.push(s(Key::Enter, Action::Confirm, "pay_out"));
+                keys.push(s(Key::Escape, Action::Back, "back"));
+            }
+            Page::Slip => {
+                keys.push(s(Key::Enter, Action::Confirm, "done"));
                 keys.push(s(Key::Escape, Action::Back, "back"));
             }
         }
@@ -494,7 +516,7 @@ impl Dialog {
             Action::Back => match self.page {
                 Page::Find => return Outcome::Close,
                 Page::Payout if self.payout.confirm => self.payout.confirm = false,
-                Page::Payout => self.page = Page::Shown,
+                Page::Payout | Page::Slip => self.page = Page::Shown,
                 Page::Shown | Page::SignUp => self.page = Page::Find,
             },
             Action::SwitchMode => {
@@ -587,6 +609,10 @@ impl Dialog {
                     self.payout.confirm = true;
                     self.notice = None;
                 }
+                Outcome::Stay
+            }
+            Page::Slip => {
+                self.page = Page::Shown;
                 Outcome::Stay
             }
             Page::Payout => self.shown.as_ref().map_or(Outcome::Stay, |c| {
@@ -1046,5 +1072,29 @@ mod tests {
         // A payout answer without a customer changes nothing.
         let mut lost = Dialog::new(None);
         assert_eq!(lost.reply(Reply::PaidOut(Ok(paid))), None);
+    }
+
+    #[test]
+    fn a_slip_is_only_shown_to_the_customer_it_was_paid_to() {
+        let slip = || vec!["BALANCE PAYOUT".to_string()];
+        // The paid customer is still shown: the slip opens.
+        let mut d = Dialog::new(Some(&budi()));
+        d.show_slip("c1", slip());
+        assert_eq!((d.page, d.slip.len()), (Page::Slip, 1));
+        // A slow answer after another customer was opened is dropped.
+        let siti = Customer {
+            id: "c2".into(),
+            name: "Siti".into(),
+            ..Customer::default()
+        };
+        let mut other = Dialog::new(Some(&siti));
+        other.show_slip("c1", slip());
+        assert_eq!(other.page, Page::Shown);
+        assert!(other.slip.is_empty());
+        // So is one that finds the dialog on another page, or without a customer.
+        let mut find = Dialog::new(None);
+        find.show_slip("c1", slip());
+        assert_eq!(find.page, Page::Find);
+        assert!(find.slip.is_empty());
     }
 }

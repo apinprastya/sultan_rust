@@ -381,6 +381,23 @@ Where we are, so any session can pick up from here. Update this section at the e
   15–30), the Postman folder "Cash (spec 2.7)" (186 requests). Decision of 2026-11-21 (§17
   reading 10, option a): migration `20261121000001_cash_since` records when cash management was
   installed and the days still to close start there. Readings in spec §18 (from K3).
+- **2.7 Cash management** K4 register (2026-11-21, `crates/ui/src/cash.rs`): Shift+F5 cash
+  dialog on the sell screen (with or without a cart: ←/→ or I / O / D in / out / drop, ↑/↓
+  reasons of the direction, amount, Tab note and this session's movements, Enter then Enter
+  posts with a kept movement ID; `needs_override` opens the manager dialog with the amount for
+  `cash.out`; the slip in monospace with P reprint; on the list R reverses with a note and P
+  reprints), Shift+F12 X report (manager PIN for a cashier, Esc back with the cart kept), the
+  open screen starting at `GET /registers/me/float`, the blind close asking "keep as float"
+  with the confirmation (default the opening cash capped at the count, refused above it) and
+  sending `float_kept`, the close report with float / to-safe lines and the printable report
+  beside it, End of day (Z) from the close report (offered when `GET /z-reports/pending` shows
+  no other open session of the day, or to a cashier who may not read it; asks first; `day.close`
+  override; the Z text; `sessions_open` / `nothing_to_close` as messages) and the payout slip
+  after F3 → F7. README key tables, translations, headless tests (spec §12 35–38 and more,
+  `crates/ui/tests/cash_screens.rs`), screenshots `7a`, `8`–`8b`, `10f`, `12a`–`12c`; the
+  fake's `open_elsewhere`. Decision of 2026-11-21 (§18 reading 13): a return without a receipt
+  counts in the Z's tax summary at the product's current tax class (`cash::session_sales`).
+  Readings in spec §19 (from K4).
 - **UI only, except HQ** (§3, 2026-11-09):
   - Start screen on single-app and terminal machines: F1 Kasir, F2 Back office, F3 Settings.
   - Settings: language (F6), set up again (F8), and on a single app "Allow terminals to connect"
@@ -400,8 +417,8 @@ Where we are, so any session can pick up from here. Update this section at the e
   `core::ids`.
 - Back office: the Prices tab is not part of the product form's unsaved-changes check; archived
   price lists are not listed (no unarchive on screen).
-- Register: no payout slip is shown yet (the server and client have it since K3; the screen is
-  K4); the attached customer does not refresh on `customer.changed`.
+- Register: the payout slip is shown on screen since K4 (printing is 2.11); the attached
+  customer does not refresh on `customer.changed`.
 - Sales: stock is not checked for branch blocks at posting (only archived products are refused).
 - Pricing: deleting a price entry or changing a tax rate is still always allowed, even when a
   posted sale used it (2.3 R2 limitation; sales now exist).
@@ -420,9 +437,9 @@ Where we are, so any session can pick up from here. Update this section at the e
 - Each sub-agent worktree builds its own `target/` (20–40 GB with coverage); clear finished ones.
 
 **Next**
-- **2.7 Cash management**: spec agreed (2026-11-19); K1, K2 and K3 done, next K4 register
-  (Shift+F5 cash dialog with slip and reversal, Shift+F12 X, float on open and close, Z from the
-  close report, payout slip), then K5 back office and K6 nota photos (spec §13).
+- **2.7 Cash management**: spec agreed (2026-11-19); K1–K4 done, next K5 back office (F9 Cash:
+  sessions with live X and close report reprint, cash movements, day close + Z list, cash
+  reasons), then K6 nota photos (spec §13).
 - Then the remaining P1 specs to discuss (2.4 is P2): 2.8 inventory, 2.9 money, 2.10 reports,
   2.11 hardware (ESC/POS + drawer), old-Sultan importer.
 

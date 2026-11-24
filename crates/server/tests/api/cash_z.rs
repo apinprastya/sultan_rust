@@ -13,7 +13,10 @@ use sultan_server::{NodeRole, router};
 use crate::common::{ANI_PIN, Harness, Response, api_tests};
 use crate::sales::{CASH, approve, item, line, open, sale, sell, tender};
 
-api_tests!(z_report_runs_per_business_day);
+api_tests!(
+    z_report_runs_per_business_day,
+    z_tax_counts_returns_without_a_receipt
+);
 
 const HOUR: i64 = 3_600_000;
 /// The business day of the harness clock's start (T0 is 15:00 WIB on 2027-01-15).
@@ -432,4 +435,51 @@ async fn z_report_runs_per_business_day(h: &Harness) {
         )
         .await;
     assert_eq!((r.status, &r.body), (StatusCode::OK, &json!([])));
+}
+
+/// Spec 2.7 §18 reading 13 (decided 2026-11-21): a return without a receipt enters the Z's tax
+/// summary at the returned product's tax class, at the rate valid on the return's day.
+async fn z_tax_counts_returns_without_a_receipt(h: &Harness) {
+    let owner = h.owner_token().await;
+    let teh = item(h, &owner, "TEH", 11_100).await;
+    // A rate that starts tomorrow does not apply to today's return.
+    let uri = format!(
+        "/api/v1/tax-classes/{}/rates",
+        crate::catalog_fixtures::STANDARD
+    );
+    let r = h
+        .call(
+            &owner,
+            Method::PUT,
+            &uri,
+            Some(json!({ "rate_bp": 1200, "valid_from": D1 })),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.body);
+    let ani = h.pin_token(&h.jkt_device, &h.ani, ANI_PIN).await;
+    let at = (ani.as_str(), h.jkt_device.as_str());
+    let session = open(h, at, 0).await;
+    sell(h, at, sale(vec![line(&teh, 2)], vec![tender(CASH, 22_200)])).await;
+    let id = crate::common::new_id();
+    let t = approve(h, at, "refund.no_receipt", json!(11_100), &id).await;
+    let r = h
+        .at_register(
+            at,
+            Method::PUT,
+            &format!("/api/v1/returns/{id}"),
+            &[("x-override", &t)],
+            Some(json!({
+                "refund": "cash", "reason": "tanpa struk",
+                "lines": [{ "variant_id": teh.variant, "unit_id": teh.pcs, "qty_thousandths": 1000 }],
+            })),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.body);
+    crate::cash::close(h, at, &session, json!({ "counted_cash": 11_100 })).await;
+    let z = run_z(h, &owner, day(h, D), "z-tax").await;
+    assert_eq!(z.status, StatusCode::CREATED, "{}", z.body);
+    assert_eq!(
+        z.body["report"]["branch"]["tax"],
+        json!([{ "rate_bp": 1100, "base": 10_000, "tax": 1_100 }])
+    );
 }

@@ -299,6 +299,27 @@ export global Strings {
         if (code == "photo_limit") {
             return @tr("A cash movement has at most 3 nota photos.");
         }
+        if (code == "pick_reason") {
+            return @tr("Pick a reason (↑ ↓).");
+        }
+        if (code == "note_required") {
+            return @tr("Type a note: this needs one.");
+        }
+        if (code == "cannot_reverse") {
+            return @tr("This movement cannot be reversed (it is a reversal itself, or of another session).");
+        }
+        if (code == "cash_posted") {
+            return @tr("Cash movement {} posted. The slip is on the right.", arg);
+        }
+        if (code == "cash_reversed") {
+            return @tr("Reversal {} posted.", arg);
+        }
+        if (code == "float_above_count") {
+            return @tr("The float cannot be more than the counted cash ({}).", arg);
+        }
+        if (code == "z_done") {
+            return @tr("End of day {} done.", arg);
+        }
         if (code == "return_qty_exceeded") {
             return @tr("More than what can still be returned.");
         }
@@ -572,6 +593,42 @@ export global Strings {
         if (code == "to_scan") {
             return @tr("Barcode field");
         }
+        if (code == "cash") {
+            return @tr("Cash in/out");
+        }
+        if (code == "x_report") {
+            return @tr("X report");
+        }
+        if (code == "post_cash") {
+            return @tr("Post");
+        }
+        if (code == "reverse") {
+            return @tr("Reverse");
+        }
+        if (code == "to_note") {
+            return @tr("Note");
+        }
+        if (code == "to_list") {
+            return @tr("Movements");
+        }
+        if (code == "to_form") {
+            return @tr("Amount");
+        }
+        if (code == "cash_in") {
+            return @tr("Cash in");
+        }
+        if (code == "cash_out") {
+            return @tr("Cash out");
+        }
+        if (code == "cash_drop") {
+            return @tr("Safe drop");
+        }
+        if (code == "end_of_day") {
+            return @tr("End of day (Z)");
+        }
+        if (code == "run_z") {
+            return @tr("Run the Z");
+        }
         return code;
     }
 
@@ -609,6 +666,18 @@ export global Strings {
         }
         if (code == "drawer.open") {
             return @tr("Open the drawer");
+        }
+        if (code == "cash.in") {
+            return @tr("Cash in");
+        }
+        if (code == "cash.drop") {
+            return @tr("Safe drop");
+        }
+        if (code == "day.close") {
+            return @tr("End of day (Z)");
+        }
+        if (code == "session.view_expected") {
+            return @tr("X report (expected cash)");
         }
         return code;
     }
@@ -830,6 +899,12 @@ export global Strings {
         }
         if (code == "transactions") {
             return @tr("Transactions");
+        }
+        if (code == "float_kept") {
+            return @tr("Kept as float");
+        }
+        if (code == "to_safe") {
+            return @tr("To the safe");
         }
         if (code == "cash") {
             return @tr("Cash");
