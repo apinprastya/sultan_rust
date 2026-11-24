@@ -337,9 +337,10 @@ impl Dialog {
         }
     }
 
-    /// Shows a payout's slip (after the payout, while the customer is shown).
-    pub fn show_slip(&mut self, lines: Vec<String>) {
-        if self.page == Page::Shown {
+    /// Shows a payout's slip (after the payout, while the customer who was paid is still
+    /// shown). A slip that arrives after the dialog moved on to another customer is dropped.
+    pub fn show_slip(&mut self, customer_id: &str, lines: Vec<String>) {
+        if self.page == Page::Shown && self.shown.as_ref().is_some_and(|c| c.id == customer_id) {
             self.slip = lines;
             self.page = Page::Slip;
         }
@@ -1071,5 +1072,29 @@ mod tests {
         // A payout answer without a customer changes nothing.
         let mut lost = Dialog::new(None);
         assert_eq!(lost.reply(Reply::PaidOut(Ok(paid))), None);
+    }
+
+    #[test]
+    fn a_slip_is_only_shown_to_the_customer_it_was_paid_to() {
+        let slip = || vec!["BALANCE PAYOUT".to_string()];
+        // The paid customer is still shown: the slip opens.
+        let mut d = Dialog::new(Some(&budi()));
+        d.show_slip("c1", slip());
+        assert_eq!((d.page, d.slip.len()), (Page::Slip, 1));
+        // A slow answer after another customer was opened is dropped.
+        let siti = Customer {
+            id: "c2".into(),
+            name: "Siti".into(),
+            ..Customer::default()
+        };
+        let mut other = Dialog::new(Some(&siti));
+        other.show_slip("c1", slip());
+        assert_eq!(other.page, Page::Shown);
+        assert!(other.slip.is_empty());
+        // So is one that finds the dialog on another page, or without a customer.
+        let mut find = Dialog::new(None);
+        find.show_slip("c1", slip());
+        assert_eq!(find.page, Page::Find);
+        assert!(find.slip.is_empty());
     }
 }

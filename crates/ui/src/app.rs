@@ -444,10 +444,10 @@ fn cash_call(
         CashCall::PayoutSlip {
             customer_id,
             entry_id,
-        } => reply!(
-            service.payout_slip(token, &customer_id, &entry_id, false, lang, None),
-            CashReply::PayoutSlip
-        ),
+        } => {
+            let future = service.payout_slip(token, &customer_id, &entry_id, false, lang, None);
+            Box::pin(async move { CashReply::PayoutSlip(customer_id, future.await) })
+        }
     }
 }
 
@@ -1604,6 +1604,12 @@ fn customer_view(d: &Dialog, perms: Perms, attached: Option<&Customer>, now: i64
     view
 }
 
+/// The cash that goes to the safe when a session closes with `float` left in the drawer: never
+/// negative, because the float is only refused (when above the count) once Enter is pressed.
+fn to_safe(counted: i64, float: i64) -> i64 {
+    counted.saturating_sub(float).max(0)
+}
+
 fn denominations(form: &CountForm) -> Vec<DenomRow> {
     DENOMINATIONS
         .iter()
@@ -1866,7 +1872,8 @@ fn render(ui: &MainWindow, c: &Controller, now: i64, models: &Models, options: &
                 total_locked: close.form.uses_denominations(),
                 confirm: close.confirm,
                 float: rupiah(close.float.value()).into(),
-                to_safe: rupiah(close.form.counted() - close.float.value()).into(),
+                // The float is only checked on Enter: never show a negative amount meanwhile.
+                to_safe: rupiah(to_safe(close.form.counted(), close.float.value())).into(),
                 note: note(close.notice.as_ref(), now),
             });
         }
@@ -2121,6 +2128,20 @@ pub fn run(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn to_the_safe_is_never_negative() {
+        let cases = [
+            (700_000, 500_000, 200_000),
+            (700_000, 700_000, 0),
+            (700_000, 800_000, 0),
+            (0, 0, 0),
+            (i64::MIN, 1, 0),
+        ];
+        for (counted, float, want) in cases {
+            assert_eq!(to_safe(counted, float), want, "{counted} - {float}");
+        }
+    }
 
     #[tokio::test]
     async fn watchers_are_aborted_when_replaced_or_stopped() {

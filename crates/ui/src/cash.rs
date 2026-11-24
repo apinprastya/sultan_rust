@@ -459,8 +459,9 @@ pub enum Reply {
     ZText(Result<CashText, ClientError>),
     /// [`Call::Float`].
     Float(Result<ProposedFloat, ClientError>),
-    /// [`Call::PayoutSlip`].
-    PayoutSlip(Result<CashText, ClientError>),
+    /// [`Call::PayoutSlip`], with the id of the customer who was paid: the slip is only shown
+    /// while the dialog still shows that customer.
+    PayoutSlip(String, Result<CashText, ClientError>),
 }
 
 impl Reply {
@@ -470,10 +471,10 @@ impl Reply {
             Self::Movements(r) => r.as_ref().err(),
             Self::Posted(r) => r.as_ref().err(),
             Self::Slip(_, r)
+            | Self::PayoutSlip(_, r)
             | Self::X(r)
             | Self::CloseText(r)
-            | Self::ZText(r)
-            | Self::PayoutSlip(r) => r.as_ref().err(),
+            | Self::ZText(r) => r.as_ref().err(),
             Self::Pending(r) => r.as_ref().err(),
             Self::Z(r) => r.as_ref().err(),
             Self::Float(r) => r.as_ref().err(),
@@ -1093,9 +1094,10 @@ impl Controller {
                 }
                 Vec::new()
             }
-            Reply::PayoutSlip(Ok(text)) => {
+            Reply::PayoutSlip(customer_id, Ok(text)) => {
+                // A slow answer may land after the cashier opened another customer.
                 if let Some(d) = &mut self.dialog {
-                    d.show_slip(text.lines);
+                    d.show_slip(&customer_id, text.lines);
                 }
                 Vec::new()
             }
@@ -1104,7 +1106,7 @@ impl Controller {
             | Reply::Movements(Err(e))
             | Reply::CloseText(Err(e))
             | Reply::ZText(Err(e))
-            | Reply::PayoutSlip(Err(e)) => {
+            | Reply::PayoutSlip(_, Err(e)) => {
                 if self.in_cash() {
                     self.set_notice(cash_notice(&e));
                 }

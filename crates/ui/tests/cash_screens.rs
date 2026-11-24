@@ -506,6 +506,11 @@ fn close_keeps_a_float_and_the_next_open_proposes_it() {
     // More than counted: refused.
     t.typed("800000");
     assert_eq!(ui.get_closing().float, "Rp 800.000");
+    assert_eq!(
+        ui.get_closing().to_safe,
+        "Rp 0",
+        "never negative while typing"
+    );
     t.press(&["Enter"]);
     assert_eq!(t.screen(), "close");
     assert_eq!(ui.get_closing().note.code, "float_above_count");
