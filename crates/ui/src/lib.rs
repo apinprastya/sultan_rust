@@ -13,6 +13,9 @@
 //!   payment panel, posting, receipt preview and keys; [`crash`] keeps the cart's crash copy;
 //!   [`after`] is what follows the sale (phase S5): hold and resume, the last receipts with
 //!   reprint and post-void, returns and exchanges, the purchase history and the drawer.
+//! - [`cash`]: cash management at the register (spec 2.7, phase K4): the Shift+F5 cash dialog
+//!   (in / out / drop, slips, reversals), the Shift+F12 X report, the float on open and close,
+//!   the close report's text with End of day (Z), and the payout slip.
 //! - [`customer`]: the session home's customer step (spec 2.5, phase M5): find, sign up,
 //!   attach, balance payout.
 //! - [`setup`] and [`setup_app`]: the first-run setup wizard (single app, HQ server, branch
@@ -35,6 +38,7 @@ pub mod app;
 pub mod backoffice;
 pub mod backoffice_app;
 pub mod backoffice_sales;
+pub mod cash;
 pub mod controller;
 pub mod count;
 pub mod crash;

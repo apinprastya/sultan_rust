@@ -74,7 +74,8 @@ Persistence for Sultan POS: sqlx migrations and repositories for SQLite and MySQ
   `pending_days` (K18: days with closed sessions in no Z, or past days with an open session; with
   `since`, the branch-local day of `cash_since`, earlier days are left out: spec 2.7 §17 reading
   10). `session_sales` (K3) gives a Z each session's sales documents: count, Σ gross, first and
-  last sale, tax per rate, and the tax of the returns and post-voids paid in it.
+  last sale, tax per rate, and the tax of the returns and post-voids paid in it (a return
+  without a receipt at the product's tax class on the return's day, decided 2026-11-21).
 - **Float:** `last_float_kept` (K3) is the float of the register's last closed session or `None`;
   the server stores an `opening_proposed` only when there is one.
 - **Payout slip** (K3): `customers::get_balance_entry` and `balance_after` (the balance right

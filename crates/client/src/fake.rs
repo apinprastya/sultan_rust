@@ -191,6 +191,16 @@ impl FakeService {
         session
     }
 
+    /// Opens a session for `user_id` on another register of the branch: it is not this
+    /// register's, but it blocks the Z of its business day (spec 2.7 §6, K15).
+    pub fn open_elsewhere(&self, user_id: &str, opening_cash: i64) -> CashierSession {
+        let mut s = self.state();
+        let mut session = s.new_session(user_id, opening_cash);
+        "register-2".clone_into(&mut session.register_id);
+        s.history.push((session.clone(), None));
+        session
+    }
+
     /// The open session, if any.
     #[must_use]
     pub fn session(&self) -> Option<CashierSession> {

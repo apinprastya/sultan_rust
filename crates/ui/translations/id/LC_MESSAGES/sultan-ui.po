@@ -2987,3 +2987,140 @@ msgstr "Sampai"
 
 msgid "Member code or phone"
 msgstr "Kode anggota atau HP"
+
+msgid "Proposed: {}, the float kept at the last close. Type another amount if the drawer holds something else."
+msgstr "Usulan: {}, uang modal yang disisakan saat tutup terakhir. Ketik jumlah lain jika isi laci berbeda."
+
+msgid "Proposed float"
+msgstr "Usulan uang modal"
+
+msgid "Payout slip"
+msgstr "Slip pencairan saldo"
+
+msgid "Have the customer sign the slip for the cash paid out to {}. Printing comes with the printer setup."
+msgstr "Minta pelanggan menandatangani slip untuk uang tunai yang dibayarkan kepada {}. Pencetakan tersedia setelah printer dipasang."
+
+msgid "Keep as float"
+msgstr "Simpan sebagai modal"
+
+msgid "Cash left in the drawer for the next session (at most the counted cash). To the safe: {}."
+msgstr "Uang yang ditinggal di laci untuk sesi berikutnya (paling banyak uang yang dihitung). Ke brankas: {}."
+
+msgid "End of day (Z) done"
+msgstr "Tutup hari (Z) selesai"
+
+msgid "{} · business day {}"
+msgstr "{} · hari usaha {}"
+
+
+
+msgid "Z runs the end of day of the branch once every session of the day is closed."
+msgstr "Z menjalankan tutup hari cabang setelah semua sesi hari itu ditutup."
+
+msgid "Z report"
+msgstr "Laporan Z"
+
+msgid "Close report"
+msgstr "Laporan tutup kas"
+
+msgid "X report"
+msgstr "Laporan X"
+
+msgid "Cash in / out"
+msgstr "Kas masuk / keluar"
+
+msgid "X report: not a close"
+msgstr "Laporan X: bukan tutup sesi"
+
+msgid "The session as of now, with the expected cash. Nothing is closed or counted."
+msgstr "Sesi saat ini, dengan uang seharusnya. Tidak ada yang ditutup atau dihitung."
+
+msgid "Safe drop"
+msgstr "Setor ke brankas"
+
+msgid "A safe drop takes cash from the drawer to the safe. It has no reason; a note is optional."
+msgstr "Setoran brankas memindahkan uang dari laci ke brankas. Tanpa alasan; catatan boleh diisi."
+
+msgid "Amount"
+msgstr "Jumlah"
+
+msgid "Optional (required for Other)"
+msgstr "Opsional (wajib untuk Lainnya)"
+
+msgid "Put {} into the drawer?"
+msgstr "Masukkan {} ke laci?"
+
+msgid "Take {} out of the drawer?"
+msgstr "Ambil {} dari laci?"
+
+msgid "Drop {} to the safe?"
+msgstr "Setor {} ke brankas?"
+
+msgid "Reverse {}: it is undone with a movement the other way. Why?"
+msgstr "Batalkan {}: dibatalkan dengan gerakan kas ke arah sebaliknya. Kenapa?"
+
+msgid "Why is it reversed?"
+msgstr "Kenapa dibatalkan?"
+
+msgid "Slip of {}. Have it signed; printing comes with the printer setup."
+msgstr "Slip {}. Minta tanda tangan; pencetakan tersedia setelah printer dipasang."
+
+msgid "Slip"
+msgstr "Slip"
+
+msgid "THIS SESSION"
+msgstr "SESI INI"
+
+msgid "No cash movements yet."
+msgstr "Belum ada kas masuk / keluar."
+
+msgid "Pick a reason (↑ ↓)."
+msgstr "Pilih alasan (↑ ↓)."
+
+msgid "Type a note: this needs one."
+msgstr "Ketik catatan: ini wajib."
+
+msgid "This movement cannot be reversed (it is a reversal itself, or of another session)."
+msgstr "Gerakan kas ini tidak bisa dibatalkan (ini sendiri pembatalan, atau dari sesi lain)."
+
+msgid "Cash movement {} posted. The slip is on the right."
+msgstr "Kas {} tercatat. Slipnya di sebelah kanan."
+
+msgid "Reversal {} posted."
+msgstr "Pembatalan {} tercatat."
+
+msgid "The float cannot be more than the counted cash ({})."
+msgstr "Uang modal tidak boleh lebih dari uang yang dihitung ({})."
+
+msgid "End of day {} done."
+msgstr "Tutup hari {} selesai."
+
+msgid "Post"
+msgstr "Catat"
+
+msgid "Reverse"
+msgstr "Batalkan"
+
+msgid "Movements"
+msgstr "Daftar kas"
+
+msgid "End of day (Z)"
+msgstr "Tutup hari (Z)"
+
+msgid "Run the Z"
+msgstr "Jalankan Z"
+
+msgid "X report (expected cash)"
+msgstr "Laporan X (uang seharusnya)"
+
+msgid "Kept as float"
+msgstr "Modal disimpan"
+
+msgid "To the safe"
+msgstr "Ke brankas"
+
+msgid "Run the end of day (Z) for {}? It covers every closed session of the day at this branch; a manager approves."
+msgstr "Jalankan tutup hari (Z) untuk {}? Mencakup semua sesi yang sudah ditutup pada hari itu di cabang ini; manajer menyetujui."
+
+msgid "Cash in/out"
+msgstr "Kas"

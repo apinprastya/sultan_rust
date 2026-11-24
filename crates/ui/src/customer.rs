@@ -20,6 +20,9 @@
 //!    with an `Idempotency-Key` that is kept for a retry after a network error and renewed after
 //!    any other answer. The server checks the balance (`insufficient_balance`) and the open
 //!    session (`no_open_session`).
+//! 5. **Slip** — after a payout, its slip (spec 2.7 K7, `GET …/payouts/{entry_id}/slip`, loaded
+//!    by the controller) in monospace until 2.11 prints it; Enter or Esc goes back to the
+//!    customer.
 //!
 //! Esc goes back one page, and closes the dialog from Find.
 
@@ -206,6 +209,8 @@ pub enum Page {
     SignUp,
     /// Paying the balance out.
     Payout,
+    /// The payout's slip.
+    Slip,
 }
 
 impl Page {
@@ -217,6 +222,7 @@ impl Page {
             Self::Shown => "shown",
             Self::SignUp => "sign-up",
             Self::Payout => "payout",
+            Self::Slip => "slip",
         }
     }
 }
@@ -299,6 +305,8 @@ pub struct Dialog {
     pub payout: PayoutForm,
     /// The last result or error.
     pub notice: Option<Notice>,
+    /// The payout slip's text (the Slip page).
+    pub slip: Vec<String>,
     /// The last phone or code looked up (for its error message and the sign-up's phone).
     asked: Option<Lookup>,
 }
@@ -324,7 +332,16 @@ impl Dialog {
             },
             payout: PayoutForm::new(),
             notice: None,
+            slip: Vec::new(),
             asked: None,
+        }
+    }
+
+    /// Shows a payout's slip (after the payout, while the customer is shown).
+    pub fn show_slip(&mut self, lines: Vec<String>) {
+        if self.page == Page::Shown {
+            self.slip = lines;
+            self.page = Page::Slip;
         }
     }
 
@@ -382,6 +399,10 @@ impl Dialog {
             }
             Page::Payout => {
                 keys.push(s(Key::Enter, Action::Confirm, "pay_out"));
+                keys.push(s(Key::Escape, Action::Back, "back"));
+            }
+            Page::Slip => {
+                keys.push(s(Key::Enter, Action::Confirm, "done"));
                 keys.push(s(Key::Escape, Action::Back, "back"));
             }
         }
@@ -494,7 +515,7 @@ impl Dialog {
             Action::Back => match self.page {
                 Page::Find => return Outcome::Close,
                 Page::Payout if self.payout.confirm => self.payout.confirm = false,
-                Page::Payout => self.page = Page::Shown,
+                Page::Payout | Page::Slip => self.page = Page::Shown,
                 Page::Shown | Page::SignUp => self.page = Page::Find,
             },
             Action::SwitchMode => {
@@ -587,6 +608,10 @@ impl Dialog {
                     self.payout.confirm = true;
                     self.notice = None;
                 }
+                Outcome::Stay
+            }
+            Page::Slip => {
+                self.page = Page::Shown;
                 Outcome::Stay
             }
             Page::Payout => self.shown.as_ref().map_or(Outcome::Stay, |c| {

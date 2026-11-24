@@ -458,6 +458,10 @@ fn payout_checks_the_balance_and_pays_out() {
     assert!(!t.dialog().confirm, "Esc changes the amount");
     t.press("Enter");
     t.click("Yes, pay out");
+    // Spec 2.7 K7: the payout slip first; Enter goes back to the customer.
+    assert_eq!(t.dialog().page, "slip");
+    assert_eq!(t.message(), "Paid out Rp 2.200 in cash.");
+    t.press("Enter");
     let d = t.dialog();
     assert_eq!((d.page.as_str(), d.balance.as_str()), ("shown", "Rp 0"));
     assert_eq!(t.message(), "Paid out Rp 2.200 in cash.");

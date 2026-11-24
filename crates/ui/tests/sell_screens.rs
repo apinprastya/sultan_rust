@@ -860,11 +860,13 @@ fn every_key_and_button() {
             "F2 search",
             "F3 customer",
             "F5 drawer",
+            "Shift+F5 cash",
             "F6 receipts",
             "F7 price_check",
             "F10 returns",
             "Shift+F11 resume",
             "F12 lock",
+            "Shift+F12 x_report",
             "Ctrl+F10 close_session"
         ]
     );

@@ -10,7 +10,8 @@
 //!    screen ([`Controller::start`]), F9 closes the window and goes back there
 //!    ([`Effect::Exit`]).
 //! 2. **Open session** — after login when this register has no open session: the opening cash
-//!    is typed as digits and shown as Rupiah; Enter opens (`Idempotency-Key`, reused only when
+//!    is typed as digits and shown as Rupiah, starting at the float kept at the register's last
+//!    close (spec 2.7 §3, [`crate::cash`]); Enter opens (`Idempotency-Key`, reused only when
 //!    the answer was lost). If another user's session is open here, the screen says whose and
 //!    only offers "back to lock" (spec 2.1 §5 handover: no shared sessions).
 //! 3. **Home** — the sell screen (spec 2.6, phase S4; [`crate::till`], [`crate::sell`]): user,
@@ -24,8 +25,10 @@
 //!    (F7) a scan only shows the item with its store price (spec 2.3 R5) and, with a customer
 //!    attached, the customer's price (`POST /pricing/quote`, [`Effect::Quote`]).
 //! 4. **Close** — blind close (spec 2.1 §5): a counted total or per-denomination counts; expected
-//!    cash is never shown before the close. Enter asks for confirmation, Enter again closes.
-//! 5. **Report** — expected, counted, over/short and tender totals; Enter logs out to Lock.
+//!    cash is never shown before the close. Enter asks for confirmation and the cash kept as float
+//!    (spec 2.7 §3), Enter again closes.
+//! 5. **Report** — expected, counted, over/short, float and tender totals beside the printable
+//!    close report, and End of day (Z) ([`crate::cash::ReportScreen`]); Enter logs out to Lock.
 //!
 //! **Customer** (spec 2.5 §6–§11, phase M5; [`crate::customer`]): F3 on the session home opens
 //! the customer dialog (find by phone, member code or, with `customer.search`, name: Shift+F3;
@@ -59,6 +62,7 @@ use sultan_client::{
 };
 
 use crate::amount::{Digits, percent, rupiah};
+use crate::cash::ReportScreen;
 use crate::count::{CountForm, wrap};
 use crate::customer::{Call, Dialog, Outcome, Perms, Reply};
 use crate::input::{Key, Pin};
@@ -396,10 +400,26 @@ pub enum Action {
     Exchange,
     /// F9 in the customer dialog: purchase history.
     History,
+    /// Shift+F5: the cash dialog (spec 2.7 §9).
+    Cash,
+    /// Shift+F12: the X report.
+    XReport,
+    /// I in the cash dialog: cash in.
+    CashIn,
+    /// O in the cash dialog: cash out.
+    CashOut,
+    /// D in the cash dialog: a safe drop.
+    CashDrop,
+    /// Tab in the cash dialog: amount → note → list.
+    CashTab,
+    /// R on a cash movement: reverse it.
+    Reverse,
+    /// Z on the close report: End of day (Z).
+    RunZ,
 }
 
 impl Action {
-    const ALL: [Self; 49] = [
+    const ALL: [Self; 57] = [
         Self::Confirm,
         Self::Back,
         Self::Retry,
@@ -449,6 +469,14 @@ impl Action {
         Self::WriteOff,
         Self::Exchange,
         Self::History,
+        Self::Cash,
+        Self::XReport,
+        Self::CashIn,
+        Self::CashOut,
+        Self::CashDrop,
+        Self::CashTab,
+        Self::Reverse,
+        Self::RunZ,
     ];
 
     /// The ID used by the UI.
@@ -504,6 +532,14 @@ impl Action {
             Self::WriteOff => "write-off",
             Self::Exchange => "exchange",
             Self::History => "history",
+            Self::Cash => "cash",
+            Self::XReport => "x-report",
+            Self::CashIn => "cash-in",
+            Self::CashOut => "cash-out",
+            Self::CashDrop => "cash-drop",
+            Self::CashTab => "cash-tab",
+            Self::Reverse => "reverse",
+            Self::RunZ => "run-z",
         }
     }
 
@@ -550,12 +586,16 @@ pub struct LockScreen {
 /// Open-session screen state.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OpenScreen {
-    /// The opening cash typed.
+    /// The opening cash typed (starts at the proposed float, spec 2.7 §3).
     pub amount: Digits,
     /// Someone else's session open on this register.
     pub blocked: Option<CashierSession>,
     /// Errors.
     pub notice: Option<Notice>,
+    /// The float kept by the register's last close (`GET /registers/me/float`), once known.
+    pub proposed: Option<i64>,
+    /// The cashier typed: a late proposal no longer replaces the amount.
+    pub typed: bool,
     key: String,
 }
 
@@ -565,8 +605,37 @@ impl OpenScreen {
             amount: Digits::amount(),
             blocked,
             notice,
+            proposed: None,
+            typed: false,
             key: new_key(),
         }
+    }
+
+    /// The proposed float arrived: the amount starts there unless the cashier typed already.
+    pub fn propose(&mut self, amount: i64) {
+        self.proposed = Some(amount);
+        if !self.typed {
+            self.amount = Digits::of(amount);
+        }
+    }
+
+    /// A digit or Backspace: the first digit replaces the proposal.
+    fn type_key(&mut self, key: Key) -> bool {
+        match key {
+            Key::Digit(d) => {
+                if !self.typed {
+                    self.amount.clear();
+                }
+                self.amount.push(d);
+            }
+            Key::Backspace => {
+                self.amount.pop();
+            }
+            _ => return false,
+        }
+        self.typed = true;
+        self.notice = None;
+        true
     }
 }
 
@@ -586,8 +655,12 @@ pub struct HomeScreen {
 pub struct CloseScreen {
     /// The count.
     pub form: CountForm,
-    /// Asking "close with this count?".
+    /// Asking "close with this count?" and the cash kept as float (spec 2.7 §3).
     pub confirm: bool,
+    /// The cash kept as float: the opening cash capped at the count, until typed.
+    pub float: Digits,
+    /// The float was typed (the first digit replaces the default).
+    pub float_typed: bool,
     /// Errors.
     pub notice: Option<Notice>,
     key: String,
@@ -604,8 +677,8 @@ pub enum Screen {
     Home(Box<HomeScreen>),
     /// Blind close.
     Close(CloseScreen),
-    /// The close report.
-    Report(Box<CloseReport>),
+    /// The close report, its text and End of day (Z) (spec 2.7, [`crate::cash`]).
+    Report(Box<ReportScreen>),
 }
 
 impl Screen {
@@ -817,6 +890,15 @@ pub enum Effect {
         /// The login generation.
         generation: u64,
     },
+    /// A call of [`crate::cash`]; the answer comes back as [`Msg::Cash`].
+    Cash {
+        /// Session token.
+        token: String,
+        /// The call.
+        call: crate::cash::Call,
+        /// The login generation.
+        generation: u64,
+    },
 }
 
 /// Input for [`Controller::update`].
@@ -880,6 +962,8 @@ pub enum Msg {
     CartFile(u64, Option<String>),
     /// Result of [`Effect::After`] of the login `generation`.
     After(u64, Box<crate::after::Reply>),
+    /// Result of [`Effect::Cash`] of the login `generation`.
+    Cash(u64, Box<crate::cash::Reply>),
 }
 
 /// What [`Controller::update`] did.
@@ -940,6 +1024,8 @@ pub struct Controller {
     pub perms: Perms,
     /// The register's name (stored with a held cart for the resume list).
     pub register_label: String,
+    /// What an approved override retries in [`crate::cash`].
+    pub(crate) cash_wait: Option<crate::cash::Waiting>,
 }
 
 impl Controller {
@@ -966,6 +1052,7 @@ impl Controller {
             dialog: None,
             perms: Perms::default(),
             register_label: String::new(),
+            cash_wait: None,
         };
         (controller, vec![Effect::LoadUsers])
     }
@@ -1035,7 +1122,7 @@ impl Controller {
                 s(Key::Enter, Confirm, "close_session"),
                 s(Key::Escape, Back, "back"),
             ],
-            Screen::Report(_) => vec![s(Key::Enter, Confirm, "done")],
+            Screen::Report(r) => Self::report_shortcuts(r),
         }
     }
 
@@ -1133,20 +1220,30 @@ impl Controller {
         let users = self.users.len();
         match &mut self.screen {
             Screen::Lock(l) => lock_edit(l, key, users),
-            Screen::Open(o) if o.blocked.is_none() => match key {
-                Key::Digit(d) => {
-                    o.amount.push(d);
-                    o.notice = None;
-                    true
-                }
-                Key::Backspace => {
-                    o.amount.pop();
-                    true
-                }
-                _ => false,
-            },
+            Screen::Open(o) if o.blocked.is_none() => o.type_key(key),
             Screen::Home(_) => self.sell_edit(key),
-            Screen::Close(c) if !c.confirm => {
+            Screen::Close(c) if c.confirm => {
+                let used = match key {
+                    Key::Digit(d) => {
+                        if !c.float_typed {
+                            c.float.clear();
+                        }
+                        c.float.push(d);
+                        true
+                    }
+                    Key::Backspace => {
+                        c.float.pop();
+                        true
+                    }
+                    _ => false,
+                };
+                if used {
+                    c.float_typed = true;
+                    c.notice = None;
+                }
+                used
+            }
+            Screen::Close(c) => {
                 let used = match key {
                     Key::Up | Key::BackTab => {
                         c.form.step(-1);
@@ -1197,6 +1294,11 @@ impl Controller {
             let outcome = d.act(action);
             return self.dialog_outcome(outcome);
         }
+        if self.approval.is_none()
+            && let Some(effects) = self.report_action(action)
+        {
+            return effects;
+        }
         let home = matches!(self.screen, Screen::Home(_)) && self.approval.is_none();
         match action {
             Action::Confirm if !home => self.confirm(),
@@ -1215,6 +1317,8 @@ impl Controller {
                 self.screen = Screen::Close(CloseScreen {
                     form: CountForm::default(),
                     confirm: false,
+                    float: Digits::amount(),
+                    float_typed: false,
                     notice: None,
                     key: new_key(),
                 });
@@ -1300,12 +1404,20 @@ impl Controller {
         let Some(d) = &mut self.dialog else {
             return Vec::new();
         };
+        // Spec 2.7 K7: a payout's slip is shown once it is paid.
+        let slip = match &reply {
+            Reply::PaidOut(Ok(paid)) => Some(crate::cash::Call::PayoutSlip {
+                customer_id: paid.entry.customer_id.clone(),
+                entry_id: paid.entry.id.clone(),
+            }),
+            _ => None,
+        };
         if let Some(after) = d.reply(reply)
             && self.customer.as_ref().is_some_and(|c| c.id == after.id)
         {
             self.customer = Some(after);
         }
-        Vec::new()
+        slip.map(|call| self.cash_quiet(call)).unwrap_or_default()
     }
 
     pub(crate) fn token(&self) -> String {
@@ -1345,6 +1457,7 @@ impl Controller {
             return vec![Effect::RequestOverride { token, body }];
         }
         let session_id = self.session.as_ref().map(|s| s.id.clone());
+        let opening = self.session.as_ref().map_or(0, |s| s.opening_cash);
         match &mut self.screen {
             Screen::Lock(l) => {
                 let Some(pad) = &mut l.pad else {
@@ -1374,14 +1487,24 @@ impl Controller {
                 vec![effect]
             }
             Screen::Close(c) if !c.confirm => {
+                // Spec 2.7 §3: the float kept, default the opening cash capped at the count.
                 c.confirm = true;
+                c.float = Digits::of(opening.min(c.form.counted()).max(0));
+                c.float_typed = false;
                 Vec::new()
             }
             Screen::Close(c) => {
+                let counted = c.form.counted();
+                if c.float.value() > counted {
+                    c.notice = Some(Notice::new("float_above_count", rupiah(counted), Tone::Bad));
+                    return Vec::new();
+                }
+                let mut body = c.form.request();
+                body.float_kept = Some(c.float.value());
                 let effect = Effect::Close {
                     token,
                     session_id: session_id.unwrap_or_default(),
-                    body: c.form.request(),
+                    body,
                     key: c.key.clone(),
                 };
                 self.busy = true;
@@ -1416,6 +1539,7 @@ impl Controller {
         self.dialog = None;
         self.perms = Perms::default();
         self.retry = None;
+        self.cash_wait = None;
         self.tenders.clear();
         self.busy = false;
         self.generation += 1;
@@ -1439,7 +1563,7 @@ impl Controller {
             Screen::Open(o) => &mut o.notice,
             Screen::Home(h) => &mut h.notice,
             Screen::Close(c) => &mut c.notice,
-            Screen::Report(_) => return,
+            Screen::Report(r) => &mut r.notice,
         };
         *slot = Some(notice);
     }
@@ -1508,6 +1632,7 @@ impl Controller {
             Msg::ReceiptText(generation, result) => self.receipt_loaded(generation, result),
             Msg::CartFile(generation, contents) => self.cart_file(generation, contents.as_deref()),
             Msg::After(generation, reply) => self.after_reply(generation, *reply),
+            Msg::Cash(generation, reply) => self.cash_reply(generation, *reply),
             // Logout and branch failures change nothing on screen.
             _ => Vec::new(),
         }
@@ -1724,8 +1849,12 @@ impl Controller {
                     _ => None,
                 };
                 self.session = None;
+                let blocked = other.is_some();
                 self.screen = Screen::Open(OpenScreen::new(other, notice));
-                Vec::new()
+                if blocked {
+                    return Vec::new();
+                }
+                self.cash_quiet(crate::cash::Call::Float)
             }
             // Right after login: without the session the register cannot go on; log out again.
             Err(e) if matches!(self.screen, Screen::Lock(_)) && !ends_login(&e) => {
@@ -1779,15 +1908,16 @@ impl Controller {
             Ok(report) => {
                 self.session = None;
                 self.customer = None;
-                self.screen = Screen::Report(Box::new(report));
-                Vec::new()
+                let id = report.session.id.clone();
+                self.screen = Screen::Report(Box::new(ReportScreen::new(report)));
+                self.after_close(id)
             }
             Err(e) if ends_login(&e) => self.fail(&e),
             Err(e) if e.code() == Some("session_closed") => {
                 // Force-closed by a manager meanwhile.
                 self.session = None;
                 self.screen = Screen::Open(OpenScreen::new(None, Some(notice_for(&e))));
-                Vec::new()
+                self.cash_quiet(crate::cash::Call::Float)
             }
             Err(e) => {
                 if let Screen::Close(c) = &mut self.screen {
@@ -1795,7 +1925,7 @@ impl Controller {
                     if !matches!(e, ClientError::Network(_)) {
                         c.key = new_key();
                     }
-                    c.notice = Some(notice_for(&e));
+                    c.notice = Some(crate::cash::cash_notice(&e));
                 }
                 Vec::new()
             }

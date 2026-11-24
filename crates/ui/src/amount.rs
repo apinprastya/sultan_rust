@@ -69,6 +69,18 @@ impl Digits {
         Self::with_max(Self::MAX)
     }
 
+    /// An amount holding `value` (empty for 0 or less), e.g. a proposed float.
+    #[must_use]
+    pub fn of(value: i64) -> Self {
+        let mut d = Self::amount();
+        if value > 0 {
+            for b in value.to_string().bytes() {
+                d.push(b - b'0');
+            }
+        }
+        d
+    }
+
     /// Empty, accepting at most `max` digits.
     #[must_use]
     pub const fn with_max(max: usize) -> Self {
@@ -120,6 +132,12 @@ impl Digits {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn digits_of_a_value() {
+        assert_eq!(Digits::of(200_000).value(), 200_000);
+        assert!(Digits::of(0).is_empty() && Digits::of(-5).is_empty());
+    }
 
     #[test]
     fn formatting() {
