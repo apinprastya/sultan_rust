@@ -45,6 +45,9 @@
 //!   from the close report, Z texts, days still to close); the back office's on [`BackOffice`]
 //!   (cash reason management, Z lists and reads, force close with the float kept).
 //!   [`CloseRequest::float_kept`] keeps the float at a close.
+//! - Nota photos (phase K6, spec 2.7 §2a): [`Service::add_cash_photo`] uploads the raw image
+//!   bytes of a photo of a cash movement and [`Service::cash_photo`] reads the stored JPEG; the
+//!   threshold of the "missing nota" flag is [`SalesSettings::nota_flag_above`].
 //!
 //! Amounts are minor units (`i64`, Rupiah minor unit = 1, `docs/plan.md` §1); times are unix ms.
 
@@ -64,8 +67,8 @@ use std::sync::Arc;
 
 pub use cash::{
     CashMovement, CashMovementPage, CashMovementRequest, CashQuery, CashReason, CashReasonBody,
-    CashReport, CashText, CountAmount, FloatInfo, PendingDay, ProposedFloat, ReasonLine, SaleRef,
-    SalesReport, SalesTender, TaxLine, XReport, ZQuery, ZRegister, ZReport, ZReportPage,
+    CashReport, CashText, CountAmount, FloatInfo, NotaPhoto, PendingDay, ProposedFloat, ReasonLine,
+    SaleRef, SalesReport, SalesTender, TaxLine, XReport, ZQuery, ZRegister, ZReport, ZReportPage,
     ZRunRequest, ZSessionLine, ZSnapshot, ZSummary, ZTotals,
 };
 pub use catalog::{
@@ -383,6 +386,21 @@ pub trait Service: Send + Sync {
     fn z_report_text(&self, token: &str, id: &str, copy: bool, lang: &str) -> BoxFuture<CashText>;
     /// `GET /z-reports/pending[?branch_id=]`: the days still to close (K18).
     fn pending_days(&self, token: &str, branch_id: Option<&str>) -> BoxFuture<Vec<PendingDay>>;
+    /// `PUT /cash-movements/{id}/photos/{photo_id}`: a nota photo (PNG, JPEG or WebP bytes; the
+    /// server scales it and stores a JPEG; spec 2.7 §2a). `photo_id` is a client `UUIDv7`; the
+    /// same ID and image again answers the stored photo. At the till only the movement's own
+    /// cashier while its session is open; in the back office `cash.out`. Errors:
+    /// `409 photo_limit` / `conflict`, `413 payload_too_large`, `422 invalid_image`,
+    /// `403 permission_denied`.
+    fn add_cash_photo(
+        &self,
+        token: &str,
+        movement_id: &str,
+        photo_id: &str,
+        bytes: Vec<u8>,
+    ) -> BoxFuture<NotaPhoto>;
+    /// `GET /cash-movements/{id}/photos/{photo_id}`: the stored JPEG.
+    fn cash_photo(&self, token: &str, movement_id: &str, photo_id: &str) -> BoxFuture<Vec<u8>>;
 }
 
 /// What the back office needs from the server (phase C4, spec 2.2 §12). `token` is the password

@@ -7780,7 +7780,7 @@
                   "    const variant = (8 + Math.floor(Math.random() * 4)).toString(16);",
                   "    return `${ts.slice(0, 8)}-${ts.slice(8, 12)}-7${hex(3)}-${variant}${hex(3)}-${hex(12)}`;",
                   "}",
-                  "['csOpenKey', 'csIn', 'csOut', 'csDrop', 'csBadDrop', 'csReversal', 'csReversal2', 'csCloseKey', 'csZKey', 'csZKey2', 'csReason'].forEach((k) => pm.collectionVariables.set(k, uuidv7()));"
+                  "['csOpenKey', 'csIn', 'csOut', 'csDrop', 'csBadDrop', 'csReversal', 'csReversal2', 'csCloseKey', 'csZKey', 'csZKey2', 'csReason', 'csPhoto', 'csPhoto2'].forEach((k) => pm.collectionVariables.set(k, uuidv7()));"
                 ]
               }
             },
@@ -8418,6 +8418,390 @@
           }
         },
         {
+          "name": "159a Nota photo of the cash out (PUT, raw PNG)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201: stored as a JPEG of at most 400 KB', () => {",
+                  "    pm.response.to.have.status(201);",
+                  "    const p = pm.response.json();",
+                  "    pm.expect(p.id).to.eql(pm.collectionVariables.get('csPhoto'));",
+                  "    pm.expect(p.cash_movement_id).to.eql(pm.collectionVariables.get('csOut'));",
+                  "    pm.expect(p.sha256).to.match(/^[0-9a-f]{64}$/);",
+                  "    pm.expect(p.size).to.be.above(0);",
+                  "    pm.expect(p.size).to.be.at.most(400 * 1024);",
+                  "    pm.collectionVariables.set('csPhotoSha', p.sha256);",
+                  "    pm.collectionVariables.set('csPhotoEtag', p.etag);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerPinToken}}"
+              },
+              {
+                "key": "X-Register-Token",
+                "value": "{{deviceToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "image/png"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/cash-movements/{{csOut}}/photos/{{csPhoto}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "cash-movements",
+                "{{csOut}}",
+                "photos",
+                "{{csPhoto}}"
+              ]
+            },
+            "description": "Spec 2.7 §2a (K6). The movement's own cashier while the session is open. Raw image bytes as the body (PNG, JPEG or WebP, at most 10 MB); scaled to fit 1600×1600.",
+            "body": {
+              "mode": "file",
+              "file": {
+                "src": "fixtures/product-800x400.png"
+              }
+            }
+          }
+        },
+        {
+          "name": "159b Same photo ID and image again: 200",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200: the stored photo, nothing new', () => {",
+                  "    pm.response.to.have.status(200);",
+                  "    pm.expect(pm.response.json().sha256).to.eql(pm.collectionVariables.get('csPhotoSha'));",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerPinToken}}"
+              },
+              {
+                "key": "X-Register-Token",
+                "value": "{{deviceToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "image/png"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/cash-movements/{{csOut}}/photos/{{csPhoto}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "cash-movements",
+                "{{csOut}}",
+                "photos",
+                "{{csPhoto}}"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "file",
+              "file": {
+                "src": "fixtures/product-800x400.png"
+              }
+            }
+          }
+        },
+        {
+          "name": "159c A body that is not a picture: invalid_image",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('422 invalid_image', () => {",
+                  "    pm.response.to.have.status(422);",
+                  "    pm.expect(pm.response.json().code).to.eql('invalid_image');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerPinToken}}"
+              },
+              {
+                "key": "X-Register-Token",
+                "value": "{{deviceToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/octet-stream"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/cash-movements/{{csOut}}/photos/{{csPhoto2}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "cash-movements",
+                "{{csOut}}",
+                "photos",
+                "{{csPhoto2}}"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "this is a note, not a photo"
+            }
+          }
+        },
+        {
+          "name": "159d Read the photo (JPEG, ETag)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 image/jpeg with the ETag of the upload', () => {",
+                  "    pm.response.to.have.status(200);",
+                  "    pm.expect(pm.response.headers.get('Content-Type')).to.eql('image/jpeg');",
+                  "    pm.expect(pm.response.headers.get('ETag')).to.eql(pm.collectionVariables.get('csPhotoEtag'));",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerPinToken}}"
+              },
+              {
+                "key": "X-Register-Token",
+                "value": "{{deviceToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/cash-movements/{{csOut}}/photos/{{csPhoto}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "cash-movements",
+                "{{csOut}}",
+                "photos",
+                "{{csPhoto}}"
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "159e Not modified with If-None-Match",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('304', () => pm.response.to.have.status(304));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerPinToken}}"
+              },
+              {
+                "key": "X-Register-Token",
+                "value": "{{deviceToken}}"
+              },
+              {
+                "key": "If-None-Match",
+                "value": "{{csPhotoEtag}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/cash-movements/{{csOut}}/photos/{{csPhoto}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "cash-movements",
+                "{{csOut}}",
+                "photos",
+                "{{csPhoto}}"
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "159f The cash out lists its photo",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200: photo_ids, not missing a nota', () => {",
+                  "    pm.response.to.have.status(200);",
+                  "    const m = pm.response.json();",
+                  "    pm.expect(m.photo_ids).to.eql([pm.collectionVariables.get('csPhoto')]);",
+                  "    pm.expect(m.missing_nota).to.eql(false);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerPinToken}}"
+              },
+              {
+                "key": "X-Register-Token",
+                "value": "{{deviceToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/cash-movements/{{csOut}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "cash-movements",
+                "{{csOut}}"
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "159g Sales settings carry nota_flag_above",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 with the nota threshold (default Rp 100 000)', () => {",
+                  "    pm.response.to.have.status(200);",
+                  "    pm.expect(pm.response.json().nota_flag_above).to.eql(100000);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/settings/sales",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "settings",
+                "sales"
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "159h A negative nota_flag_above is rejected",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('422 invalid_field nota_flag_above', () => {",
+                  "    pm.response.to.have.status(422);",
+                  "    const p = pm.response.json();",
+                  "    pm.expect(p.code).to.eql('invalid_field');",
+                  "    pm.expect(p.field).to.eql('nota_flag_above');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/settings/sales",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "settings",
+                "sales"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\"return_days\": 30, \"nota_flag_above\": -1}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
           "name": "160 Cash out slip (?lang=id)",
           "event": [
             {
@@ -8728,6 +9112,56 @@
               ]
             },
             "description": ""
+          }
+        },
+        {
+          "name": "165a Back office session list names the cashier and register (K5)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 with cashier_name and register_code', () => {",
+                  "    pm.response.to.have.status(200);",
+                  "    const s = pm.response.json().items.find((i) => i.id === pm.collectionVariables.get('csSessionId'));",
+                  "    pm.expect(s, 'the closed cash session').to.be.an('object');",
+                  "    pm.expect(s.cashier_name).to.be.a('string').and.not.empty;",
+                  "    pm.expect(s.register_code).to.be.a('string').and.not.empty;",
+                  "    pm.expect(s.status).to.eql('closed');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/cashier-sessions?status=closed&limit=20",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "cashier-sessions"
+              ],
+              "query": [
+                {
+                  "key": "status",
+                  "value": "closed"
+                },
+                {
+                  "key": "limit",
+                  "value": "20"
+                }
+              ]
+            },
+            "description": "The back office's F9 Cash list (spec 2.7 K5): each session carries the cashier's name and the register's code."
           }
         },
         {

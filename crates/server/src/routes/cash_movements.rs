@@ -355,7 +355,7 @@ fn denied() -> ApiError {
 }
 
 /// The movement `id` if `caller` may read it: their own, or `report.sales` at its branch.
-async fn readable(
+pub(crate) async fn readable(
     state: &AppState,
     caller: &UserSession,
     id: &str,

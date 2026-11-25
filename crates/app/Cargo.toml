@@ -33,6 +33,11 @@ toml.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 
+[features]
+# Nota photos from a USB webcam at the till (spec 2.7 §2a): `cargo build -p sultan-app
+# --features webcam`. Off by default.
+webcam = ["sultan-ui/webcam"]
+
 [dev-dependencies]
 # End-to-end test of the register UI against `sultan serve` (headless window).
 i-slint-backend-testing.workspace = true

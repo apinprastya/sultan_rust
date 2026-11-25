@@ -11,6 +11,10 @@
 //!
 //! Decided in C3: the stored format is always JPEG (`image/jpeg`). The `image` crate's WebP
 //! encoder is lossless only, which rarely beats JPEG on photos.
+//!
+//! The same pipeline with other limits ([`Limits`]) serves the nota photos of a cash movement
+//! (spec 2.7 §2a, [`NOTA`]: 1600×1600, at most 400 KB, stored as files by
+//! [`crate::attachments`]).
 
 use std::fmt::Write as _;
 use std::io::Cursor;
@@ -18,7 +22,7 @@ use std::io::Cursor;
 use axum::http::StatusCode;
 use image::codecs::jpeg::JpegEncoder;
 use image::imageops::FilterType;
-use image::{DynamicImage, ImageFormat, ImageReader, Limits, RgbImage};
+use image::{DynamicImage, ImageFormat, ImageReader, RgbImage};
 use sha2::{Digest, Sha256};
 
 use crate::error::ApiError;
@@ -37,6 +41,28 @@ pub const STORED_MIME: &str = "image/jpeg";
 pub const MAX_DECODED_SIDE: u32 = 8_000;
 /// Largest decoder allocation: 256 MB.
 pub const MAX_DECODE_ALLOC: u64 = 256 * 1024 * 1024;
+
+/// The size limits of a stored image.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Limits {
+    /// The stored image fits within this many pixels on each side.
+    pub max_side: u32,
+    /// The stored image is at most this many bytes.
+    pub max_bytes: usize,
+}
+
+/// Product images (spec 2.2 §8): [`MAX_SIDE`], [`MAX_STORED_BYTES`].
+pub const PRODUCT: Limits = Limits {
+    max_side: MAX_SIDE,
+    max_bytes: MAX_STORED_BYTES,
+};
+
+/// Nota photos of a cash movement (spec 2.7 §2a): 1600×1600, at most 400 KB, so a receipt stays
+/// readable.
+pub const NOTA: Limits = Limits {
+    max_side: 1_600,
+    max_bytes: 400 * 1024,
+};
 
 /// A processed image, ready to store.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -68,11 +94,19 @@ pub fn too_large() -> ApiError {
     )
 }
 
-/// Decodes, resizes and re-encodes an upload (see the module docs).
+/// Decodes, resizes and re-encodes a product image upload (see the module docs).
 ///
 /// # Errors
 /// `422 invalid_image` for anything that is not a decodable PNG, JPEG or WebP image.
 pub fn process(bytes: &[u8]) -> Result<Processed, ApiError> {
+    process_with(bytes, PRODUCT)
+}
+
+/// Decodes, resizes and re-encodes an upload to fit `fit_in` (see the module docs).
+///
+/// # Errors
+/// `422 invalid_image` for anything that is not a decodable PNG, JPEG or WebP image.
+pub fn process_with(bytes: &[u8], fit_in: Limits) -> Result<Processed, ApiError> {
     let format = image::guess_format(bytes)
         .map_err(|_| invalid_image("the body is not a PNG, JPEG or WebP image"))?;
     if !matches!(
@@ -82,7 +116,7 @@ pub fn process(bytes: &[u8]) -> Result<Processed, ApiError> {
         return Err(invalid_image("only PNG, JPEG and WebP images are accepted"));
     }
     let mut reader = ImageReader::with_format(Cursor::new(bytes), format);
-    let mut limits = Limits::default();
+    let mut limits = image::Limits::default();
     limits.max_image_width = Some(MAX_DECODED_SIDE);
     limits.max_image_height = Some(MAX_DECODED_SIDE);
     limits.max_alloc = Some(MAX_DECODE_ALLOC);
@@ -90,11 +124,11 @@ pub fn process(bytes: &[u8]) -> Result<Processed, ApiError> {
     let decoded = reader
         .decode()
         .map_err(|_| invalid_image("the image cannot be decoded"))?;
-    let mut rgb = flatten(&fit(&decoded, MAX_SIDE));
+    let mut rgb = flatten(&fit(&decoded, fit_in.max_side));
     loop {
         for quality in QUALITIES {
             let data = encode(&rgb, quality)?;
-            if data.len() <= MAX_STORED_BYTES {
+            if data.len() <= fit_in.max_bytes {
                 return Ok(Processed {
                     width: rgb.width(),
                     height: rgb.height(),
@@ -117,7 +151,18 @@ pub fn process(bytes: &[u8]) -> Result<Processed, ApiError> {
 pub async fn process_blocking(
     bytes: impl AsRef<[u8]> + Send + 'static,
 ) -> Result<Processed, ApiError> {
-    tokio::task::spawn_blocking(move || process(bytes.as_ref()))
+    process_blocking_with(bytes, PRODUCT).await
+}
+
+/// [`process_with`] on the blocking thread pool.
+///
+/// # Errors
+/// As [`process_with`]; `500 internal` if the blocking task panicked.
+pub async fn process_blocking_with(
+    bytes: impl AsRef<[u8]> + Send + 'static,
+    fit_in: Limits,
+) -> Result<Processed, ApiError> {
+    tokio::task::spawn_blocking(move || process_with(bytes.as_ref(), fit_in))
         .await
         .map_err(|_| ApiError::internal())?
 }
@@ -215,6 +260,18 @@ mod tests {
         let out = process(&png(&noise(512, 512))).unwrap();
         assert!(out.data.len() <= MAX_STORED_BYTES, "{}", out.data.len());
         assert!(out.width <= 512 && out.height <= 512);
+    }
+
+    #[test]
+    fn nota_photos_fit_their_own_limits() {
+        // Spec 2.7 §12 case 31: a 4000×3000 photo → at most 1600 px and 400 KB.
+        let flat = DynamicImage::ImageRgb8(RgbImage::new(4_000, 3_000));
+        let out = process_with(&png(&flat), NOTA).unwrap();
+        assert_eq!((out.width, out.height), (1_600, 1_200));
+        assert!(out.data.len() <= NOTA.max_bytes);
+        let out = process_with(&png(&noise(1_800, 1_800)), NOTA).unwrap();
+        assert!(out.width <= 1_600 && out.height <= 1_600);
+        assert!(out.data.len() <= NOTA.max_bytes, "{}", out.data.len());
     }
 
     #[test]

@@ -7,7 +7,7 @@ of the catalog, spec 2.2 (`docs/spec/2.2-catalog.md`), of pricing, spec 2.3
 against a running node. Requests and bodies follow the OpenAPI document served at
 `GET /api/v1/openapi.json` (import that URL into Postman to browse every endpoint).
 
-Flow (186 requests, each with test scripts). Spec 2.1 (requests 01–35):
+Flow (194 requests, each with test scripts). Spec 2.1 (requests 01–35):
 password login → OpenAPI document → create branch (`PUT`, client UUIDv7, time zone
 `Asia/Makassar`) → replay the same `PUT` (idempotent) → a time zone that is not IANA (`WIB`) is
 rejected (`invalid_field`) → create register → issue pairing code → pair (the answer names the branch: `branch_code`,
@@ -96,12 +96,18 @@ create a tender type (`tender.manage`, HQ) → archive it. The owner holds every
 override is asked for; overrides, exchanges, the customer balance and the other refusals are
 covered by the server's tests (`crates/server/tests/api/sales.rs`, `sales_returns.rs`).
 
-**Cash (folder "Cash (spec 2.7)", requests 148–176, phase K3):** the cash reasons with the device
+**Cash (folder "Cash (spec 2.7)", requests 148–176 and 159a–h, phases K3 and K6):** the cash reasons with the device
 token → the register's proposed float (`GET /registers/me/float`) → the owner opens a session
 (200 000) → a cash in (`PUT /cash-movements/{id}`, number `…-K-…`) → the same `PUT` replays
 (`200`) → another body with the same ID is `409 conflict` → a cash out with a reason and a note →
 a safe drop → a drop with a reason is `422 invalid_field` → reverse the cash in → reversing it
-again is `409 already_reversed` → the session's movements → the cash-out slip in Indonesian →
+again is `409 already_reversed` → the session's movements → **nota photo (K6):** the
+800×400 PNG fixture as the cash out's photo (`PUT /cash-movements/{id}/photos/{photo_id}`, raw
+body; a JPEG ≤ 400 KB with its SHA-256) → the same photo again (`200`) → a body that is not a
+picture is `422 invalid_image` → read it (`image/jpeg`, the `ETag`) → `304` with
+`If-None-Match` → the cash out lists the photo (`photo_ids`, `missing_nota` false) → the sales
+settings carry `nota_flag_above` (100 000) → a negative one is `422 invalid_field` → the
+cash-out slip in Indonesian →
 its reprint (COPY, free in its session) → the X report (expected cash 70 000, no count, audited)
 → its text → close keeping 50 000 as float (both blocks: expected 70 000, the 2.1 `cash_out`
 130 000 with the drop, `cash.drops`, `cash.reversals`, two X reads, 20 000 to the safe) → the
@@ -114,7 +120,8 @@ every permission, so no override is asked for; the overrides, a cashier's limits
 session blocking the Z and the supplementary Z are covered by the server's tests
 (`crates/server/tests/api/cash.rs`, `cash_z.rs`).
 
-The upload reads `postman/fixtures/product-800x400.png`, so pass `--working-dir postman`.
+The uploads (the product image and the nota photo) read `postman/fixtures/product-800x400.png`,
+so pass `--working-dir postman`.
 
 IDs and codes are generated fresh in the first request's test script, so the collection can be run
 repeatedly against the same server.
@@ -157,6 +164,11 @@ S6 (2026-11-18) added the return receipt (139a–b), the names and `status` filt
 and the sales settings (145a–f), and ran it again the same way (157/157 requests passed).
 K3 (2026-11-21) added the folder "Cash (spec 2.7)" and ran the whole collection twice in a row
 against one `sultan serve` on a fresh SQLite database (186/186 requests passed both times).
+K5 (2026-11-25) added the cashier and register names of `GET /cashier-sessions` (165a) and ran it
+again the same way (187/187 requests passed).
+K6 (2026-11-25) added the nota photo requests 159a–h and ran the whole collection twice in a row
+the same way (194/194 requests passed both times; the photo is stored once, `0600`, under
+`attachments/` next to `sultan.db`).
 
 The run needs no Postman login; it only prints a note that results are not published to the cloud.
 

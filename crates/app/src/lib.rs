@@ -275,7 +275,10 @@ where
             let role = config::resolve_role(role, ctx.env, &file)?;
             let listen = config::resolve_listen(listen.as_deref(), ctx.env, &file);
             let db_url = config::resolve_db(db.as_deref(), ctx.env, &file, &config_path);
-            let server = serve::BoundServer::bind(&db_url, &listen, role).await?;
+            let data_dir = serve::data_dir(&db_url, &config::config_dir(&config_path));
+            let server = serve::BoundServer::bind(&db_url, &listen, role)
+                .await?
+                .with_data_dir(&data_dir);
             say(ctx.out, &server.banner())?;
             server.run(ctx.shutdown).await?;
             say(ctx.out, "sultan serve: stopped")

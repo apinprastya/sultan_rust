@@ -9,7 +9,10 @@
 //!    `-shm` / `-journal` side files are made owner-only (`0600`) when the database is opened
 //!    (`sultan_db::Db::connect`, Phase 9): files that others could read are **fixed and
 //!    reported** with a warning in the log, not refused, so an upgraded node keeps starting.
-//! 3. Binds the listener and prints the API URL, the role and the events WebSocket URL.
+//! 3. Binds the listener and prints the API URL, the role and the events WebSocket URL. Files the
+//!    server stores (the nota photos of spec 2.7 §2a) go under the node's **data directory**
+//!    ([`data_dir`]): the directory of the `SQLite` file, or of `sultan.toml` for `MySQL`, in
+//!    `attachments/`. Back it up with the database.
 //! 4. Serves until Ctrl+C or `SIGTERM`, then stops accepting, lets running requests finish and
 //!    closes the database ([`shutdown_signal`]).
 //!
@@ -19,7 +22,7 @@
 
 use std::future::Future;
 use std::net::SocketAddr;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use sultan_db::{Db, org, seed};
@@ -41,6 +44,16 @@ pub fn sqlite_file(url: &str) -> Option<PathBuf> {
     } else {
         Some(PathBuf::from(path))
     }
+}
+
+/// The node's data directory (spec 2.7 §2a: nota photos go to `<data dir>/attachments`): the
+/// directory of the `SQLite` file, else `fallback` (the directory of `sultan.toml` for `MySQL`).
+#[must_use]
+pub fn data_dir(db_url: &str, fallback: &Path) -> PathBuf {
+    sqlite_file(db_url)
+        .and_then(|file| file.parent().map(Path::to_path_buf))
+        .filter(|dir| !dir.as_os_str().is_empty())
+        .unwrap_or_else(|| fallback.to_path_buf())
 }
 
 /// Opens an initialised database for serving (steps 1–2 of the module docs).
@@ -108,13 +121,31 @@ impl BoundServer {
             addr: listen.to_owned(),
             source,
         })?;
-        let state = AppState::new(db, role.node_role(), Arc::new(SystemClock));
+        let state = AppState::new(db, role.node_role(), Arc::new(SystemClock))
+            .with_data_dir(&data_dir(db_url, Path::new(".")));
         Ok(Self {
             listener,
             state,
             addr,
             role,
         })
+    }
+
+    /// Stores attachments under `dir` instead of the default of [`BoundServer::bind`] (the
+    /// directory of the `SQLite` file, else the working directory).
+    #[must_use]
+    pub fn with_data_dir(mut self, dir: &Path) -> Self {
+        self.state = self.state.with_data_dir(dir);
+        self
+    }
+
+    /// The node's file store.
+    #[must_use]
+    pub fn attachments_dir(&self) -> Option<&Path> {
+        self.state
+            .attachments
+            .as_ref()
+            .map(sultan_server::attachments::Attachments::root)
     }
 
     /// The bound address (the real port when listening on port 0).
@@ -197,6 +228,20 @@ mod tests {
         ];
         for (url, file) in cases {
             assert_eq!(sqlite_file(url), file.map(PathBuf::from), "{url}");
+        }
+    }
+
+    #[test]
+    fn data_dir_is_the_database_directory_or_the_fallback() {
+        let fallback = Path::new("/etc/sultan");
+        let cases = [
+            ("sqlite:///var/lib/sultan/sultan.db", "/var/lib/sultan"),
+            ("sqlite://sultan.db", "/etc/sultan"),
+            ("sqlite::memory:", "/etc/sultan"),
+            ("mysql://u:p@h/db", "/etc/sultan"),
+        ];
+        for (url, dir) in cases {
+            assert_eq!(data_dir(url, fallback), PathBuf::from(dir), "{url}");
         }
     }
 
@@ -301,6 +346,16 @@ mod tests {
         assert_eq!(addr.ip().to_string(), "127.0.0.1");
         assert_ne!(addr.port(), 0);
         assert!(server.banner().contains("role hq"));
+        // Attachments go next to the database, or wherever the caller says.
+        assert_eq!(
+            server.attachments_dir(),
+            Some(dir.0.join("attachments").as_path())
+        );
+        let server = server.with_data_dir(Path::new("/srv/sultan"));
+        assert_eq!(
+            server.attachments_dir(),
+            Some(Path::new("/srv/sultan/attachments"))
+        );
 
         // The port is taken now.
         let err = BoundServer::bind(&url, &addr.to_string(), Role::Hq)

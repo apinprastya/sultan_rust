@@ -51,7 +51,7 @@
 //! | 409 | `price_overlap` | two entries of a price list for the same variant + unit share a day (spec 2.3 §3); `entry_id` names the other one |
 //! | 422 | `invalid_rule` | a rule on (or in an entry of) the `default` price list, or a % rule of −100% or less (spec 2.3 §2, §15); `field` |
 //! | 422 | `no_price` | no price list prices the line (spec 2.3 §4.5); in a quote it is a per-line error, with `suggestion` on an open-price line |
-//! | 413 | `payload_too_large` | the request body is over the endpoint's limit (product images: 10 MB) |
+//! | 413 | `payload_too_large` | the request body is over the endpoint's limit (product images and nota photos: 10 MB) |
 //! | 409 | `cart_stale` | the posted sale's totals differ from the server's fresh quote (spec 2.6 §5); `quote` = `{totals, lines}` of the fresh quote |
 //! | 409 | `cart_taken` | the held cart was resumed by another register already (spec 2.6 §4) |
 //! | 409 | `has_returns` | a sale with a return cannot be post-voided (spec 2.6 §7) |
@@ -66,7 +66,7 @@
 //! | 409 | `already_reversed` | the cash movement was reversed already (spec 2.7 K10); `field: reverses` |
 //! | 409 | `sessions_open` | a Z of a day with a cashier session still open (spec 2.7 K15); `sessions` lists their numbers |
 //! | 409 | `nothing_to_close` | no closed session of the day is left without a Z (spec 2.7 §6) |
-//! | 409 | `photo_limit` | a fourth nota photo of a cash movement (spec 2.7 §2a; the upload route comes with K6); `max` |
+//! | 409 | `photo_limit` | a fourth nota photo of a cash movement (spec 2.7 §2a, `PUT /cash-movements/{id}/photos/{photo_id}`); `max` |
 //! | 409 | `conflict` / `archived` | also: a cash movement ID posted again with another body; an archived cash reason cannot be edited (spec 2.7 §11) |
 //! | 423 | `locked_out` | too many failures; `locked_until` (unix ms) is included (§4) |
 //! | 500 | `internal` | database or other unexpected error (details are not exposed) |

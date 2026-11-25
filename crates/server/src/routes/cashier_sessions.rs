@@ -161,6 +161,13 @@ pub struct SessionDto {
     pub opening_proposed: Option<i64>,
     /// The cash kept as float at the close (spec 2.7 §3); `null` while open or before 2.7.
     pub float_kept: Option<i64>,
+    /// The cashier's display name: only in `GET /cashier-sessions` (the back office's list,
+    /// spec 2.7 K5).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cashier_name: Option<String>,
+    /// The register's code, e.g. `R2`: only in `GET /cashier-sessions`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub register_code: Option<String>,
 }
 
 /// Totals of one tender in the close report.
@@ -436,6 +443,8 @@ fn session_dto(record: &SessionRecord, expected: Option<Money>) -> SessionDto {
         expected_cash: expected.map(Money::minor),
         opening_proposed: None,
         float_kept: None,
+        cashier_name: None,
+        register_code: None,
     }
 }
 
@@ -900,7 +909,8 @@ pub(crate) async fn stored_close_figures(
     Ok(Some((figures, report)))
 }
 
-/// `GET /api/v1/cashier-sessions`: the sessions the caller may read, newest first.
+/// `GET /api/v1/cashier-sessions`: the sessions the caller may read, newest first, each with
+/// the cashier's name and the register's code (spec 2.7 K5).
 ///
 /// # Errors
 /// `401`, `400 invalid_body` (bad ID) / `invalid_query` (bad number), `422 invalid_field`
@@ -955,7 +965,15 @@ pub async fn list(
     let records = cashier_sessions::list(&mut tx, &filter).await?;
     let mut items = Vec::with_capacity(records.len());
     for record in &records {
-        items.push(visible_dto(&state, &mut tx, &access, record).await?);
+        let mut dto = visible_dto(&state, &mut tx, &access, record).await?;
+        // The back office's list names the cashier and the register (spec 2.7 K5).
+        if let Some(context) =
+            cashier_sessions::report_context(&mut tx, record.session.id()).await?
+        {
+            dto.cashier_name = Some(context.cashier_name);
+            dto.register_code = Some(context.register_code);
+        }
+        items.push(dto);
     }
     tx.commit().await?;
     let full = records.len() == limit as usize;

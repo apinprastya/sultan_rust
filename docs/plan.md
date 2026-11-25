@@ -255,7 +255,7 @@ audit log viewer · light/dark theme · i18n ID/EN.
   Cash in the back office · `tender.manage` manages reasons · no old-Sultan cash import · text
   layouts in `core` now · the close report keeps its two blocks.
 
-## Status (updated 2026-11-21)
+## Status (updated 2026-11-25)
 
 Where we are, so any session can pick up from here. Update this section at the end of every phase.
 
@@ -398,6 +398,44 @@ Where we are, so any session can pick up from here. Update this section at the e
   fake's `open_elsewhere`. Decision of 2026-11-21 (§18 reading 13): a return without a receipt
   counts in the Z's tax summary at the product's current tax class (`cash::session_sales`).
   Readings in spec §19 (from K4).
+- **2.7 Cash management** K5 back office (2026-11-25): F9 Cash & Z in the back office
+  (`crates/ui/src/backoffice/cash.rs`, `ui/bo_cash.slint`): Ctrl+1 sessions (filters branch,
+  register, cashier, dates, status; keyset "load more"; Enter detail with the close figures,
+  the session's cash movements and, beside them, the live X of an open session (`report.sales` +
+  `session.view_expected`, else a message; F5 reads it again) or the stored close report of a
+  closed one with Ctrl+P reprint as a COPY; `cash.moved` reloads the movements), Ctrl+2 cash
+  movements (filters branch, register, session, kind, reason, dates; Enter shows the slip beside
+  the list, Ctrl+P its copy; the pane leaves room for K6's photos), Ctrl+3 day close (the days
+  still to close of the branch with open / closed counts, then the Z list in one cursor; Enter on
+  a day asks, then runs the Z with a key kept for a network retry; `sessions_open` naming the
+  sessions, `nothing_to_close`, a future day, `day.close` and HQ as messages; Enter on a Z shows
+  it, Ctrl+P a copy; `day.closed` reloads), Ctrl+4 cash reasons (HQ, `tender.manage`; direction
+  locked once saved; archive asks first; read-only without the permission or on a branch node).
+  Server: `GET /cashier-sessions` names the cashier and the register (`cashier_name`,
+  `register_code`, list only), API test on SQLite and MySQL, Postman 165a (187 requests). Client
+  and fake: `CashierSession` gains both names; the fake's session reads accept back-office users,
+  its `me` gives managers `session.view_expected` and `day.close`, and its Z takes the sessions'
+  sales documents (count, gross, first / last, tax per rate minus post-voids and returns) like the
+  server. README key tables, translations, headless tests (`crates/ui/tests/backoffice_cash.rs`),
+  screenshots `bo-32`–`bo-39` (the header's title gives way at 1024 px). Readings in spec §20
+  (from K5).
+- **2.7 K6 nota photos (2026-11-25)**: `PUT|GET /cash-movements/{id}/photos/{photo_id}` (raw
+  PNG / JPEG / WebP body, sniffed; `413` over 10 MB; scaled to fit 1600×1600 and stored as a JPEG
+  ≤ 400 KB by the product-image pipeline with new `product_image::Limits`; `409 photo_limit`
+  at three; the same ID and image again `200`; at the till the movement's own cashier while its
+  session is open, in the back office `cash.out`; audit `cash_movement.photo`, outbox
+  `cash_movement.photo_added`, `cash.moved` event; `ETag` / `304`), the node's file store
+  `server::attachments` (`<data dir>/attachments/<2 hex>/<sha256>.jpg`, `0600` / `0700`,
+  temporary file + rename before the row, stored once by hash, an orphan reused; the data
+  directory is the `SQLite` file's, else `sultan.toml`'s), `nota_flag_above` in
+  `GET|PUT /settings/sales` (kept when left out, `422` below 0), the client's
+  `add_cash_photo` / `cash_photo` and `SalesSettings::nota_flag_above` (HTTP + fake), the
+  register's F (file, `rfd` on the XDG portal) / W (webcam, `nokhwa` behind the new `webcam`
+  feature of `sultan-ui` / `sultan-app`, off by default) on the slip and the list behind the
+  `photo::PhotoSource` trait, photo counts and "No nota" on the list rows, API tests (§12
+  31–34), headless tests (§12 39), Postman 159a–h (194 requests), screenshots `12b`, `12d`,
+  `12e`. Readings in spec §21 (from K6). The back-office photo view, Ctrl+U upload and the
+  missing-nota filter follow K5.
 - **UI only, except HQ** (§3, 2026-11-09):
   - Start screen on single-app and terminal machines: F1 Kasir, F2 Back office, F3 Settings.
   - Settings: language (F6), set up again (F8), and on a single app "Allow terminals to connect"
@@ -437,9 +475,9 @@ Where we are, so any session can pick up from here. Update this section at the e
 - Each sub-agent worktree builds its own `target/` (20–40 GB with coverage); clear finished ones.
 
 **Next**
-- **2.7 Cash management**: spec agreed (2026-11-19); K1–K4 done, next K5 back office (F9 Cash:
-  sessions with live X and close report reprint, cash movements, day close + Z list, cash
-  reasons), then K6 nota photos (spec §13).
+- **2.7 Cash management**: spec agreed (2026-11-19); K1–K6 done. Left: K6's back-office part
+  (the photo view and Ctrl+U upload from a file in the F9 cash movements' slip pane, and the
+  missing-nota filter; spec §10 and §21).
 - Then the remaining P1 specs to discuss (2.4 is P2): 2.8 inventory, 2.9 money, 2.10 reports,
   2.11 hardware (ESC/POS + drawer), old-Sultan importer.
 

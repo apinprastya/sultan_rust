@@ -3124,3 +3124,230 @@ msgstr "Jalankan tutup hari (Z) untuk {}? Mencakup semua sesi yang sudah ditutup
 
 msgid "Cash in/out"
 msgstr "Kas"
+
+# Back office F9 Cash (spec 2.7, K5).
+
+msgid "Run the Z (end of day) for {}?"
+msgstr "Jalankan Z (tutup hari) untuk {}?"
+
+msgid "Archive the cash reason {}?"
+msgstr "Arsipkan alasan kas {}?"
+
+msgid "It covers the {} closed sessions of the day that are in no Z yet. A Z is never changed afterwards; sessions closed later get a supplementary Z."
+msgstr "Z mencakup {} sesi hari itu yang sudah ditutup dan belum masuk Z. Z tidak pernah diubah lagi; sesi yang ditutup kemudian masuk Z susulan."
+
+msgid "Registers stop offering it at once; movements already posted with it keep it."
+msgstr "Kasir langsung berhenti menawarkannya; mutasi yang sudah tercatat tetap memakainya."
+
+msgid "Sessions"
+msgstr "Sesi"
+
+msgid "Cash movements"
+msgstr "Mutasi kas"
+
+msgid "Day close"
+msgstr "Tutup hari"
+
+msgid "Cash reasons"
+msgstr "Alasan kas"
+
+msgid "COPY"
+msgstr "SALINAN"
+
+msgid "Closed"
+msgstr "Ditutup"
+
+msgid "Session"
+msgstr "Sesi"
+
+msgid "Reason"
+msgstr "Alasan"
+
+msgid "Copy"
+msgstr "Salinan"
+
+msgid "Opened"
+msgstr "Dibuka"
+
+msgid "Expected"
+msgstr "Seharusnya"
+
+msgid "Cash movements ({})"
+msgstr "Mutasi kas ({})"
+
+msgid "Reprint (copy)"
+msgstr "Cetak ulang (salinan)"
+
+msgid "Read the X again"
+msgstr "Baca X lagi"
+
+msgid "X report (live)"
+msgstr "Laporan X (saat ini)"
+
+msgid "Enter shows the slip of the highlighted movement."
+msgstr "Enter menampilkan slip mutasi yang disorot."
+
+msgid "Days still to close"
+msgstr "Hari yang belum ditutup"
+
+msgid "Every day with sessions has its Z."
+msgstr "Setiap hari yang ada sesinya sudah punya Z."
+
+msgid "{} closed · {} open"
+msgstr "{} ditutup · {} terbuka"
+
+msgid "Z reports"
+msgstr "Laporan Z"
+
+msgid "Net sales"
+msgstr "Penjualan bersih"
+
+msgid "Over/short"
+msgstr "Selisih"
+
+msgid "To deposit"
+msgstr "Disetor"
+
+msgid "No Z report yet."
+msgstr "Belum ada laporan Z."
+
+msgid "Running…"
+msgstr "Menjalankan…"
+
+msgid "Close the day"
+msgstr "Tutup hari"
+
+msgid "Show"
+msgstr "Tampilkan"
+
+msgid "Enter on a Z shows it."
+msgstr "Enter pada Z menampilkannya."
+
+msgid "Direction"
+msgstr "Arah"
+
+msgid "note required"
+msgstr "wajib catatan"
+
+msgid "New cash reason"
+msgstr "Alasan kas baru"
+
+msgid "Edit cash reason"
+msgstr "Ubah alasan kas"
+
+msgid "Name (printed on slips)"
+msgstr "Nama (dicetak di slip)"
+
+msgid "Direction (fixed once saved)"
+msgstr "Arah (tetap setelah disimpan)"
+
+msgid "A note is required"
+msgstr "Wajib ada catatan"
+
+msgid "Reading cash sessions, movements and Z reports needs the permission {}. Ask the owner."
+msgstr "Melihat sesi kasir, mutasi kas, dan laporan Z butuh izin {}. Hubungi pemilik."
+
+msgid "Read-only: changing cash reasons needs the permission {} at HQ."
+msgstr "Hanya baca: mengubah alasan kas butuh izin {} di HQ."
+
+msgid "The live X report needs the permissions report.sales and {}."
+msgstr "Laporan X saat ini butuh izin report.sales dan {}."
+
+msgid "A copy needs the permission {}."
+msgstr "Salinan butuh izin {}."
+
+msgid "Pick a branch first."
+msgstr "Pilih cabang dulu."
+
+msgid "Z report {} posted."
+msgstr "Laporan Z {} tercatat."
+
+msgid "Not run: sessions of this day are still open ({}). Close them at the register or force-close them first."
+msgstr "Tidak dijalankan: sesi hari ini masih terbuka ({}). Tutup dulu di kasir atau tutup paksa."
+
+msgid "Nothing to close: every closed session of {} is already in a Z."
+msgstr "Tidak ada yang ditutup: semua sesi {} yang sudah ditutup sudah masuk Z."
+
+msgid "{} has not started yet."
+msgstr "{} belum dimulai."
+
+msgid "Running a Z needs the permission {}."
+msgstr "Menjalankan Z butuh izin {}."
+
+msgid "This is the HQ server. Run the Z on the branch server."
+msgstr "Ini server HQ. Jalankan Z di server cabang."
+
+msgid "Type a name (1 to 60 characters)."
+msgstr "Ketik nama (1 sampai 60 karakter)."
+
+msgid "Type the position as a whole number."
+msgstr "Ketik urutan sebagai bilangan bulat."
+
+msgid "Cash reason archived."
+msgstr "Alasan kas diarsipkan."
+
+msgid "The direction of a saved reason cannot change."
+msgstr "Arah alasan yang sudah disimpan tidak dapat diubah."
+
+msgid "Force-closed by"
+msgstr "Ditutup paksa oleh"
+
+msgid "Over / short"
+msgstr "Selisih"
+
+msgid "Safe drops"
+msgstr "Setor ke brankas"
+
+msgid "Reversals"
+msgstr "Pembatalan"
+
+msgid "Drawer opens (no sale)"
+msgstr "Laci dibuka (tanpa transaksi)"
+
+msgid "X reports read"
+msgstr "Laporan X dibaca"
+
+msgid "Cash outs missing a nota"
+msgstr "Kas keluar tanpa nota"
+
+msgid "reversal"
+msgstr "pembatalan"
+
+msgid "reversed"
+msgstr "dibatalkan"
+
+msgid "missing nota"
+msgstr "tanpa nota"
+
+msgid "Cash & Z"
+msgstr "Kas & Z"
+
+msgid "Nota photo added to {}."
+msgstr "Foto nota ditambahkan ke {}."
+
+msgid "No photo was added: {}. The movement stays posted; try again."
+msgstr "Foto tidak ditambahkan: {}. Mutasi tetap tercatat; coba lagi."
+
+msgid "This is not a PNG, JPEG or WebP picture."
+msgstr "Ini bukan gambar PNG, JPEG atau WebP."
+
+msgid "The picture is larger than 10 MB."
+msgstr "Gambar lebih besar dari 10 MB."
+
+msgid "Photo from file"
+msgstr "Foto dari berkas"
+
+msgid "Photo from webcam"
+msgstr "Foto dari webcam"
+
+msgid "No nota photo yet. Add a photo of the shop's receipt: F from a file, W from the webcam when one is connected."
+msgstr "Belum ada foto nota. Tambahkan foto nota toko: F dari berkas, W dari webcam bila terpasang."
+
+msgid "Nota photos: {} of 3."
+msgstr "Foto nota: {} dari 3."
+
+msgid "Photos: {}"
+msgstr "Foto: {}"
+
+msgid "No nota"
+msgstr "Tanpa nota"

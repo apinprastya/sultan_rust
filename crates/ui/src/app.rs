@@ -22,7 +22,9 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use slint::{ComponentHandle, Model, ModelRc, SharedString, VecModel};
-use sultan_client::{CloseReport, Customer, CustomerQuery, EventSink, Lookup, Service};
+use sultan_client::{
+    ClientError, CloseReport, Customer, CustomerQuery, EventSink, Lookup, Problem, Service,
+};
 use tokio::runtime::Handle;
 
 use crate::after::{Call as AfterCall, Reply as AfterReply, ReturnStep};
@@ -32,6 +34,7 @@ use crate::controller::{Controller, Effect, Msg, Notice, Screen, TILE_COLUMNS, T
 use crate::count::{CountForm, DENOMINATIONS, is_coin};
 use crate::customer::{Call, Dialog, Perms, Reply, receipt_line};
 use crate::input::{Key, date_time, time_of_day};
+use crate::photo::{NativePhotos, PhotoError, PhotoSource};
 use crate::scan::{CustomerPrice, ScanField, line_amount, match_kind, percent_off, qty_text};
 use crate::sell::{Line, PayStep};
 use crate::till::{EntryKind, Modal, Sell, VOID_REASONS, VoidTarget};
@@ -81,6 +84,9 @@ pub struct Options {
     pub start: bool,
     /// The cart's crash copy (spec 2.6 D2), next to `register.token`; `None` keeps none.
     pub cart_file: Option<crate::crash::CartFile>,
+    /// Where nota photos come from (spec 2.7 §2a): the file dialog and the webcam
+    /// ([`NativePhotos`]); tests inject bytes ([`crate::photo::FixedPhotos`]).
+    pub photos: Arc<dyn PhotoSource>,
 }
 
 impl Options {
@@ -93,6 +99,7 @@ impl Options {
             clock: system_clock(),
             start: false,
             cart_file: None,
+            photos: Arc::new(NativePhotos),
         }
     }
 }
@@ -378,7 +385,8 @@ fn after_call(
 
 /// Starts a call of [`crate::cash`]; `lang` is the window language for the texts.
 fn cash_call(
-    service: &dyn Service,
+    service: &Arc<dyn Service>,
+    photos: &Arc<dyn PhotoSource>,
     token: &str,
     call: CashCall,
     lang: &str,
@@ -447,6 +455,34 @@ fn cash_call(
         } => {
             let future = service.payout_slip(token, &customer_id, &entry_id, false, lang, None);
             Box::pin(async move { CashReply::PayoutSlip(customer_id, future.await) })
+        }
+        CashCall::Photo {
+            movement_id,
+            photo_id,
+            camera,
+        } => {
+            let picked = if camera {
+                photos.capture()
+            } else {
+                photos.pick_file()
+            };
+            let (service, token) = (service.clone(), token.to_owned());
+            Box::pin(async move {
+                let result = match picked.await {
+                    Ok(None) => Ok(None),
+                    Ok(Some(bytes)) => service
+                        .add_cash_photo(&token, &movement_id, &photo_id, bytes)
+                        .await
+                        .map(Some),
+                    Err(PhotoError::TooLarge) => Err(ClientError::Api(Problem::new(
+                        413,
+                        "payload_too_large",
+                        "the file is larger than 10 MB",
+                    ))),
+                    Err(PhotoError::Failed(message)) => Err(ClientError::Unexpected(message)),
+                };
+                CashReply::Photo(movement_id, result)
+            })
         }
     }
 }
@@ -659,7 +695,8 @@ impl State {
                     generation,
                 } => {
                     let lang = receipt_language(&self.options);
-                    let future = cash_call(self.service.as_ref(), &token, call, &lang);
+                    let future =
+                        cash_call(&self.service, &self.options.photos, &token, call, &lang);
                     let future: MsgFuture =
                         Box::pin(async move { Msg::Cash(generation, Box::new(future.await)) });
                     self.spawn_or_block(future);
@@ -1176,6 +1213,7 @@ fn render_sell(
                             ("F3 → F9", "history"),
                             ("Shift+F5 → R", "reverse"),
                             ("Shift+F5 → P", "reprint"),
+                            ("Shift+F5 → F", "photo_file"),
                         ]
                         .map(|(k, l)| sell_row(k, l)),
                     )
@@ -1709,8 +1747,15 @@ fn render_cash(ui: &MainWindow, c: &Controller, now: i64, models: &Models) {
                     number: m.number.as_str().into(),
                     kind: m.kind.as_str().into(),
                     detail: crate::cash::movement_detail(m).into(),
+                    photos: index(m.photo_ids.len()),
+                    missing: m.missing_nota,
                 })
                 .collect();
+            view.photos = index(
+                d.photo_target()
+                    .filter(|_| d.step == Step::Slip)
+                    .map_or(0, |m| m.photo_ids.len()),
+            );
             if d.step == Step::Slip {
                 text = d.slip.iter().map(|l| l.as_str().into()).collect();
             }
@@ -1766,7 +1811,13 @@ fn render(ui: &MainWindow, c: &Controller, now: i64, models: &Models, options: &
         .filter(|s| !idle || (!buttons.contains(s) && !matches!(s.key, Key::Enter | Key::Escape)))
         .collect();
     let bar_chips = chips(&bar);
-    let (top, bottom) = if bar_chips.len() > 4 {
+    // The cash dialog's slip leaves its keys half the width (the slip is beside them).
+    let slip = matches!(
+        c.sell().and_then(|s| s.modal.as_ref()),
+        Some(Modal::Cash(d)) if d.step == crate::cash::Step::Slip
+    );
+    let per_row = if slip { 3 } else { 4 };
+    let (top, bottom) = if bar_chips.len() > per_row {
         let half = bar_chips.len().div_ceil(2);
         (bar_chips[..half].to_vec(), bar_chips[half..].to_vec())
     } else {
@@ -2071,6 +2122,7 @@ pub fn build_app(
     };
     let (mut controller, effects) = Controller::new();
     controller.start = options.start;
+    controller.camera = options.photos.has_camera();
     controller
         .register_label
         .clone_from(&options.register_label);

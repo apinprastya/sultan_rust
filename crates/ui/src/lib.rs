@@ -15,7 +15,9 @@
 //!   reprint and post-void, returns and exchanges, the purchase history and the drawer.
 //! - [`cash`]: cash management at the register (spec 2.7, phase K4): the Shift+F5 cash dialog
 //!   (in / out / drop, slips, reversals), the Shift+F12 X report, the float on open and close,
-//!   the close report's text with End of day (Z), and the payout slip.
+//!   the close report's text with End of day (Z), and the payout slip; since K6 the nota photos
+//!   (F / W), whose bytes come from a [`photo::PhotoSource`] (the file dialog, the webcam behind
+//!   the `webcam` feature, or fixed bytes in tests).
 //! - [`customer`]: the session home's customer step (spec 2.5, phase M5): find, sign up,
 //!   attach, balance payout.
 //! - [`setup`] and [`setup_app`]: the first-run setup wizard (single app, HQ server, branch
@@ -37,6 +39,7 @@ pub mod amount;
 pub mod app;
 pub mod backoffice;
 pub mod backoffice_app;
+pub mod backoffice_cash;
 pub mod backoffice_sales;
 pub mod cash;
 pub mod controller;
@@ -44,6 +47,7 @@ pub mod count;
 pub mod crash;
 pub mod customer;
 pub mod input;
+pub mod photo;
 pub mod scan;
 pub mod sell;
 pub mod setup;

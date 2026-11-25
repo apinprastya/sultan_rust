@@ -28,11 +28,13 @@ struct Server {
     device: String,
     branch: String,
     task: tokio::task::JoinHandle<()>,
+    data_dir: std::path::PathBuf,
 }
 
 impl Drop for Server {
     fn drop(&mut self) {
         self.task.abort();
+        let _ = std::fs::remove_dir_all(&self.data_dir);
     }
 }
 
@@ -104,7 +106,9 @@ async fn serve() -> (Server, String, String) {
         .await
         .unwrap();
     tx.commit().await.unwrap();
-    let state = AppState::new(db, NodeRole::Standalone, Arc::new(SystemClock));
+    let data_dir = std::env::temp_dir().join(format!("sultan-client-{}", new_id()));
+    let state =
+        AppState::new(db, NodeRole::Standalone, Arc::new(SystemClock)).with_data_dir(&data_dir);
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     let task = tokio::spawn(async move {
@@ -116,6 +120,7 @@ async fn serve() -> (Server, String, String) {
             device,
             branch: jkt.id.to_string(),
             task,
+            data_dir,
         },
         ani_id,
         budi_id,
@@ -493,6 +498,127 @@ async fn back_office(office: &dyn BackOffice, owner: &str, branch: &str, z_id: &
     assert_eq!(report.float.opening_proposed, Some(50_000));
 }
 
+fn png(width: u32) -> Vec<u8> {
+    let img = image::DynamicImage::ImageRgb8(image::RgbImage::new(width, 4));
+    let mut out = Vec::new();
+    img.write_to(&mut std::io::Cursor::new(&mut out), image::ImageFormat::Png)
+        .unwrap();
+    out
+}
+
+/// Nota photos and the missing-nota setting (phase K6, spec 2.7 §2a), shared by the server and
+/// the fake. Runs after [`back_office`] (no session open).
+async fn photos(register: &dyn Service, office: &dyn BackOffice, ani: &str, owner: &str) -> String {
+    let session = register.open_session(ani, 10_000, &new_id()).await.unwrap();
+    let out = register
+        .post_cash_movement(ani, &new_id(), &cash("out", 20_000, Some(SHOP)), None)
+        .await
+        .unwrap();
+    assert!(!out.missing_nota);
+    // The threshold: kept when left out, lowered to flag the Rp 20 000 cash out.
+    let mut settings = office.sales_settings(owner).await.unwrap();
+    assert_eq!(settings.nota_flag_above, Some(100_000));
+    settings.nota_flag_above = None;
+    let kept = office.put_sales_settings(owner, &settings).await.unwrap();
+    assert_eq!(kept.nota_flag_above, Some(100_000));
+    settings.nota_flag_above = Some(-1);
+    assert_eq!(
+        code_of(office.put_sales_settings(owner, &settings).await),
+        (422, "invalid_field".to_owned())
+    );
+    settings.nota_flag_above = Some(10_000);
+    let lowered = office.put_sales_settings(owner, &settings).await.unwrap();
+    assert_eq!(lowered.nota_flag_above, Some(10_000));
+    assert!(
+        register
+            .cash_movement(ani, &out.id)
+            .await
+            .unwrap()
+            .missing_nota
+    );
+
+    // A photo clears the flag; its replay answers the same photo.
+    let photo_id = new_id();
+    let photo = register
+        .add_cash_photo(ani, &out.id, &photo_id, png(8))
+        .await
+        .unwrap();
+    assert_eq!(
+        (
+            photo.id.as_str(),
+            photo.cash_movement_id.as_str(),
+            photo.sha256.len()
+        ),
+        (photo_id.as_str(), out.id.as_str(), 64)
+    );
+    assert_eq!(
+        register
+            .add_cash_photo(ani, &out.id, &photo_id, png(8))
+            .await
+            .unwrap(),
+        photo
+    );
+    let read = register.cash_movement(ani, &out.id).await.unwrap();
+    assert_eq!(read.photo_ids, vec![photo_id.clone()]);
+    assert!(!read.missing_nota);
+    let bytes = register.cash_photo(ani, &out.id, &photo_id).await.unwrap();
+    assert!(bytes.len() > 8, "{} bytes", bytes.len());
+    assert_eq!(
+        code_of(register.cash_photo(ani, &out.id, &new_id()).await),
+        (404, "not_found".to_owned())
+    );
+    // Not an image; the fourth photo. (Over 10 MB: the server's API tests, and the fake's below.)
+    assert_eq!(
+        code_of(
+            register
+                .add_cash_photo(ani, &out.id, &new_id(), b"hello".to_vec())
+                .await
+        ),
+        (422, "invalid_image".to_owned())
+    );
+    for width in [9, 10] {
+        register
+            .add_cash_photo(ani, &out.id, &new_id(), png(width))
+            .await
+            .unwrap();
+    }
+    let err = register
+        .add_cash_photo(ani, &out.id, &new_id(), png(11))
+        .await
+        .unwrap_err();
+    let p = err.problem().unwrap();
+    assert_eq!((p.status, p.code.as_str()), (409, "photo_limit"));
+    assert_eq!(
+        code_of(
+            register
+                .add_cash_photo(ani, &new_id(), &new_id(), png(8))
+                .await
+        ),
+        (404, "not_found".to_owned())
+    );
+    // A second cash out above the threshold, without a photo: the close counts it.
+    let bare = register
+        .post_cash_movement(ani, &new_id(), &cash("out", 15_000, Some(SHOP)), None)
+        .await
+        .unwrap();
+    assert!(bare.missing_nota);
+    session.id
+}
+
+/// Closes `session` (counted 0); answers the close report's missing-nota count.
+async fn close_photos(register: &dyn Service, ani: &str, session: &str) -> u32 {
+    let body = CloseRequest {
+        counted_cash: 0,
+        counts: None,
+        float_kept: None,
+    };
+    let report = register
+        .close_session(ani, session, &body, &new_id())
+        .await
+        .unwrap();
+    report.cash.missing_nota
+}
+
 fn today(now_ms: i64) -> String {
     let day = LocalDay::of(
         sultan_core::time::Timestamp::from_unix_millis(now_ms),
@@ -520,6 +646,22 @@ async fn cash_calls_over_http() {
         .unwrap()
         .token;
     back_office(&office, &owner, &server.branch, &z, &open).await;
+    let session = photos(&register, &office, &ani, &owner).await;
+    assert_eq!(close_photos(&register, &ani, &session).await, 1);
+    // After the close the cashier adds no photo at the till.
+    let query = CashQuery {
+        cashier_session_id: Some(session.clone()),
+        ..CashQuery::default()
+    };
+    let page = register.cash_movements(&ani, &query).await.unwrap();
+    assert_eq!(
+        code_of(
+            register
+                .add_cash_photo(&ani, &page.items[0].id, &new_id(), png(8))
+                .await
+        ),
+        (403, "permission_denied".to_owned())
+    );
     // The payout slip of an unknown entry.
     assert_eq!(
         code_of(
@@ -532,6 +674,7 @@ async fn cash_calls_over_http() {
 }
 
 #[tokio::test]
+#[allow(clippy::too_many_lines)] // one flow, step by step
 async fn cash_calls_on_the_fake() {
     let fake = FakeService::default();
     let ani = fake.pin_login("u-ani", "1234").await.unwrap().token;
@@ -554,6 +697,44 @@ async fn cash_calls_on_the_fake() {
         .unwrap()
         .token;
     back_office(&fake, &owner, sultan_client::fake::BRANCH_ID, &z, &open).await;
+    let session = photos(&fake, &fake, &ani, &owner).await;
+    let posted = fake.cash_movements_posted();
+    let out = posted[posted.len() - 2].clone();
+    assert_eq!(
+        code_of(
+            fake.add_cash_photo(&ani, &out.id, &new_id(), vec![0; 11 * 1024 * 1024])
+                .await
+        ),
+        (409, "photo_limit".to_owned())
+    );
+    // Another movement: over 10 MB, and a WebP / JPEG are images too.
+    let other = fake
+        .post_cash_movement(&ani, &new_id(), &cash("out", 1_000, Some(SHOP)), None)
+        .await
+        .unwrap();
+    assert_eq!(
+        code_of(
+            fake.add_cash_photo(&ani, &other.id, &new_id(), vec![0; 11 * 1024 * 1024])
+                .await
+        ),
+        (413, "payload_too_large".to_owned())
+    );
+    for bytes in [
+        b"RIFF\0\0\0\0WEBPVP8 ".to_vec(),
+        vec![0xff, 0xd8, 0xff, 0xe0],
+    ] {
+        fake.add_cash_photo(&ani, &other.id, &new_id(), bytes)
+            .await
+            .unwrap();
+    }
+    // A used photo ID on another movement: conflict.
+    assert_eq!(
+        code_of(
+            fake.add_cash_photo(&ani, &other.id, &out.photo_ids[0], png(8))
+                .await
+        ),
+        (409, "conflict".to_owned())
+    );
     // A cashier in the back office manages no reasons and runs no Z.
     let kasir = fake
         .password_login("kasir", "kasir-pass-1")
@@ -564,6 +745,24 @@ async fn cash_calls_on_the_fake() {
         code_of(fake.all_cash_reasons(&kasir).await),
         (403, "permission_denied".to_owned())
     );
+    assert_eq!(
+        code_of(
+            fake.add_cash_photo(&kasir, &other.id, &new_id(), png(8))
+                .await
+        ),
+        (403, "permission_denied".to_owned())
+    );
+    // The close counts the one cash out still missing its nota; after it the cashier adds none.
+    assert_eq!(close_photos(&fake, &ani, &session).await, 1);
+    assert_eq!(
+        code_of(
+            fake.add_cash_photo(&ani, &other.id, &new_id(), png(8))
+                .await
+        ),
+        (403, "permission_denied".to_owned())
+    );
+    let jpeg = fake.cash_photo(&owner, &out.id, &out.photo_ids[0]).await;
+    assert_eq!(jpeg.unwrap(), png(8));
     let body = ZRunRequest {
         day: today(1_800_000_000_000),
         branch_id: Some(sultan_client::fake::BRANCH_ID.to_owned()),
@@ -613,12 +812,84 @@ async fn cash_calls_on_the_fake() {
         .cash_movements(&budi, &CashQuery::default())
         .await
         .unwrap();
-    assert_eq!(all.items.len(), 4);
+    assert_eq!(all.items.len(), 7);
     assert_eq!(
         code_of(
             fake.payout_slip(&budi, "nobody", "nothing", false, "en", None)
                 .await
         ),
         (404, "not_found".to_owned())
+    );
+}
+
+#[tokio::test]
+async fn a_fake_z_takes_the_sessions_sales_documents() {
+    let fake = FakeService::default();
+    let demo = fake.seed_sales_demo(4).await;
+    let ani = fake.pin_login("u-ani", "1234").await.unwrap().token;
+    let session = fake.current_session(&ani).await.unwrap().unwrap();
+    let close = CloseRequest {
+        counted_cash: 0,
+        counts: None,
+        float_kept: None,
+    };
+    fake.close_session(&ani, &session.id, &close, "close")
+        .await
+        .unwrap();
+    let owner = fake
+        .password_login("owner", "owner-pass-1")
+        .await
+        .unwrap()
+        .token;
+    // The back office lists the session with its cashier and register (spec 2.7 K5).
+    let page = fake
+        .sessions(&owner, &sultan_client::SessionQuery::default())
+        .await
+        .unwrap();
+    assert_eq!(page.items[0].cashier_name.as_deref(), Some("Ani"));
+    assert_eq!(page.items[0].register_code.as_deref(), Some("R1"));
+    let detail = Service::session(&fake, &owner, &session.id).await.unwrap();
+    assert!(detail.close_report.is_some());
+    let body = ZRunRequest {
+        day: today(1_800_000_000_000),
+        branch_id: Some(sultan_client::fake::BRANCH_ID.to_owned()),
+    };
+    let z = fake.run_z(&owner, &body, "z", None).await.unwrap();
+    let t = &z.report.branch;
+    assert_eq!(t.sales_count, 4, "the voided sale counts in its session");
+    let gross: i64 = demo
+        .sales
+        .iter()
+        .flat_map(|s| &s.lines)
+        .map(|l| l.gross)
+        .sum();
+    assert_eq!(t.gross_sales, gross);
+    assert_eq!(
+        t.first_sale.as_ref().map(|s| s.number.as_str()),
+        Some(demo.sales[0].summary.number.as_str())
+    );
+    assert_eq!(
+        t.last_sale.as_ref().map(|s| s.number.as_str()),
+        Some(demo.sales[3].summary.number.as_str())
+    );
+    // The tax summary: the sales minus the post-void and the return.
+    let sold: i64 = demo
+        .sales
+        .iter()
+        .flat_map(|s| &s.lines)
+        .map(|l| l.tax)
+        .sum();
+    let voided: i64 = demo.sales[1].lines.iter().map(|l| l.tax).sum();
+    let tax: i64 = t.tax.iter().map(|l| l.tax).sum();
+    assert!(sold > 0, "the demo product is taxed");
+    assert!(tax < sold - voided, "the return takes its tax back: {tax}");
+    let text = fake
+        .z_report_text(&owner, &z.id, false, "en")
+        .await
+        .unwrap();
+    assert!(
+        text.text.contains(&demo.sales[0].summary.number),
+        "{}",
+        text.text
     );
 }

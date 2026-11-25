@@ -19,7 +19,8 @@
 //!     --env-var baseUrl=http://127.0.0.1:8080/api/v1
 //! ```
 //!
-//! Everything is lost when the process stops. It writes no database file; if it is ever pointed
+//! Everything is lost when the process stops (nota photos go to a `sultan-dev-<pid>` directory
+//! in the system temp directory, which is not cleaned up). It writes no database file; if it is ever pointed
 //! at a `SQLite` file, `Db::connect` keeps that file and its side files owner-only (`0600`, Phase 9)
 //! as for `sultan init` / `sultan serve`.
 
@@ -82,7 +83,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     .await?;
     tx.commit().await?;
 
-    let state = AppState::new(db, NodeRole::Standalone, Arc::new(SystemClock));
+    // Nota photos (spec 2.7 §2a) are files: a throwaway directory like the database.
+    let data_dir = std::env::temp_dir().join(format!("sultan-dev-{}", std::process::id()));
+    let state =
+        AppState::new(db, NodeRole::Standalone, Arc::new(SystemClock)).with_data_dir(&data_dir);
     let listener = tokio::net::TcpListener::bind(("127.0.0.1", port)).await?;
     let addr = listener.local_addr()?;
     println!(

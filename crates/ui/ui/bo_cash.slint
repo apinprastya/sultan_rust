@@ -1,0 +1,1169 @@
+// The back office's cash screens (spec 2.7, phase K5): cashier sessions with the live X or the
+// close report, cash movements with their slips, the day close (Z) and the cash reasons (F9,
+// tabs Ctrl+1 … Ctrl+4). Rust (`crates/ui/src/backoffice/cash.rs`) decides everything; these
+// components show it and report edits and clicks like the other screens.
+//
+// Text fields are rebuilt when Rust bumps `serial`.
+
+import { ComboBox, CheckBox, ListView, ScrollView } from "std-widgets.slint";
+import { Theme } from "theme.slint";
+import { Note, Card } from "widgets.slint";
+import { BoStrings, Field, SmallButton, KeyButton, Banner, SectionTitle } from "bo_widgets.slint";
+import { TabButton } from "bo_form.slint";
+import { BoDocList, BoFact } from "bo_sales.slint";
+
+export struct BoCashFilters {
+    branch-index: int,
+    register-index: int,
+    cashier-index: int,
+    session-index: int,
+    status-index: int,
+    kind-index: int,
+    reason-index: int,
+    from: string,
+    until: string,
+    date-error: Note,
+}
+
+export struct BoSessionRow {
+    number: string,
+    opened: string,
+    closed: string,
+    place: string,
+    cashier: string,
+    opening: string,
+    expected: string,
+    status: string,
+}
+
+export struct BoMovementRow {
+    number: string,
+    time: string,
+    place: string,
+    kind: string,
+    reason: string,
+    amount: string,
+    // "", "reversal", "reversed" or "missing_nota".
+    flag: string,
+}
+
+export struct BoSessionView {
+    title: string,
+    open: bool,
+    loading: bool,
+    notice: Note,
+    cursor: int,
+    can-reprint: bool,
+}
+
+export struct BoTextPane {
+    loading: bool,
+    notice: Note,
+    copy: bool,
+    empty: bool,
+}
+
+export struct BoPendingRow {
+    day: string,
+    open: int,
+    closed: int,
+}
+
+export struct BoZRow {
+    number: string,
+    day: string,
+    sessions: string,
+    net: string,
+    over-short: string,
+    deposit: string,
+    supplementary: bool,
+}
+
+export struct BoDayClose {
+    branch: string,
+    cursor: int,
+    pending-count: int,
+    loading: bool,
+    more: bool,
+    notice: Note,
+    list-notice: Note,
+    running: bool,
+    can-run: bool,
+    empty: bool,
+}
+
+export struct BoReasonRow {
+    name: string,
+    direction: string,
+    note-required: bool,
+    active: bool,
+    archived: bool,
+}
+
+export struct BoReasonEditor {
+    cursor: int,
+    is-new: bool,
+    name: string,
+    direction-index: int,
+    note-required: bool,
+    active: bool,
+    sort: string,
+    archived: bool,
+    can-edit: bool,
+    notice: Note,
+}
+
+// The section's tabs (Ctrl+1 … Ctrl+4).
+component CashTabs inherits HorizontalLayout {
+    in property <string> screen;
+    callback action(string);
+    spacing: 6px;
+    alignment: start;
+    for tab in [
+        { id: "tab-cash-sessions", keys: "Ctrl+1", label: @tr("Sessions"), on: root.screen == "cash-sessions" || root.screen == "cash-session-detail" },
+        { id: "tab-cash-movements", keys: "Ctrl+2", label: @tr("Cash movements"), on: root.screen == "cash-movements" },
+        { id: "tab-day-close", keys: "Ctrl+3", label: @tr("Day close"), on: root.screen == "day-close" },
+        { id: "tab-cash-reasons", keys: "Ctrl+4", label: @tr("Cash reasons"), on: root.screen == "cash-reasons" },
+    ]: TabButton {
+        text: tab.label;
+        keys: tab.keys;
+        selected: tab.on;
+        clicked => {
+            root.action(tab.id);
+        }
+    }
+}
+
+component Head inherits Text {
+    color: Theme.muted;
+    font-size: 12px;
+    vertical-alignment: center;
+    overflow: elide;
+}
+
+component Cell inherits Text {
+    color: Theme.text;
+    font-size: 13px;
+    vertical-alignment: center;
+    overflow: elide;
+}
+
+component Hint inherits Text {
+    color: Theme.muted;
+    font-size: 12px;
+    wrap: word-wrap;
+}
+
+// A label above a picker.
+component Picker inherits VerticalLayout {
+    in property <string> label;
+    in property <[string]> model;
+    in property <int> index;
+    in property <bool> enabled: true;
+    callback selected(int);
+    spacing: 3px;
+    Text {
+        text: root.label;
+        color: Theme.muted;
+        font-size: 12px;
+    }
+    ComboBox {
+        model: root.model;
+        current-index: root.index;
+        enabled: root.enabled;
+        accessible-label: root.label;
+        selected(v) => {
+            root.selected(self.current-index);
+        }
+    }
+}
+
+// A printable text (slip, X, close report, Z) in a monospace pane, with why it is missing.
+component TextPaneCard inherits Card {
+    in property <string> title;
+    in property <BoTextPane> pane;
+    in property <[string]> lines;
+    in property <string> empty-hint;
+    VerticalLayout {
+        padding: 16px;
+        spacing: 8px;
+        HorizontalLayout {
+            spacing: 8px;
+            SectionTitle {
+                text: root.title;
+                vertical-alignment: center;
+            }
+            if root.pane.copy: Text {
+                text: @tr("COPY");
+                color: Theme.warn;
+                font-weight: 700;
+                vertical-alignment: center;
+            }
+        }
+        if root.pane.loading: Hint {
+            text: @tr("Loading…");
+        }
+        Banner {
+            note: root.pane.notice;
+        }
+        if root.pane.empty: Hint {
+            text: root.empty-hint;
+        }
+        ScrollView {
+            vertical-stretch: 1;
+            VerticalLayout {
+                alignment: start;
+                for line in root.lines: Text {
+                    text: line;
+                    font-family: Theme.mono;
+                    font-size: 12px;
+                    color: Theme.text;
+                }
+            }
+        }
+    }
+}
+
+// A cash movement's kind, the reason and the flag in one cell.
+component MovementCells inherits HorizontalLayout {
+    in property <BoMovementRow> item;
+    in property <bool> show-time: true;
+    spacing: 10px;
+    Cell { width: 170px; text: root.item.number; font-weight: 600; }
+    if root.show-time: Cell { width: 110px; text: root.item.time; color: Theme.muted; }
+    Cell { width: 112px; text: BoStrings.label("cash_kind_" + root.item.kind); color: Theme.muted; }
+    Cell {
+        horizontal-stretch: 1;
+        preferred-width: 0px;
+        text: root.item.reason + (root.item.flag == "" ? "" : " · " + BoStrings.label("cash_flag_" + root.item.flag));
+        color: root.item.flag == "missing_nota" ? Theme.warn : Theme.text;
+    }
+    Cell { width: 100px; text: root.item.amount; horizontal-alignment: right; color: root.item.flag == "reversed" ? Theme.muted : Theme.text; }
+}
+
+// The filters of the sessions (`sessions`) and of the movements (two rows, so they fit 1024 px).
+component CashFiltersBar inherits VerticalLayout {
+    in property <BoCashFilters> filters;
+    in property <bool> sessions;
+    in property <[string]> branch-choices;
+    in property <[string]> register-choices;
+    in property <[string]> cashier-choices;
+    in property <[string]> session-choices;
+    in property <[string]> reason-choices;
+    callback edit(string, int, int, string, string);
+    callback choose(string, int, string, int);
+    callback action(string);
+    spacing: 8px;
+    HorizontalLayout {
+        spacing: 10px;
+        alignment: start;
+        Picker {
+            width: 160px;
+            label: @tr("Branch");
+            model: root.branch-choices;
+            index: root.filters.branch-index;
+            selected(i) => {
+                root.choose("cash-filter", 0, "branch", i);
+            }
+        }
+        Picker {
+            width: 160px;
+            label: @tr("Register code");
+            model: root.register-choices;
+            index: root.filters.register-index;
+            selected(i) => {
+                root.choose("cash-filter", 0, "register", i);
+            }
+        }
+        if root.sessions: Picker {
+            width: 180px;
+            label: @tr("Cashier");
+            model: root.cashier-choices;
+            index: root.filters.cashier-index;
+            selected(i) => {
+                root.choose("cash-filter", 0, "cashier", i);
+            }
+        }
+        if root.sessions: Picker {
+            width: 160px;
+            label: @tr("Status");
+            model: [@tr("All"), @tr("Open"), @tr("Closed")];
+            index: root.filters.status-index;
+            selected(i) => {
+                root.choose("cash-filter", 0, "status", i);
+            }
+        }
+        if !root.sessions: Picker {
+            width: 230px;
+            label: @tr("Session");
+            model: root.session-choices;
+            index: root.filters.session-index;
+            selected(i) => {
+                root.choose("cash-filter", 0, "session", i);
+            }
+        }
+        if !root.sessions: Picker {
+            width: 160px;
+            label: @tr("Kind");
+            model: [@tr("All"), BoStrings.label("cash_kind_in"), BoStrings.label("cash_kind_out"), BoStrings.label("cash_kind_drop")];
+            index: root.filters.kind-index;
+            selected(i) => {
+                root.choose("cash-filter", 0, "kind", i);
+            }
+        }
+    }
+    HorizontalLayout {
+        spacing: 10px;
+        alignment: start;
+        if !root.sessions: Picker {
+            width: 230px;
+            label: @tr("Reason");
+            model: root.reason-choices;
+            index: root.filters.reason-index;
+            selected(i) => {
+                root.choose("cash-filter", 0, "reason", i);
+            }
+        }
+        Field {
+            width: 140px;
+            label: @tr("From");
+            placeholder: "YYYY-MM-DD";
+            text: root.filters.from;
+            error: root.filters.date-error.arg == "from" ? root.filters.date-error : { };
+            edited(t) => {
+                root.edit("cash-filter", 0, 0, "from", t);
+            }
+            accepted => {
+                root.action("cash-search");
+            }
+        }
+        Field {
+            width: 140px;
+            label: @tr("Until");
+            placeholder: "YYYY-MM-DD";
+            text: root.filters.until;
+            error: root.filters.date-error.arg == "until" ? root.filters.date-error : { };
+            edited(t) => {
+                root.edit("cash-filter", 0, 0, "until", t);
+            }
+            accepted => {
+                root.action("cash-search");
+            }
+        }
+        VerticalLayout {
+            alignment: end;
+            HorizontalLayout {
+                spacing: 6px;
+                SmallButton {
+                    text: @tr("Search");
+                    primary: true;
+                    clicked => {
+                        root.action("cash-search");
+                    }
+                }
+                SmallButton {
+                    text: @tr("Clear");
+                    clicked => {
+                        root.action("cash-clear");
+                    }
+                }
+            }
+        }
+    }
+}
+
+// The keys under a list.
+component ListKeys inherits HorizontalLayout {
+    in property <BoDocList> list;
+    in property <bool> has-rows;
+    in property <string> open-text: @tr("Open");
+    in property <bool> copy;
+    callback action(string);
+    padding: 10px;
+    spacing: 8px;
+    alignment: start;
+    KeyButton {
+        keys: "Enter";
+        text: root.open-text;
+        enabled: root.has-rows;
+        clicked => {
+            root.action("cash-open");
+        }
+    }
+    if root.copy: KeyButton {
+        keys: "Ctrl+P";
+        text: @tr("Copy");
+        enabled: root.has-rows;
+        clicked => {
+            root.action("cash-reprint");
+        }
+    }
+    if root.list.more: KeyButton {
+        keys: "Ctrl+L";
+        text: root.list.loading ? @tr("Loading…") : @tr("Load more");
+        clicked => {
+            root.action("cash-more");
+        }
+    }
+    KeyButton {
+        keys: "F5";
+        text: @tr("Refresh");
+        clicked => {
+            root.action("cash-refresh");
+        }
+    }
+}
+
+// Sessions (Ctrl+1).
+export component CashSessionsScreen inherits VerticalLayout {
+    in property <string> screen;
+    in property <BoCashFilters> filters;
+    in property <[string]> branch-choices;
+    in property <[string]> register-choices;
+    in property <[string]> cashier-choices;
+    in property <[BoSessionRow]> rows;
+    in property <BoDocList> list;
+    in property <int> serial;
+    callback action(string);
+    callback edit(string, int, int, string, string);
+    callback choose(string, int, string, int);
+    callback pick(string, int, int);
+    padding: 16px;
+    spacing: 12px;
+
+    CashTabs {
+        screen: root.screen;
+        action(id) => {
+            root.action(id);
+        }
+    }
+    for s in [root.serial]: CashFiltersBar {
+        filters: root.filters;
+        sessions: true;
+        branch-choices: root.branch-choices;
+        register-choices: root.register-choices;
+        cashier-choices: root.cashier-choices;
+        edit(k, r, x, f, v) => {
+            root.edit(k, r, x, f, v);
+        }
+        choose(k, r, f, i) => {
+            root.choose(k, r, f, i);
+        }
+        action(id) => {
+            root.action(id);
+        }
+    }
+    Banner {
+        note: root.list.notice;
+    }
+    Card {
+        vertical-stretch: 1;
+        VerticalLayout {
+            padding: 1px;
+            HorizontalLayout {
+                height: 34px;
+                padding-left: 14px;
+                padding-right: 14px;
+                spacing: 10px;
+                Head { width: 190px; text: @tr("Number"); }
+                Head { width: 112px; text: @tr("Opened"); }
+                Head { width: 112px; text: @tr("Closed"); }
+                Head { width: 84px; text: @tr("Branch / register"); }
+                Head { horizontal-stretch: 1; preferred-width: 0px; text: @tr("Cashier"); }
+                Head { width: 96px; text: @tr("Opening cash"); horizontal-alignment: right; }
+                Head { width: 96px; text: @tr("Expected"); horizontal-alignment: right; }
+                Head { width: 64px; text: @tr("Status"); horizontal-alignment: right; }
+            }
+            Rectangle {
+                height: 1px;
+                background: Theme.border;
+            }
+            ListView {
+                vertical-stretch: 1;
+                for row[i] in root.rows: Rectangle {
+                    height: 36px;
+                    background: i == root.list.cursor ? Theme.accent-soft : touch.has-hover ? Theme.raised : transparent;
+                    accessible-role: list-item;
+                    accessible-label: row.number;
+                    accessible-action-default => {
+                        root.pick("cash-session-row", i, 0);
+                    }
+                    touch := TouchArea {
+                        clicked => {
+                            root.pick("cash-session-row", i, 0);
+                        }
+                        double-clicked => {
+                            root.pick("cash-session-row", i, 0);
+                            root.action("cash-open");
+                        }
+                    }
+                    HorizontalLayout {
+                        padding-left: 14px;
+                        padding-right: 14px;
+                        spacing: 10px;
+                        Cell { width: 190px; text: row.number; font-weight: 600; }
+                        Cell { width: 112px; text: row.opened; color: Theme.muted; }
+                        Cell { width: 112px; text: row.closed; color: Theme.muted; }
+                        Cell { width: 84px; text: row.place; color: Theme.muted; }
+                        Cell { horizontal-stretch: 1; preferred-width: 0px; text: row.cashier; }
+                        Cell { width: 96px; text: row.opening; horizontal-alignment: right; }
+                        Cell { width: 96px; text: row.expected; horizontal-alignment: right; }
+                        Cell {
+                            width: 64px;
+                            text: row.status == "open" ? @tr("Open") : @tr("Closed");
+                            color: row.status == "open" ? Theme.success : Theme.muted;
+                            font-size: 12px;
+                            horizontal-alignment: right;
+                        }
+                    }
+                }
+            }
+            if root.list.empty: Hint {
+                x: 14px;
+                text: @tr("Nothing found.");
+            }
+            ListKeys {
+                list: root.list;
+                has-rows: root.rows.length > 0;
+                action(id) => {
+                    root.action(id);
+                }
+            }
+        }
+    }
+}
+
+// One session: its facts and movements, and its live X or close report.
+export component CashSessionDetailScreen inherits VerticalLayout {
+    in property <string> screen;
+    in property <BoSessionView> view;
+    in property <[BoFact]> facts;
+    in property <[BoMovementRow]> movements;
+    in property <BoTextPane> pane;
+    in property <[string]> text;
+    callback action(string);
+    callback pick(string, int, int);
+    padding: 16px;
+    spacing: 12px;
+
+    CashTabs {
+        screen: root.screen;
+        action(id) => {
+            root.action(id);
+        }
+    }
+    Banner {
+        note: root.view.notice;
+    }
+    HorizontalLayout {
+        spacing: 16px;
+        vertical-stretch: 1;
+        Card {
+            horizontal-stretch: 1;
+            VerticalLayout {
+                padding: 18px;
+                spacing: 8px;
+                HorizontalLayout {
+                    spacing: 10px;
+                    SectionTitle {
+                        text: @tr("Session") + " " + root.view.title;
+                        vertical-alignment: center;
+                    }
+                    if root.view.title != "": Text {
+                        text: root.view.open ? @tr("Open") : @tr("Closed");
+                        color: root.view.open ? Theme.success : Theme.muted;
+                        font-weight: 700;
+                        vertical-alignment: center;
+                    }
+                    Rectangle {
+                        horizontal-stretch: 1;
+                    }
+                }
+                if root.view.loading: Hint {
+                    text: @tr("Loading…");
+                }
+                ListView {
+                    vertical-stretch: 1;
+                    for f in root.facts: HorizontalLayout {
+                        height: 22px;
+                        spacing: 10px;
+                        Text {
+                            width: 190px;
+                            text: BoStrings.label(f.label);
+                            color: Theme.muted;
+                            font-size: 13px;
+                            vertical-alignment: center;
+                            overflow: elide;
+                        }
+                        Text {
+                            horizontal-stretch: 1;
+                            text: f.value;
+                            color: f.tone < 0 ? Theme.danger : Theme.text;
+                            font-size: 13px;
+                            vertical-alignment: center;
+                            overflow: elide;
+                        }
+                    }
+                }
+                SectionTitle {
+                    text: @tr("Cash movements ({})", root.movements.length);
+                }
+                ListView {
+                    // Four rows; more scroll.
+                    height: 124px;
+                    for m[i] in root.movements: Rectangle {
+                        height: 30px;
+                        border-radius: 6px;
+                        background: i == root.view.cursor ? Theme.accent-soft : touch.has-hover ? Theme.raised : transparent;
+                        accessible-role: list-item;
+                        accessible-label: m.number;
+                        accessible-action-default => {
+                            root.pick("cash-session-movement", i, 0);
+                        }
+                        touch := TouchArea {
+                            clicked => {
+                                root.pick("cash-session-movement", i, 0);
+                            }
+                        }
+                        MovementCells {
+                            x: 8px;
+                            width: parent.width - 16px;
+                            height: parent.height;
+                            item: m;
+                            show-time: false;
+                        }
+                    }
+                }
+                HorizontalLayout {
+                    spacing: 8px;
+                    alignment: start;
+                    KeyButton {
+                        keys: "Esc";
+                        text: @tr("Back");
+                        clicked => {
+                            root.action("cash-session-back");
+                        }
+                    }
+                    if root.view.can-reprint: KeyButton {
+                        keys: "Ctrl+P";
+                        text: @tr("Reprint (copy)");
+                        clicked => {
+                            root.action("cash-reprint");
+                        }
+                    }
+                    KeyButton {
+                        keys: "F5";
+                        text: root.view.open ? @tr("Read the X again") : @tr("Refresh");
+                        clicked => {
+                            root.action("cash-refresh");
+                        }
+                    }
+                }
+            }
+        }
+        TextPaneCard {
+            width: 380px;
+            title: root.view.open ? @tr("X report (live)") : @tr("Close report");
+            pane: root.pane;
+            lines: root.text;
+            empty-hint: "";
+        }
+    }
+}
+
+// Cash movements (Ctrl+2) with the slip of the opened one.
+export component CashMovementsScreen inherits VerticalLayout {
+    in property <string> screen;
+    in property <BoCashFilters> filters;
+    in property <[string]> branch-choices;
+    in property <[string]> register-choices;
+    in property <[string]> session-choices;
+    in property <[string]> reason-choices;
+    in property <[BoMovementRow]> rows;
+    in property <BoDocList> list;
+    in property <BoTextPane> pane;
+    in property <[string]> slip;
+    in property <int> serial;
+    callback action(string);
+    callback edit(string, int, int, string, string);
+    callback choose(string, int, string, int);
+    callback pick(string, int, int);
+    padding: 16px;
+    spacing: 12px;
+
+    CashTabs {
+        screen: root.screen;
+        action(id) => {
+            root.action(id);
+        }
+    }
+    for s in [root.serial]: CashFiltersBar {
+        filters: root.filters;
+        sessions: false;
+        branch-choices: root.branch-choices;
+        register-choices: root.register-choices;
+        session-choices: root.session-choices;
+        reason-choices: root.reason-choices;
+        edit(k, r, x, f, v) => {
+            root.edit(k, r, x, f, v);
+        }
+        choose(k, r, f, i) => {
+            root.choose(k, r, f, i);
+        }
+        action(id) => {
+            root.action(id);
+        }
+    }
+    Banner {
+        note: root.list.notice;
+    }
+    HorizontalLayout {
+        spacing: 16px;
+        vertical-stretch: 1;
+        Card {
+            horizontal-stretch: 1;
+            VerticalLayout {
+                padding: 1px;
+                HorizontalLayout {
+                    height: 34px;
+                    padding-left: 14px;
+                    padding-right: 14px;
+                    spacing: 10px;
+                    Head { width: 170px; text: @tr("Number"); }
+                    Head { width: 110px; text: @tr("Date and time"); }
+                    Head { width: 112px; text: @tr("Kind"); }
+                    Head { horizontal-stretch: 1; preferred-width: 0px; text: @tr("Reason"); }
+                    Head { width: 100px; text: @tr("Amount"); horizontal-alignment: right; }
+                }
+                Rectangle {
+                    height: 1px;
+                    background: Theme.border;
+                }
+                ListView {
+                    vertical-stretch: 1;
+                    for row[i] in root.rows: Rectangle {
+                        height: 36px;
+                        background: i == root.list.cursor ? Theme.accent-soft : touch.has-hover ? Theme.raised : transparent;
+                        accessible-role: list-item;
+                        accessible-label: row.number;
+                        accessible-action-default => {
+                            root.pick("cash-movement-row", i, 0);
+                        }
+                        touch := TouchArea {
+                            clicked => {
+                                root.pick("cash-movement-row", i, 0);
+                            }
+                            double-clicked => {
+                                root.pick("cash-movement-row", i, 0);
+                                root.action("cash-open");
+                            }
+                        }
+                        MovementCells {
+                            x: 14px;
+                            width: parent.width - 28px;
+                            height: parent.height;
+                            item: row;
+                        }
+                    }
+                }
+                if root.list.empty: Hint {
+                    x: 14px;
+                    text: @tr("Nothing found.");
+                }
+                ListKeys {
+                    list: root.list;
+                    has-rows: root.rows.length > 0;
+                    open-text: @tr("Slip");
+                    copy: true;
+                    action(id) => {
+                        root.action(id);
+                    }
+                }
+            }
+        }
+        // The slip; the nota photos of phase K6 go under it.
+        TextPaneCard {
+            width: 300px;
+            title: @tr("Slip");
+            pane: root.pane;
+            lines: root.slip;
+            empty-hint: @tr("Enter shows the slip of the highlighted movement.");
+        }
+    }
+}
+
+// Day close (Ctrl+3): the days still to close, then the Z reports, and the Z shown.
+export component DayCloseScreen inherits VerticalLayout {
+    in property <string> screen;
+    in property <BoDayClose> day;
+    in property <BoCashFilters> filters;
+    in property <[string]> branch-choices;
+    in property <[BoPendingRow]> pending;
+    in property <[BoZRow]> zs;
+    in property <BoTextPane> pane;
+    in property <[string]> text;
+    callback action(string);
+    callback choose(string, int, string, int);
+    callback pick(string, int, int);
+    padding: 16px;
+    spacing: 12px;
+
+    CashTabs {
+        screen: root.screen;
+        action(id) => {
+            root.action(id);
+        }
+    }
+    HorizontalLayout {
+        spacing: 12px;
+        alignment: start;
+        Picker {
+            width: 160px;
+            label: @tr("Branch");
+            model: root.branch-choices;
+            index: root.filters.branch-index;
+            selected(i) => {
+                root.choose("cash-filter", 0, "branch", i);
+            }
+        }
+        VerticalLayout {
+            alignment: end;
+            padding-left: 4px;
+            Text {
+                height: 32px;
+                text: root.day.branch;
+                color: Theme.text;
+                font-weight: 600;
+                vertical-alignment: center;
+            }
+        }
+    }
+    Banner {
+        note: root.day.notice;
+    }
+    Banner {
+        note: root.day.list-notice;
+    }
+    HorizontalLayout {
+        spacing: 16px;
+        vertical-stretch: 1;
+        Card {
+            horizontal-stretch: 1;
+            VerticalLayout {
+                padding: 1px;
+                ScrollView {
+                    vertical-stretch: 1;
+                    VerticalLayout {
+                        alignment: start;
+                        padding-top: 10px;
+                        HorizontalLayout {
+                            padding-left: 14px;
+                            height: 30px;
+                            SectionTitle {
+                                text: @tr("Days still to close");
+                                vertical-alignment: center;
+                            }
+                        }
+                        if root.pending.length == 0 && !root.day.loading: Hint {
+                            x: 14px;
+                            height: 28px;
+                            text: @tr("Every day with sessions has its Z.");
+                        }
+                        for p[i] in root.pending: Rectangle {
+                            height: 36px;
+                            background: i == root.day.cursor ? Theme.accent-soft : touch.has-hover ? Theme.raised : transparent;
+                            accessible-role: list-item;
+                            accessible-label: p.day;
+                            accessible-action-default => {
+                                root.pick("cash-day-row", i, 0);
+                            }
+                            touch := TouchArea {
+                                clicked => {
+                                    root.pick("cash-day-row", i, 0);
+                                }
+                            }
+                            HorizontalLayout {
+                                padding-left: 14px;
+                                padding-right: 14px;
+                                spacing: 10px;
+                                Cell { width: 110px; text: p.day; font-weight: 600; }
+                                Cell {
+                                    horizontal-stretch: 1;
+                                    preferred-width: 0px;
+                                    text: @tr("{} closed · {} open", p.closed, p.open);
+                                    color: p.open > 0 ? Theme.warn : Theme.text;
+                                }
+                            }
+                        }
+                        Rectangle {
+                            height: 10px;
+                        }
+                        HorizontalLayout {
+                            padding-left: 14px;
+                            height: 30px;
+                            SectionTitle {
+                                text: @tr("Z reports");
+                                vertical-alignment: center;
+                            }
+                        }
+                        HorizontalLayout {
+                            height: 28px;
+                            padding-left: 14px;
+                            padding-right: 14px;
+                            spacing: 10px;
+                            Head { width: 170px; text: @tr("Number"); }
+                            Head { width: 56px; text: @tr("Sessions"); horizontal-alignment: right; }
+                            Head { horizontal-stretch: 1; preferred-width: 0px; text: @tr("Net sales"); horizontal-alignment: right; }
+                            Head { width: 90px; text: @tr("Over/short"); horizontal-alignment: right; }
+                            Head { width: 100px; text: @tr("To deposit"); horizontal-alignment: right; }
+                        }
+                        for z[i] in root.zs: Rectangle {
+                            height: 36px;
+                            background: i + root.day.pending-count == root.day.cursor ? Theme.accent-soft : ztouch.has-hover ? Theme.raised : transparent;
+                            accessible-role: list-item;
+                            accessible-label: z.number;
+                            accessible-action-default => {
+                                root.pick("cash-day-row", i + root.day.pending-count, 0);
+                            }
+                            ztouch := TouchArea {
+                                clicked => {
+                                    root.pick("cash-day-row", i + root.day.pending-count, 0);
+                                }
+                                double-clicked => {
+                                    root.pick("cash-day-row", i + root.day.pending-count, 0);
+                                    root.action("cash-open");
+                                }
+                            }
+                            HorizontalLayout {
+                                padding-left: 14px;
+                                padding-right: 14px;
+                                spacing: 10px;
+                                Cell { width: 170px; text: z.number + (z.supplementary ? " +" : ""); font-weight: 600; }
+                                Cell { width: 56px; text: z.sessions; horizontal-alignment: right; }
+                                Cell { horizontal-stretch: 1; preferred-width: 0px; text: z.net; horizontal-alignment: right; }
+                                Cell { width: 90px; text: z.over-short; horizontal-alignment: right; }
+                                Cell { width: 100px; text: z.deposit; horizontal-alignment: right; }
+                            }
+                        }
+                        if root.zs.length == 0 && !root.day.loading: Hint {
+                            x: 14px;
+                            text: @tr("No Z report yet.");
+                        }
+                    }
+                }
+                HorizontalLayout {
+                    padding: 10px;
+                    spacing: 8px;
+                    alignment: start;
+                    KeyButton {
+                        keys: "Enter";
+                        text: root.day.cursor < root.day.pending-count ? (root.day.running ? @tr("Running…") : @tr("Close the day")) : @tr("Show");
+                        enabled: (root.pending.length > 0 || root.zs.length > 0) && !root.day.running && (root.day.cursor >= root.day.pending-count || root.day.can-run);
+                        clicked => {
+                            root.action("cash-open");
+                        }
+                    }
+                    KeyButton {
+                        keys: "Ctrl+P";
+                        text: @tr("Copy");
+                        enabled: root.day.cursor >= root.day.pending-count && root.zs.length > 0;
+                        clicked => {
+                            root.action("cash-reprint");
+                        }
+                    }
+                    if root.day.more: KeyButton {
+                        keys: "Ctrl+L";
+                        text: root.day.loading ? @tr("Loading…") : @tr("Load more");
+                        clicked => {
+                            root.action("cash-more");
+                        }
+                    }
+                    KeyButton {
+                        keys: "F5";
+                        text: @tr("Refresh");
+                        clicked => {
+                            root.action("cash-refresh");
+                        }
+                    }
+                }
+            }
+        }
+        TextPaneCard {
+            width: 360px;
+            title: @tr("Z report");
+            pane: root.pane;
+            lines: root.text;
+            empty-hint: @tr("Enter on a Z shows it.");
+        }
+    }
+}
+
+// Cash reasons (Ctrl+4, HQ).
+export component CashReasonsScreen inherits VerticalLayout {
+    in property <string> screen;
+    in property <[BoReasonRow]> rows;
+    in property <BoReasonEditor> editor;
+    in property <Note> read-only;
+    in property <int> serial;
+    callback action(string);
+    callback edit(string, int, int, string, string);
+    callback toggle(string, int, string, bool);
+    callback choose(string, int, string, int);
+    callback pick(string, int, int);
+    padding: 16px;
+    spacing: 12px;
+
+    CashTabs {
+        screen: root.screen;
+        action(id) => {
+            root.action(id);
+        }
+    }
+    Banner {
+        note: root.read-only;
+    }
+    HorizontalLayout {
+        spacing: 16px;
+        vertical-stretch: 1;
+        Card {
+            horizontal-stretch: 1;
+            VerticalLayout {
+                padding: 1px;
+                HorizontalLayout {
+                    height: 34px;
+                    padding-left: 14px;
+                    padding-right: 14px;
+                    spacing: 10px;
+                    Head { horizontal-stretch: 1; preferred-width: 0px; text: @tr("Name"); }
+                    Head { width: 90px; text: @tr("Direction"); }
+                    Head { width: 150px; text: ""; }
+                }
+                Rectangle {
+                    height: 1px;
+                    background: Theme.border;
+                }
+                ListView {
+                    vertical-stretch: 1;
+                    for row[i] in root.rows: Rectangle {
+                        height: 38px;
+                        background: i == root.editor.cursor && !root.editor.is-new ? Theme.accent-soft : touch.has-hover ? Theme.raised : transparent;
+                        accessible-role: list-item;
+                        accessible-label: row.name;
+                        accessible-action-default => {
+                            root.pick("cash-reason-row", i, 0);
+                        }
+                        touch := TouchArea {
+                            clicked => {
+                                root.pick("cash-reason-row", i, 0);
+                            }
+                        }
+                        HorizontalLayout {
+                            padding-left: 14px;
+                            padding-right: 14px;
+                            spacing: 10px;
+                            Cell { horizontal-stretch: 1; preferred-width: 0px; text: row.name; font-weight: 600; color: row.active && !row.archived ? Theme.text : Theme.muted; }
+                            Cell { width: 90px; text: BoStrings.label("cash_kind_" + row.direction); color: Theme.muted; }
+                            Cell {
+                                width: 150px;
+                                text: row.archived ? @tr("archived") : (!row.active ? @tr("off") : "") + (!row.active && row.note-required ? " · " : "") + (row.note-required ? @tr("note required") : "");
+                                color: row.archived || !row.active ? Theme.warn : Theme.muted;
+                                font-size: 12px;
+                                horizontal-alignment: right;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        Card {
+            width: 460px;
+            VerticalLayout {
+                padding: 18px;
+                spacing: 12px;
+                alignment: start;
+                SectionTitle {
+                    text: root.editor.is-new ? @tr("New cash reason") : @tr("Edit cash reason");
+                }
+                for s in [root.serial]: VerticalLayout {
+                    spacing: 10px;
+                    Field {
+                        label: @tr("Name (printed on slips)");
+                        text: root.editor.name;
+                        enabled: root.editor.can-edit;
+                        edited(t) => {
+                            root.edit("cash-reason", 0, 0, "name", t);
+                        }
+                    }
+                    Picker {
+                        label: root.editor.is-new ? @tr("Direction") : @tr("Direction (fixed once saved)");
+                        model: [BoStrings.label("cash_kind_in"), BoStrings.label("cash_kind_out")];
+                        index: root.editor.direction-index;
+                        enabled: root.editor.can-edit && root.editor.is-new;
+                        selected(i) => {
+                            root.choose("cash-reason", 0, "direction", i);
+                        }
+                    }
+                    CheckBox {
+                        text: @tr("A note is required");
+                        checked: root.editor.note-required;
+                        enabled: root.editor.can-edit;
+                        toggled => {
+                            root.toggle("cash-reason", 0, "note_required", self.checked);
+                        }
+                    }
+                    CheckBox {
+                        text: @tr("Active (offered at the register)");
+                        checked: root.editor.active;
+                        enabled: root.editor.can-edit;
+                        toggled => {
+                            root.toggle("cash-reason", 0, "active", self.checked);
+                        }
+                    }
+                    Field {
+                        label: @tr("Position");
+                        text: root.editor.sort;
+                        enabled: root.editor.can-edit;
+                        edited(t) => {
+                            root.edit("cash-reason", 0, 0, "sort", t);
+                        }
+                    }
+                }
+                if root.editor.archived: Hint {
+                    text: @tr("Archived: it can no longer be edited or used.");
+                }
+                Banner {
+                    note: root.editor.notice;
+                }
+                HorizontalLayout {
+                    spacing: 8px;
+                    alignment: start;
+                    KeyButton {
+                        keys: "Ctrl+S";
+                        text: @tr("Save");
+                        primary: true;
+                        enabled: root.editor.can-edit;
+                        clicked => {
+                            root.action("cash-reason-save");
+                        }
+                    }
+                    KeyButton {
+                        keys: "Ctrl+N";
+                        text: @tr("New");
+                        enabled: root.read-only.code == "";
+                        clicked => {
+                            root.action("cash-reason-new");
+                        }
+                    }
+                    KeyButton {
+                        keys: "Ctrl+Shift+A";
+                        text: @tr("Archive");
+                        enabled: root.editor.can-edit && !root.editor.is-new;
+                        clicked => {
+                            root.action("cash-reason-archive");
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

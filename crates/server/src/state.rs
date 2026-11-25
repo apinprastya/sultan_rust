@@ -5,6 +5,7 @@
 //! the pattern of `core`, where time is passed in (`sultan_core::time`).
 
 use std::fmt;
+use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -12,6 +13,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use sultan_core::time::Timestamp;
 use sultan_db::Db;
 
+use crate::attachments::Attachments;
 use crate::events::EventHub;
 use crate::movements::{SalesMovements, SessionMovements};
 
@@ -104,6 +106,9 @@ pub struct AppState {
     /// Sales/refunds/cash movements of a cashier session for the close report;
     /// [`SalesMovements`] by default (see [`crate::movements`]).
     pub movements: Arc<dyn SessionMovements>,
+    /// The node's file store (nota photos, spec 2.7 §2a), under its data directory. `None` (the
+    /// default) has none: photo uploads and reads answer `500 internal`.
+    pub attachments: Option<Attachments>,
 }
 
 impl AppState {
@@ -117,7 +122,15 @@ impl AppState {
             session_idle_ms: DEFAULT_SESSION_IDLE_MS,
             events: EventHub::default(),
             movements: Arc::new(SalesMovements),
+            attachments: None,
         }
+    }
+
+    /// Stores attachments under `data_dir` (`<data_dir>/attachments`, [`Attachments`]).
+    #[must_use]
+    pub fn with_data_dir(mut self, data_dir: &Path) -> Self {
+        self.attachments = Some(Attachments::new(data_dir));
+        self
     }
 
     /// Uses `events` as the hub, so several states (e.g. one per test request) share sockets.
@@ -187,6 +200,12 @@ mod tests {
         let clock = ManualClock::new(Timestamp::from_unix_millis(42));
         let state = AppState::new(db, NodeRole::Hq, Arc::new(clock.clone()));
         assert_eq!(state.session_idle_ms, DEFAULT_SESSION_IDLE_MS);
+        assert!(state.attachments.is_none());
+        let state = state.with_data_dir(Path::new("/data"));
+        assert_eq!(
+            state.attachments.as_ref().map(Attachments::root),
+            Some(Path::new("/data/attachments"))
+        );
         assert_eq!(state.now(), Timestamp::from_unix_millis(42));
         let hub = EventHub::default();
         let mut rx = hub.subscribe();

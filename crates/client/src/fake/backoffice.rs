@@ -1201,6 +1201,9 @@ impl BackOffice for FakeService {
             }
             if u.manage || u.manage_here {
                 here.push("report.sales".to_owned());
+                // Cash (spec 2.7 §7): the X report and the Z, like the seeded Manager.
+                here.push(crate::cash::SESSION_VIEW_EXPECTED.to_owned());
+                here.push(crate::cash::DAY_CLOSE.to_owned());
             }
             let anywhere = here.clone();
             Me {

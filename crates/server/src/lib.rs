@@ -41,11 +41,16 @@
 //! (end of day per branch, days still to close), with `cash.moved` and `day.closed` events
 //! ([`routes::cash`]).
 //!
+//! Phase K6 (spec 2.7 §2a) adds the nota photos of a cash movement
+//! (`/cash-movements/{id}/photos/{photo_id}`, [`routes::cash_photos`]), stored as files in the
+//! node's data directory ([`attachments`]), and `nota_flag_above` in `/settings/sales`.
+//!
 //! Phase 7 adds request logging to [`router`]: one `tracing` span per request with the method and
 //! the path only, and the status and latency when it finishes. Header values (`Authorization`,
 //! `X-Register-Token`, `X-Override`), query strings and bodies are never logged.
 
 pub mod access;
+pub mod attachments;
 pub mod credentials;
 pub mod error;
 pub mod events;
@@ -68,10 +73,11 @@ use tower_http::trace::{DefaultOnRequest, DefaultOnResponse, TraceLayer};
 use tracing::Level;
 
 use routes::{
-    audit, auth, branches, cash_movements, cash_reasons, cash_reports, cashier_sessions, catalog,
-    customer_balance, customer_groups, customers, drawer, held_carts, locations,
-    overrides as override_routes, permissions, pricing, pricing_quote, product_images, products,
-    registers, returns, roles, sales, sales_settings, taxonomy, tender_types, users, z_reports,
+    audit, auth, branches, cash_movements, cash_photos, cash_reasons, cash_reports,
+    cashier_sessions, catalog, customer_balance, customer_groups, customers, drawer, held_carts,
+    locations, overrides as override_routes, permissions, pricing, pricing_quote, product_images,
+    products, registers, returns, roles, sales, sales_settings, taxonomy, tender_types, users,
+    z_reports,
 };
 
 pub use error::ApiError;
@@ -353,6 +359,10 @@ fn cash_routes() -> Router<AppState> {
             get(cash_movements::get).put(cash_movements::put),
         )
         .route("/cash-movements/{id}/slip", get(cash_movements::slip))
+        .route(
+            "/cash-movements/{id}/photos/{photo_id}",
+            get(cash_photos::get).put(cash_photos::put),
+        )
         .route(
             "/customers/{id}/balance/payouts/{entry_id}/slip",
             get(cash_movements::payout_slip),

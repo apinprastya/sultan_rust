@@ -699,6 +699,10 @@ pub struct SalesSettings {
     pub return_days: u32,
     /// The receipt width of each branch (a `PUT` changes only the listed ones).
     pub receipt_widths: Vec<BranchWidth>,
+    /// A cash out of at least this much without a nota photo is flagged "missing nota" (spec 2.7
+    /// §2a; default Rp 100 000, `0` = off). Left out of a `PUT` (`None`), the server keeps it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub nota_flag_above: Option<i64>,
 }
 
 /// Body of `POST /drawer/open` (`drawer.open`, spec 2.6 §13 F5).

@@ -17,6 +17,8 @@
 //! - K3 (spec 2.7): cash reasons ([`cash_reasons`]), cash in / out / drop and slips
 //!   ([`cash_movements`]), the X report, the close report text and the proposed float
 //!   ([`cash_reports`]), the Z report ([`z_reports`]), sharing the figures of [`cash`].
+//! - K6 (spec 2.7 §2a): nota photos of a cash movement ([`cash_photos`]) and `nota_flag_above`
+//!   in the sales settings ([`sales_settings`]).
 //!
 //! Master-data writes follow one pattern (`docs/plan.md` §1, spec 2.1 §1, §7):
 //! - `PUT /{resource}/{uuid}` creates (`201`) or overwrites (`200`) the record with a
@@ -31,6 +33,7 @@ pub mod auth;
 pub mod branches;
 pub mod cash;
 pub mod cash_movements;
+pub mod cash_photos;
 pub mod cash_reasons;
 pub mod cash_reports;
 pub mod cashier_sessions;

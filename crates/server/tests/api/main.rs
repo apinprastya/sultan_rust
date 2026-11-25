@@ -8,6 +8,7 @@ mod common;
 mod audit;
 mod auth;
 mod cash;
+mod cash_photos;
 mod cash_z;
 mod cashier_sessions;
 mod catalog;

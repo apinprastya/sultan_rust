@@ -299,6 +299,18 @@ export global Strings {
         if (code == "photo_limit") {
             return @tr("A cash movement has at most 3 nota photos.");
         }
+        if (code == "photo_added") {
+            return @tr("Nota photo added to {}.", arg);
+        }
+        if (code == "photo_failed") {
+            return @tr("No photo was added: {}. The movement stays posted; try again.", arg);
+        }
+        if (code == "invalid_image") {
+            return @tr("This is not a PNG, JPEG or WebP picture.");
+        }
+        if (code == "payload_too_large") {
+            return @tr("The picture is larger than 10 MB.");
+        }
         if (code == "pick_reason") {
             return @tr("Pick a reason (↑ ↓).");
         }
@@ -628,6 +640,12 @@ export global Strings {
         }
         if (code == "run_z") {
             return @tr("Run the Z");
+        }
+        if (code == "photo_file") {
+            return @tr("Photo from file");
+        }
+        if (code == "photo_camera") {
+            return @tr("Photo from webcam");
         }
         return code;
     }
