@@ -25,6 +25,8 @@ tokio-tungstenite.workspace = true
 sultan-db = { path = "../db" }
 sultan-server = { path = "../server" }
 axum.workspace = true
+# Nota photo tests (spec 2.7 §2a) upload small PNGs; already in the tree via the server.
+image.workspace = true
 tokio = { workspace = true, features = ["net", "time"] }
 
 [lints]

@@ -3,7 +3,8 @@
 //! phase C5 and its prices of spec 2.3 R5, files `5a`–`5d`, and the sell screen of spec 2.6 S4,
 //! files `5e`–`5h` and `6`) and every back-office screen (phase C4,
 //! files `bo-*`; the customer screens of spec 2.5 M4 are `bo-10`–`bo-19`, the pricing screens of
-//! spec 2.3 R4 `bo-20`–`bo-24`, the sales screens of spec 2.6 S6 `bo-25`–`bo-31`) to PNG
+//! spec 2.3 R4 `bo-20`–`bo-24`, the sales screens of spec 2.6 S6 `bo-25`–`bo-31`, the cash
+//! screens of spec 2.7 K5 `bo-32`–`bo-39`) to PNG
 //! with Slint's software renderer (no display needed), driven by keys against the fake service,
 //! like the headless tests. The register shots use a fixed time (`NOW`, 2027-01-15 15:00 WIB);
 //! the header clock shows it in the local time zone, so run it with `TZ=Asia/Jakarta`.
@@ -23,14 +24,16 @@ use slint::platform::software_renderer::{
 use slint::platform::{Key, Platform, WindowAdapter, WindowEvent};
 use slint::{ComponentHandle, Model, PhysicalSize, PlatformError, SharedString};
 use sultan_client::fake::{
-    BRANCH_ID, FakeService, PriceCustomer, SEED_BUDI, SEED_GOLD, SEED_SILVER, STANDARD_TAX_CLASS,
+    BRANCH_ID, FakeService, PriceCustomer, SEED_BUDI, SEED_GOLD, SEED_REASONS, SEED_SILVER,
+    STANDARD_TAX_CLASS,
 };
 use sultan_client::pricing::DEFAULT_PRICE_LIST;
 use sultan_client::{
-    BackOffice, CategoryBody, Customer, PriceEntryBody, PriceListBody, PriceRule, PriceTier,
-    Product, Service,
+    BackOffice, CashMovementRequest, CategoryBody, CloseRequest, Customer, PriceEntryBody,
+    PriceListBody, PriceRule, PriceTier, Product, Service,
 };
 use sultan_core::catalog::gtin_check_digit;
+use sultan_ui::photo::FixedPhotos;
 use sultan_ui::start::{
     AppKind, Lan, LanChanged, LanFuture, StartError, StartFuture, StartInfo, StartService,
 };
@@ -164,6 +167,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     options.language = Some(language.clone());
     options.start = true;
     options.clock = Arc::new(|| NOW);
+    // Nota photos (spec 2.7 §2a): a picked file and a webcam that answer at once, so F and W
+    // both show and no dialog or camera opens.
+    let nota = b"\x89PNG\r\n\x1a\nnota".to_vec();
+    options.photos = Arc::new(FixedPhotos {
+        file: Ok(Some(nota.clone())),
+        camera: Some(Ok(Some(nota))),
+    });
     let app = build_app(
         fake.clone(),
         Runner::Block(runtime.handle().clone()),
@@ -365,7 +375,7 @@ fn after(app: &App, shot: &dyn Fn(&str) -> Shot) -> Shot {
 }
 
 /// Cash management (spec 2.7, phase K4): a cash out above the cashier's limit (Budi approves)
-/// with its slip, and the X report.
+/// with its slip, a nota photo added with F (K6) and the list with its count, and the X report.
 fn cash(app: &App, shot: &dyn Fn(&str) -> Shot) -> Shot {
     shift(app, Key::F5);
     press(app, "o");
@@ -379,7 +389,13 @@ fn cash(app: &App, shot: &dyn Fn(&str) -> Shot) -> Shot {
     digits(app, "9999");
     press(app, Key::Return);
     shot("12b-cash-slip")?;
+    // K6: F adds the (faked) picked nota photo; the list shows the count.
+    press(app, "f");
+    shot("12d-cash-photo")?;
     press(app, Key::Escape);
+    press(app, Key::Tab);
+    press(app, Key::Tab);
+    shot("12e-cash-photo-list")?;
     press(app, Key::Escape);
     shift(app, Key::F12);
     digits(app, "9999");
@@ -886,6 +902,99 @@ fn backoffice(
     ui.invoke_pick("customer-open".into(), i32::try_from(row)?, 0);
     ctrl("h");
     shot("bo-31-customer-history")?;
+
+    // Cash (spec 2.7, K5): Ani's movements and close, Budi's session the next day.
+    runtime.block_on(demo_cash(&fake, &token))?;
+    key(w, &[Key::F9.into()]);
+    shot("bo-32-cash-sessions")?;
+    key(w, &[Key::DownArrow.into()]);
+    key(w, &[Key::Return.into()]);
+    shot("bo-33-cash-session-closed")?;
+    key(w, &[Key::Escape.into()]);
+    key(w, &[Key::UpArrow.into()]);
+    key(w, &[Key::Return.into()]);
+    shot("bo-34-cash-session-x")?;
+    ctrl("2");
+    key(w, &[Key::DownArrow.into()]);
+    key(w, &[Key::Return.into()]);
+    shot("bo-35-cash-movements")?;
+    ctrl("3");
+    shot("bo-36-day-close")?;
+    key(w, &[Key::Return.into()]);
+    shot("bo-37-z-confirm")?;
+    key(w, &[Key::Return.into()]);
+    shot("bo-38-z-report")?;
+    ctrl("4");
+    key(w, &[Key::DownArrow.into()]);
+    key(w, &[Key::DownArrow.into()]);
+    shot("bo-39-cash-reasons")?;
+    Ok(())
+}
+
+/// Cash for the cash screens: Ani (with the sales demo's open session) takes a float top-up in,
+/// pays shop supplies and parking out and closes Rp 500 short; the next day Budi opens a session
+/// with Rp 200 000, pays out Rp 35 000 and drops Rp 150 000 to the safe. `owner` reads the
+/// expected cash (an X read, as a manager would at the till).
+async fn demo_cash(fake: &FakeService, owner: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let movement =
+        |kind: &str, amount: i64, reason: Option<&str>, note: Option<&str>| CashMovementRequest {
+            kind: Some(kind.into()),
+            amount: Some(amount),
+            reason_id: reason.map(Into::into),
+            note: note.map(Into::into),
+            ..CashMovementRequest::default()
+        };
+    let ani = fake.pin_login("u-ani", "1234").await?.token;
+    let session = fake
+        .current_session(&ani)
+        .await?
+        .ok_or("the sales demo left a session open")?;
+    for (id, body) in [
+        (
+            "0190a000-0000-7000-8000-00000000c001",
+            movement("in", 300_000, Some(SEED_REASONS[0]), None),
+        ),
+        (
+            "0190a000-0000-7000-8000-00000000c002",
+            movement(
+                "out",
+                42_500,
+                Some(SEED_REASONS[2]),
+                Some("Kantong plastik"),
+            ),
+        ),
+        (
+            "0190a000-0000-7000-8000-00000000c003",
+            movement("out", 5_000, Some(SEED_REASONS[3]), None),
+        ),
+    ] {
+        fake.post_cash_movement(&ani, id, &body, None).await?;
+    }
+    let x = fake.x_report(owner, &session.id, None).await?;
+    let close = CloseRequest {
+        counted_cash: x.expected_cash - 500,
+        counts: None,
+        float_kept: Some(200_000),
+    };
+    fake.close_session(&ani, &session.id, &close, "demo-close")
+        .await?;
+    // The fake's cash sales are one figure: Budi's session starts without Ani's.
+    fake.set_cash_sales(0);
+    fake.set_now(1_800_000_000_000 + 86_400_000);
+    let budi = fake.pin_login("u-budi", "9999").await?.token;
+    fake.open_session(&budi, 200_000, "demo-budi-open").await?;
+    for (id, body) in [
+        (
+            "0190a000-0000-7000-8000-00000000c004",
+            movement("out", 35_000, Some(SEED_REASONS[4]), None),
+        ),
+        (
+            "0190a000-0000-7000-8000-00000000c005",
+            movement("drop", 150_000, None, Some("Siang")),
+        ),
+    ] {
+        fake.post_cash_movement(&budi, id, &body, None).await?;
+    }
     Ok(())
 }
 

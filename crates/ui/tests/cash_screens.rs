@@ -14,6 +14,7 @@ use slint::{ComponentHandle, LogicalSize, Model, SharedString};
 use sultan_client::fake::FakeService;
 use sultan_client::{ClientError, Problem};
 use sultan_core::catalog::gtin_check_digit;
+use sultan_ui::photo::{FixedPhotos, PhotoError};
 use sultan_ui::{App, CashView, Options, Runner, build_app};
 
 const T0: i64 = 1_800_000_000_000;
@@ -29,8 +30,13 @@ struct Till {
     _runtime: tokio::runtime::Runtime,
 }
 
-/// A register in English with nobody logged in.
+/// A register with nobody logged in; no photo is picked and there is no camera.
 fn register(language: &str) -> Till {
+    register_with(language, FixedPhotos::none())
+}
+
+/// A register whose file picker and camera answer `photos`.
+fn register_with(language: &str, photos: FixedPhotos) -> Till {
     thread_local!(static READY: std::cell::Cell<bool> = const { std::cell::Cell::new(false) });
     if !READY.get() {
         i_slint_backend_testing::init_no_event_loop();
@@ -51,6 +57,7 @@ fn register(language: &str) -> Till {
         clock: Arc::new(|| T0),
         start: false,
         cart_file: None,
+        photos: Arc::new(photos),
     };
     let app = build_app(
         fake.clone(),
@@ -387,14 +394,20 @@ fn reversal_and_slip_reprint() {
     t.keys(&["Enter", "Enter"]);
     assert_eq!(t.cash().step, "slip", "within Ani's limit: {}", t.note());
     let original = t.cash().subject.to_string();
-    assert_eq!(t.chips(), ["Enter / Esc done", "P reprint"]);
+    assert_eq!(t.chips(), ["Enter / Esc done", "P reprint", "F photo_file"]);
     t.press(&["Esc"]);
     // Tab, Tab: the list; R asks for the note.
     t.keys(&["Tab", "Tab"]);
     assert_eq!(t.cash().focus, "list");
     assert_eq!(
         t.chips(),
-        ["R reverse", "P reprint", "Tab to_form", "Esc close"]
+        [
+            "R reverse",
+            "P reprint",
+            "F photo_file",
+            "Tab to_form",
+            "Esc close"
+        ]
     );
     t.typed("r");
     assert_eq!(t.cash().step, "reverse");
@@ -667,4 +680,171 @@ fn indonesian_cash_texts() {
     );
     t.press(&["Enter"]);
     assert_eq!(t.message(), "Jumlah tersebut tidak valid.");
+}
+
+const PNG: &[u8] = b"\x89PNG\r\n\x1a\nnota";
+
+impl Till {
+    /// The photo count and the missing-nota flag of each row of the list.
+    fn photo_rows(&self) -> Vec<(i32, bool)> {
+        self.app
+            .ui
+            .get_cash_rows()
+            .iter()
+            .map(|r| (r.photos, r.missing))
+            .collect()
+    }
+
+    /// A cash out of `amount` by the logged-in user, posted without an override: the slip.
+    fn cash_out(&self, amount: &str) {
+        self.press(&["Shift", "F5"]);
+        self.typed("o");
+        self.typed(amount);
+        self.keys(&["Enter", "Enter"]);
+        assert_eq!(self.cash().step, "slip", "{}", self.note());
+    }
+}
+
+/// Spec 2.7 §12 case 39: F on the slip adds a (faked) picked file, which the list then shows;
+/// W is hidden without a camera; a failed upload shows its message, the movement stays posted
+/// and F again adds the photo; the fourth photo is refused.
+#[test]
+fn nota_photo_from_a_file_on_the_slip_and_the_list() {
+    let t = register_with("en", FixedPhotos::file(PNG.to_vec()));
+    // Budi (a manager) takes Rp 150.000 out: above the Rp 100.000 nota threshold.
+    t.log_in(1, "9999", "500000");
+    t.cash_out("150000");
+    assert_eq!(t.cash().photos, 0);
+    assert_eq!(t.photo_rows(), [(0, true)]);
+    assert_eq!(
+        t.chips(),
+        ["Enter / Esc done", "P reprint", "F photo_file"],
+        "no W without a camera"
+    );
+    // The upload fails: the message, the slip stays, nothing is lost.
+    t.fake
+        .fail_on("add_cash_photo", ClientError::Network("down".into()));
+    t.typed("f");
+    assert_eq!(t.note(), "network");
+    assert_eq!(t.cash().step, "slip");
+    let posted = t.fake.cash_movements_posted();
+    assert_eq!(posted.len(), 1);
+    assert!(posted[0].photo_ids.is_empty());
+    assert!(!t.app.ui.get_busy());
+    // F again: added, the flag goes.
+    t.typed("F");
+    assert_eq!(t.note(), "photo_added");
+    assert_eq!(
+        t.message(),
+        format!("Nota photo added to {}.", posted[0].number)
+    );
+    assert_eq!(t.fake.cash_movements_posted()[0].photo_ids.len(), 1);
+    assert_eq!(t.cash().photos, 1);
+    assert_eq!(t.photo_rows(), [(1, false)]);
+    let calls = t.fake.calls_of("add_cash_photo");
+    assert!(
+        calls
+            .last()
+            .unwrap()
+            .contains(&format!("{} bytes", PNG.len())),
+        "{calls:?}"
+    );
+    // On the list, the highlighted movement: the on-screen button does the same as F.
+    t.press(&["Esc"]);
+    t.keys(&["Tab", "Tab"]);
+    assert_eq!(
+        t.chips(),
+        [
+            "R reverse",
+            "P reprint",
+            "F photo_file",
+            "Tab to_form",
+            "Esc close"
+        ]
+    );
+    t.click("Photo from file");
+    assert_eq!(t.photo_rows(), [(2, false)]);
+    t.typed("f");
+    assert_eq!(t.photo_rows(), [(3, false)]);
+    t.typed("f");
+    assert_eq!(t.note(), "photo_limit");
+    assert_eq!(t.fake.cash_movements_posted()[0].photo_ids.len(), 3);
+    // F is not offered while typing the amount or the note.
+    t.press(&["Tab"]);
+    assert_eq!(t.cash().focus, "amount");
+    assert!(!t.chips().iter().any(|c| c.contains("photo")));
+}
+
+/// W with a camera; a picker that fails, a file that is too large or not a picture, and a
+/// cancelled picker.
+#[test]
+fn nota_photo_from_the_webcam_and_the_refusals() {
+    let photos = FixedPhotos {
+        file: Err(PhotoError::Failed("no file dialog".into())),
+        camera: Some(Ok(Some(PNG.to_vec()))),
+    };
+    let t = register_with("en", photos);
+    t.log_in(0, "1234", "500000");
+    t.cash_out("20000");
+    assert_eq!(
+        t.chips(),
+        [
+            "Enter / Esc done",
+            "P reprint",
+            "F photo_file",
+            "W photo_camera"
+        ]
+    );
+    t.typed("f");
+    assert_eq!(t.note(), "photo_failed");
+    assert_eq!(
+        t.message(),
+        "No photo was added: no file dialog. The movement stays posted; try again."
+    );
+    t.typed("w");
+    assert_eq!(t.note(), "photo_added");
+    assert_eq!(t.cash().photos, 1);
+
+    for (file, code) in [
+        (Err(PhotoError::TooLarge), "payload_too_large"),
+        (Ok(Some(b"just text".to_vec())), "invalid_image"),
+    ] {
+        let t = register_with("en", FixedPhotos { file, camera: None });
+        t.log_in(0, "1234", "500000");
+        t.cash_out("20000");
+        t.typed("f");
+        assert_eq!(t.note(), code);
+        assert_eq!(t.cash().photos, 0);
+    }
+    // A cancelled picker: nothing happens.
+    let t = register("en");
+    t.log_in(0, "1234", "500000");
+    t.cash_out("20000");
+    t.typed("w");
+    t.typed("f");
+    assert_eq!(t.note(), "cash_posted");
+    assert!(t.fake.calls_of("add_cash_photo").is_empty());
+    assert!(!t.app.ui.get_busy());
+}
+
+/// The Indonesian photo texts.
+#[test]
+fn indonesian_photo_texts() {
+    let t = register_with("id", FixedPhotos::file(PNG.to_vec()));
+    assert_eq!(
+        t.app.ui.invoke_chip_label("photo_file".into()),
+        "Foto dari berkas"
+    );
+    assert_eq!(
+        t.app.ui.invoke_chip_label("photo_camera".into()),
+        "Foto dari webcam"
+    );
+    t.log_in(0, "1234", "500000");
+    t.cash_out("20000");
+    t.fake.fail_on(
+        "add_cash_photo",
+        Problem::new(422, "invalid_image", "x").into(),
+    );
+    t.typed("f");
+    assert_eq!(t.message(), "Ini bukan gambar PNG, JPEG atau WebP.");
 }

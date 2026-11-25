@@ -261,6 +261,9 @@ export struct CashRow {
     // in, out, drop.
     kind: string,
     detail: string,
+    // Nota photos (spec 2.7 §2a, K6), and a cash out still missing one.
+    photos: int,
+    missing: bool,
 }
 
 // The cash dialog (Shift+F5) and the X report (Shift+F12) (spec 2.7 K4; `crates/ui/src/cash.rs`).
@@ -281,6 +284,8 @@ export struct CashView {
     // What is confirmed, reversed or shown (a number, a reason).
     subject: string,
     reverse-note: string,
+    // The nota photos of the slip's movement (K6).
+    photos: int,
     note: Note,
 }
 
@@ -2641,6 +2646,9 @@ component CashDialog inherits Rectangle {
                     Subtitle {
                         text: @tr("Slip of {}. Have it signed; printing comes with the printer setup.", root.view.subject);
                     }
+                    Subtitle {
+                        text: root.view.photos == 0 ? @tr("No nota photo yet. Add a photo of the shop's receipt: F from a file, W from the webcam when one is connected.") : @tr("Nota photos: {} of 3.", root.view.photos);
+                    }
                     Rectangle {
                         vertical-stretch: 1;
                     }
@@ -2724,6 +2732,18 @@ component CashDialog inherits Rectangle {
                                     color: Theme.muted;
                                     font-size: 12px;
                                     overflow: elide;
+                                }
+                                if m.photos > 0: Text {
+                                    text: @tr("Photos: {}", m.photos);
+                                    color: Theme.muted;
+                                    font-size: 12px;
+                                    font-weight: 700;
+                                }
+                                if m.missing: Text {
+                                    text: @tr("No nota");
+                                    color: Theme.warn;
+                                    font-size: 12px;
+                                    font-weight: 700;
                                 }
                             }
                             Text {

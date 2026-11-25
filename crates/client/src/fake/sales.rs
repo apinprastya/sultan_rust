@@ -73,7 +73,7 @@ pub(super) struct Sales {
     /// A line void needs a manager too (as a cashier without `sale.void_line` would).
     pub(super) line_void_override: bool,
     /// The sales settings (phase S6).
-    settings: SalesSettings,
+    pub(super) settings: SalesSettings,
 }
 
 impl Default for Sales {
@@ -117,12 +117,124 @@ impl Default for Sales {
                         receipt_width: 32,
                     })
                     .collect(),
+                nota_flag_above: Some(sultan_core::cash::DEFAULT_NOTA_FLAG_ABOVE.minor()),
             },
         }
     }
 }
 
+/// Adds `base` and `tax` at `rate_bp` into `by_rate` (overflow is `amount_overflow`).
+fn add_tax(
+    by_rate: &mut std::collections::BTreeMap<u16, sultan_core::sale::TaxLine>,
+    rate_bp: u16,
+    base: Money,
+    tax: Money,
+) -> Result<(), sultan_core::cash::CashError> {
+    let line = by_rate
+        .entry(rate_bp)
+        .or_insert(sultan_core::sale::TaxLine {
+            rate_bp,
+            base: Money::ZERO,
+            tax: Money::ZERO,
+        });
+    line.base = line
+        .base
+        .checked_add(base)
+        .ok_or(sultan_core::cash::CashError::AmountOverflow)?;
+    line.tax = line
+        .tax
+        .checked_add(tax)
+        .ok_or(sultan_core::cash::CashError::AmountOverflow)?;
+    Ok(())
+}
+
 impl Sales {
+    /// The sales documents of `session` for its Z, as the server's `cash::session_sales` reads
+    /// them (spec 2.7 §18 reading 13): the sales posted in it (count, Σ line gross, first / last
+    /// by posting time, tax per rate as stored), and the tax of the post-voids and returns paid
+    /// in it (a return line at its sold line's rate, tax-inclusive; without a receipt 0%).
+    pub(super) fn session_sales(
+        &self,
+        session: &str,
+    ) -> Result<sultan_core::cash::SessionSales, sultan_core::cash::CashError> {
+        use sultan_core::cash::{SaleRef, SessionSales};
+        use sultan_core::time::Timestamp;
+        let mut posted: Vec<&Sale> = self
+            .sales
+            .iter()
+            .map(|(_, sale)| sale)
+            .filter(|sale| sale.summary.cashier_session_id.as_deref() == Some(session))
+            .collect();
+        posted.sort_by(|a, b| {
+            (a.summary.posted_at, &a.summary.number).cmp(&(b.summary.posted_at, &b.summary.number))
+        });
+        let sale_ref = |sale: &&Sale| SaleRef {
+            number: sale.summary.number.clone(),
+            posted_at: Timestamp::from_unix_millis(sale.summary.posted_at),
+        };
+        let mut gross = Money::ZERO;
+        let mut tax = std::collections::BTreeMap::new();
+        for line in posted.iter().flat_map(|sale| &sale.lines) {
+            gross = gross
+                .checked_add(Money::from_minor(line.gross))
+                .ok_or(sultan_core::cash::CashError::AmountOverflow)?;
+            let net = Money::from_minor(line.total - line.tax);
+            add_tax(&mut tax, line.tax_rate_bp, net, Money::from_minor(line.tax))?;
+        }
+        let mut returned = std::collections::BTreeMap::new();
+        let voided = self.sales.iter().map(|(_, sale)| sale).filter(|sale| {
+            sale.void
+                .as_ref()
+                .is_some_and(|v| v.cashier_session_id == session)
+        });
+        for line in voided.flat_map(|sale| &sale.lines) {
+            let net = Money::from_minor(line.total - line.tax);
+            add_tax(
+                &mut returned,
+                line.tax_rate_bp,
+                net,
+                Money::from_minor(line.tax),
+            )?;
+        }
+        let paid_back =
+            self.returns.iter().map(|(_, r)| r).filter(|r| {
+                r.summary.cashier_session_id == session && r.summary.status == "posted"
+            });
+        for ret in paid_back {
+            let sold = ret
+                .summary
+                .sale_id
+                .as_ref()
+                .and_then(|id| self.sales.iter().find(|(_, s)| s.summary.id == *id))
+                .map(|(_, s)| s);
+            for line in &ret.lines {
+                let sold_line = sold.and_then(|s| {
+                    line.sale_line_no
+                        .and_then(|no| s.lines.iter().find(|l| l.line_no == no))
+                });
+                let (rate_bp, taxed) =
+                    sold_line.map_or((0, false), |l| (l.tax_rate_bp, l.tax != 0));
+                let t = sultan_core::tax::line_tax(
+                    Money::from_minor(line.refund),
+                    rate_bp,
+                    TaxSettings {
+                        inclusive: true,
+                        registered: taxed,
+                    },
+                );
+                add_tax(&mut returned, rate_bp, t.net, t.tax)?;
+            }
+        }
+        Ok(SessionSales {
+            count: u32::try_from(posted.len()).unwrap_or(u32::MAX),
+            gross,
+            first: posted.first().map(sale_ref),
+            last: posted.last().map(sale_ref),
+            tax: tax.into_values().collect(),
+            returns_tax: returned.into_values().collect(),
+        })
+    }
+
     /// No-sale drawer opens of a cashier session (spec 2.7 K22).
     pub(super) fn drawer_opens(&self, session: &str) -> u32 {
         let n = self
@@ -1811,8 +1923,14 @@ impl FakeService {
                         return Err(invalid("receipt_width"));
                     }
                 }
+                if body.nota_flag_above.is_some_and(|v| v < 0) {
+                    return Err(invalid("nota_flag_above"));
+                }
                 let settings = &mut s.sales.settings;
                 settings.return_days = body.return_days;
+                if body.nota_flag_above.is_some() {
+                    settings.nota_flag_above = body.nota_flag_above;
+                }
                 for w in &body.receipt_widths {
                     match settings
                         .receipt_widths

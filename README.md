@@ -113,7 +113,7 @@ button on screen:
 | Last receipts (F6) / purchase history | type or scan a receipt number (receipts only) · ↑/↓ pick (or a click) · Enter shows the receipt · F8 the next history page · Esc closes. **Receipt:** R reprint (COPY; any but the session's last sale needs `sale.reprint`) · V post-void · T return this sale · Esc back. **Post-void:** ↑/↓ pick a reason (type it for "other") · ← / → cash or the customer's balance (a sale with a customer) · Enter voids (`sale.post_void`) · Esc cancels |
 | Return / exchange (F10) | **Which sale:** type or scan the receipt number, or ↑/↓ pick one of the attached customer's recent receipts · Enter · F2 without a receipt · Esc closes. **Lines:** ↑/↓ pick · Q or a digit types the quantity (by receipt; a decimal comma for weighed items, Enter sets it) · `+` / `−` one more / less · `*` all or none · Del write the line off (type the reason, Enter) · Tab cash or the customer's balance · Enter refunds · F9 exchange (the refund becomes the credit of a new cart; pay the difference as usual, or the payment shows what is paid back before Enter) · Esc back. Without a receipt: scan or type the items, Enter adds each; with the code field empty Q types the quantity of the picked item (3 decimals for a weighed item). **Done:** the cash to pay back and the return receipt; Enter closes |
 | Customer (F3) | **Find:** type or scan a phone number or member code (`k7qh-29xm` works too; a scan here is always a member code, never a product) · Enter looks it up · Tab switches to a name search and back (only with `customer.search`) · ↑/↓ pick a result, Enter or a click opens it · F6 new customer (`customer.create`) · Esc closes. **Customer:** Enter attaches · F7 pay the balance out (`customer.balance_payout`, balance above 0) · F9 purchase history · Esc back. **New customer:** type the name, Tab (or ↑/↓, a click) to the phone (optional) · Enter signs up · F8 shows the customer who already has the phone · Esc back. **Payout:** digits / Backspace type the amount · Enter, then Enter again to pay out · the payout slip on screen: Enter or Esc back to the customer · Esc back |
-| Cash in / out (Shift+F5) | ←/→ or I / O / D cash in, cash out, safe drop (I / O / D in the amount; a click on the tab) · ↑/↓ the reason (none for a drop) · digits / Backspace the amount · Tab to the note (type it; required for "Lainnya") and on to this session's movements · Enter, then Enter again to post (a cash out above the cashier's limit or a drop by a cashier: a manager approves) · the slip on screen: P reprint (COPY), Enter or Esc a new movement · **Movements:** ↑/↓ pick (or a click) · R reverse (type why, Enter; Esc back) · P reprint its slip · Tab back to the amount · Esc closes |
+| Cash in / out (Shift+F5) | ←/→ or I / O / D cash in, cash out, safe drop (I / O / D in the amount; a click on the tab) · ↑/↓ the reason (none for a drop) · digits / Backspace the amount · Tab to the note (type it; required for "Lainnya") and on to this session's movements · Enter, then Enter again to post (a cash out above the cashier's limit or a drop by a cashier: a manager approves) · the slip on screen: P reprint (COPY), F add a nota photo from a file, W from the webcam (only when one is found and the register is built with the `webcam` feature), Enter or Esc a new movement · **Movements:** ↑/↓ pick (or a click) · R reverse (type why, Enter; Esc back) · P reprint its slip · F / W add a nota photo to it (at most 3; the row shows the count and "No nota" for a cash out still missing one) · Tab back to the amount · Esc closes |
 | X report (Shift+F12) | the session as of now with the expected cash (nothing is counted or closed) · Esc closes |
 | Blind close | ↑/↓ or Tab move between the total and the denominations · digits / Backspace · Enter: keep as float (default the opening cash, at most the counted cash; digits / Backspace change it) · Enter again closes · Esc back to the count |
 | Close report | the figures and the printable close report (float kept, to the safe) · Enter: done (logs out to the lock screen) · Z end of day (offered when no other session of the day is open, or to a cashier who may not check: then the run says which sessions are open) · Enter runs it (`day.close`, a manager approves for a cashier) and shows the Z · Esc back |
@@ -123,7 +123,7 @@ The back-office window is keyboard-first too; shortcuts work while a text field 
 
 | Screen | Keys |
 |---|---|
-| Everywhere (after login) | F2 products · F3 categories · F4 brands · F6 customers · F7 pricing · F8 sales · F12 log out |
+| Everywhere (after login) | F2 products · F3 categories · F4 brands · F6 customers · F7 pricing · F8 sales · F9 cash & Z · F12 log out |
 | Login | Enter in the username moves to the password · Enter logs in · F9 back to the Start screen |
 | Products | `/` or Ctrl+F search (typing filters after a short pause) · ↑/↓ move (past the last row loads more) · Enter open · Ctrl+N new product · Ctrl+Shift+D delete the highlighted product (never used only; asks first) · F5 refresh · Esc back from the search to the list |
 | Product form | Ctrl+S save · Ctrl+1 / Ctrl+2 / Ctrl+3 / Ctrl+4 tabs General / Variants / Units & barcodes / Prices · Esc back (asks first when there are unsaved changes) · Ctrl+Shift+A archive / unarchive (asks first) |
@@ -138,6 +138,12 @@ The back-office window is keyboard-first too; shortcuts work while a text field 
 | Sale / Return detail | ↑/↓ pick a linked document (the returns of a sale; a return's original and exchange sale) · Enter open it · Esc back (through the opened documents, then the list) |
 | Tender types | ↑/↓ pick · Ctrl+N new · Ctrl+S save (the kind is fixed once saved) · Ctrl+Shift+A archive (asks first) · needs `tender.manage` at HQ |
 | Sales settings | Ctrl+S save the return window (`return_days`, 0 = no limit) and the receipt width per branch (32 / 42 / 48) · needs `tender.manage` at HQ |
+| Cash screens (F9) | Ctrl+1 sessions · Ctrl+2 cash movements · Ctrl+3 day close · Ctrl+4 cash reasons · F5 refresh · reading needs `report.sales` |
+| Sessions | filters branch, register, cashier, from / until (`YYYY-MM-DD`, by open time), status; Search or Enter in a date runs them, Clear resets · ↑/↓ move (past the last row loads more) · Ctrl+L load more · Enter open |
+| Session detail | an open session shows its live X (`report.sales` + `session.view_expected`; F5 reads it again), a closed one its close report · ↑/↓ its cash movements · Ctrl+P reprint the close report (COPY) · Esc back |
+| Cash movements | filters branch, register, session, kind, reason, from / until · ↑/↓ move (past the last row loads more) · Ctrl+L load more · Enter shows the slip · Ctrl+P its copy (`sale.reprint`) |
+| Day close | the branch picker (default your branch) · ↑/↓ through the days still to close, then the Z reports · Enter on a day runs its Z (asks first; `day.close`) · Enter on a Z shows it · Ctrl+P its copy · Ctrl+L more Z reports |
+| Cash reasons | ↑/↓ pick · Ctrl+N new · Ctrl+S save (the direction is fixed once saved) · Ctrl+Shift+A archive (asks first) · needs `tender.manage` at HQ |
 | Groups / Tiers | ↑/↓ pick · Ctrl+S save · Ctrl+N add · Ctrl+Shift+A archive / unarchive · Esc back to the customer list |
 | Possible duplicates | ↑/↓ pick the customer to merge away (the one holding its phone is the one to keep; type another member code to change it) · Ctrl+M merge (asks first) · Enter open · Esc back |
 | Negative balances | ↑/↓ move · Enter open · Esc back |
@@ -207,8 +213,17 @@ Every setting is taken from, in order: **command-line flag > environment variabl
   slip, the X report (Shift+F12), the close report text with the float kept, the proposed float
   (`GET /registers/me/float`, the open screen starts there) and the Z report per branch and
   business day (`/z-reports`, run from the close report; days still to close from the day cash
-  management was installed); see `postman/README.md`. The back office (K5) and nota photos (K6)
-  come next; slips and reports are text on screen until 2.11 prints them. The register offers
+  management was installed); see `postman/README.md`. The back office has F9 Cash & Z (K5):
+  sessions with the live X or the close report, cash movements with their slips, the day close
+  (days still to close, run the Z, the Z reports) and the cash reasons. Nota photos (K6): F / W in
+  the cash dialog add up to three photos per movement (`/cash-movements/{id}/photos/{photo_id}`),
+  stored as JPEG files in the node's data directory under `attachments/` (next to `sultan.db`,
+  or next to `sultan.toml` with MySQL; back this directory up with the database), and a cash out
+  of at least `nota_flag_above` (`/settings/sales`, default Rp 100 000) without one is flagged
+  "missing nota". The file picker uses the XDG desktop portal on Linux (no portal: F shows the
+  error); the webcam needs `cargo build -p sultan-app --features webcam`. The photo bytes are
+  not pushed to HQ yet (no sync worker). The back office does not show or upload nota photos
+  yet; slips and reports are text on screen until 2.11 prints them. The register offers
   the Z to a cashier without checking for other open sessions (a cashier may not list the days
   still to close); the run then names them.
 - The register sells (spec 2.6 S4): scan, type or search (F2) items into the cart (a rescan adds

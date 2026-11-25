@@ -53,6 +53,7 @@ fn till_opened(fake: FakeService, language: Option<&str>, start: bool) -> Till {
         clock,
         start,
         cart_file: None,
+        photos: Arc::new(sultan_ui::photo::FixedPhotos::none()),
     };
     let app = build_app(
         fake.clone(),

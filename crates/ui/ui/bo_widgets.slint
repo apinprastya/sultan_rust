@@ -324,6 +324,52 @@ export global BoStrings {
         if (code == "customer_not_found") {
             return @tr("No customer has this member code or phone.");
         }
+        // Cash (spec 2.7, K5).
+        if (code == "cash_denied") {
+            return @tr("Reading cash sessions, movements and Z reports needs the permission {}. Ask the owner.", arg);
+        }
+        if (code == "cash_reasons_read_only") {
+            return @tr("Read-only: changing cash reasons needs the permission {} at HQ.", arg);
+        }
+        if (code == "x_denied") {
+            return @tr("The live X report needs the permissions report.sales and {}.", arg);
+        }
+        if (code == "cash_reprint_denied") {
+            return @tr("A copy needs the permission {}.", arg);
+        }
+        if (code == "pick_branch") {
+            return @tr("Pick a branch first.");
+        }
+        if (code == "z_done") {
+            return @tr("Z report {} posted.", arg);
+        }
+        if (code == "z_sessions_open") {
+            return @tr("Not run: sessions of this day are still open ({}). Close them at the register or force-close them first.", arg);
+        }
+        if (code == "z_nothing_to_close") {
+            return @tr("Nothing to close: every closed session of {} is already in a Z.", arg);
+        }
+        if (code == "z_future_day") {
+            return @tr("{} has not started yet.", arg);
+        }
+        if (code == "z_denied") {
+            return @tr("Running a Z needs the permission {}.", arg);
+        }
+        if (code == "z_replica") {
+            return @tr("This is the HQ server. Run the Z on the branch server.");
+        }
+        if (code == "invalid_reason_name") {
+            return @tr("Type a name (1 to 60 characters).");
+        }
+        if (code == "invalid_position") {
+            return @tr("Type the position as a whole number.");
+        }
+        if (code == "cash_reason_archived") {
+            return @tr("Cash reason archived.");
+        }
+        if (code == "direction_fixed") {
+            return @tr("The direction of a saved reason cannot change.");
+        }
         // Pricing (spec 2.3, R4).
         if (code == "price_read_only") {
             return @tr("Read-only: changing prices needs the permission price.manage. Ask the owner.");
@@ -543,6 +589,76 @@ export global BoStrings {
         }
         if (code == "merge_in") {
             return @tr("Received by a merge");
+        }
+        // Cash (spec 2.7, K5): session facts, movement kinds and flags.
+        if (code == "opened_at") {
+            return @tr("Opened");
+        }
+        if (code == "closed_at") {
+            return @tr("Closed");
+        }
+        if (code == "forced_by") {
+            return @tr("Force-closed by");
+        }
+        if (code == "opening_cash") {
+            return @tr("Opening cash");
+        }
+        if (code == "expected_cash") {
+            return @tr("Expected cash");
+        }
+        if (code == "counted_cash") {
+            return @tr("Counted cash");
+        }
+        if (code == "over_short") {
+            return @tr("Over / short");
+        }
+        if (code == "float_kept") {
+            return @tr("Kept as float");
+        }
+        if (code == "to_safe") {
+            return @tr("To the safe");
+        }
+        if (code == "cash_in") {
+            return @tr("Cash in");
+        }
+        if (code == "cash_out") {
+            return @tr("Cash out");
+        }
+        if (code == "drops") {
+            return @tr("Safe drops");
+        }
+        if (code == "reversals") {
+            return @tr("Reversals");
+        }
+        if (code == "drawer_opens") {
+            return @tr("Drawer opens (no sale)");
+        }
+        if (code == "x_reads") {
+            return @tr("X reports read");
+        }
+        if (code == "missing_nota") {
+            return @tr("Cash outs missing a nota");
+        }
+        if (code == "movements") {
+            return @tr("Cash movements");
+        }
+        if (code == "cash_kind_in") {
+            return @tr("Cash in");
+        }
+        if (code == "cash_kind_out") {
+            return @tr("Cash out");
+        }
+        if (code == "cash_kind_drop") {
+            return @tr("Safe drop");
+        }
+        if (code == "cash_flag_reversal") {
+            return @tr("reversal");
+        }
+        if (code == "cash_flag_reversed") {
+            return @tr("reversed");
+        }
+        if (code == "cash_flag_missing_nota") {
+            return @tr("missing nota");
         }
         // Pricing (spec 2.3, R4): list kinds, row states.
         if (code == "kind_default") {

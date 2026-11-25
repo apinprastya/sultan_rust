@@ -33,13 +33,17 @@
 //!    types and the sales settings, and the customer form's purchase history (Ctrl+H); see
 //!    [`sales`].
 //!
-//! F2 / F3 / F4 / F6 / F7 / F8 switch between products, categories, brands, customers, prices and
-//! sales; F12 logs out.
+//! 9. **Cash** (F9, spec 2.7 phase K5) — cashier sessions with the live X or the close report,
+//!    cash movements with their slips, the day close (Z) and the cash reasons; see [`cash`].
+//!
+//! F2 / F3 / F4 / F6 / F7 / F8 / F9 switch between products, categories, brands, customers,
+//! prices, sales and cash; F12 logs out.
 //!
 //! **Live refresh**: after login the glue watches `GET /events`; `catalog.changed` reloads the
 //! product list (or the taxonomy) and, for the product open in the form, fetches it: when it
 //! changed elsewhere the form shows a warning with "reload".
 
+pub mod cash;
 pub mod customers;
 pub mod form;
 pub mod pricing;
@@ -195,6 +199,16 @@ pub enum Screen {
     SalesSettings,
     /// The customer form's purchase history.
     CustomerHistory,
+    /// Cashier sessions (spec 2.7 K5).
+    CashSessions,
+    /// One cashier session.
+    CashSessionDetail,
+    /// Cash movements.
+    CashMovements,
+    /// Day close (Z).
+    DayClose,
+    /// Cash reasons.
+    CashReasons,
 }
 
 impl Screen {
@@ -224,6 +238,11 @@ impl Screen {
             Self::TenderTypes => "tender-types",
             Self::SalesSettings => "sales-settings",
             Self::CustomerHistory => "customer-history",
+            Self::CashSessions => "cash-sessions",
+            Self::CashSessionDetail => "cash-session-detail",
+            Self::CashMovements => "cash-movements",
+            Self::DayClose => "day-close",
+            Self::CashReasons => "cash-reasons",
         }
     }
 }
@@ -251,6 +270,10 @@ pub enum Confirm {
     TaxMode,
     /// Archive the tender type in the editor (spec 2.6 S6).
     TenderArchive,
+    /// Run the Z of the day highlighted on the day close (spec 2.7 K5).
+    RunZ,
+    /// Archive the cash reason in the editor.
+    CashReasonArchive,
 }
 
 /// What [`Confirm::Delete`] deletes.
@@ -704,6 +727,13 @@ pub enum Effect {
         /// The call.
         call: sales::Call,
     },
+    /// A cash call (spec 2.7 K5, [`cash`]).
+    Cash {
+        /// Token.
+        token: String,
+        /// The call.
+        call: cash::Call,
+    },
     /// `logout`.
     Logout(String),
     /// `watch_events`; events come back as [`Msg::Event`] with `generation`.
@@ -836,6 +866,8 @@ pub enum Msg {
     Pricing(Box<pricing::Reply>),
     /// Result of [`Effect::Sales`].
     Sales(Box<sales::Reply>),
+    /// Result of [`Effect::Cash`].
+    Cash(Box<cash::Reply>),
 }
 
 /// What [`Controller::update`] did.
@@ -968,6 +1000,8 @@ pub struct Controller {
     pub pricing: pricing::PricingState,
     /// The sales section and the customer history.
     pub sales: sales::SalesState,
+    /// The cash section.
+    pub cash: cash::CashState,
     /// A login is running.
     pub busy: bool,
     /// A field the view should focus (`search`, `name`, `category-name`, `brand-name`, or
@@ -1118,6 +1152,7 @@ impl Controller {
             (6, Screen::Customers),
             (7, Screen::PriceLists),
             (8, Screen::Sales),
+            (9, Screen::CashSessions),
         ] {
             if p.f(n) {
                 return Step::handled(self.go(target));
@@ -1133,6 +1168,7 @@ impl Controller {
             Screen::Login => Step::default(),
             s if pricing::in_section(s) => self.pricing_capture(p, s),
             s if sales::in_section(s) || s == Screen::CustomerHistory => self.sales_capture(p, s),
+            s if cash::in_section(s) => self.cash_capture(p, s),
             _ => self.customers_capture(p, screen),
         }
     }
@@ -1339,6 +1375,7 @@ impl Controller {
             }
             s if pricing::in_section(s) => self.enter_pricing(s),
             s if sales::in_section(s) => self.enter_sales(s, from),
+            s if cash::in_section(s) => self.enter_cash(s, from),
             _ => self.enter_customers(target, from),
         }
     }
@@ -1376,6 +1413,7 @@ impl Controller {
                 self.pricing_confirmed(confirm)
             }
             Confirm::TenderArchive => self.sales_confirmed(),
+            Confirm::RunZ | Confirm::CashReasonArchive => self.cash_confirmed(confirm),
         }
     }
 
@@ -1489,6 +1527,9 @@ impl Controller {
             return effects;
         }
         if let Some(effects) = self.sales_action(id) {
+            return effects;
+        }
+        if let Some(effects) = self.cash_action(id) {
             return effects;
         }
         if let Some(effects) = self.customer_action(id) {
@@ -1913,6 +1954,10 @@ impl Controller {
                 self.sales_edit(k, row, field, value);
                 return Vec::new();
             }
+            k if cash::EDIT_KINDS.contains(&k) => {
+                self.cash_edit(k, field, value);
+                return Vec::new();
+            }
             _ => {}
         }
         let can = self.can_manage();
@@ -2020,6 +2065,9 @@ impl Controller {
         if self.sales_toggle(kind, field, on).is_some() {
             return Vec::new();
         }
+        if self.cash_toggle(kind, field, on).is_some() {
+            return Vec::new();
+        }
         let can = self.can_manage();
         let branches: Vec<String> = self
             .reference
@@ -2070,6 +2118,9 @@ impl Controller {
             return effects;
         }
         if let Some(effects) = self.sales_choose(kind, row, field, index) {
+            return effects;
+        }
+        if let Some(effects) = self.cash_choose(kind, field, index) {
             return effects;
         }
         match (kind, field) {
@@ -2193,6 +2244,9 @@ impl Controller {
         if let Some(effects) = self.sales_pick(kind, row) {
             return effects;
         }
+        if let Some(effects) = self.cash_pick(kind, row) {
+            return effects;
+        }
         match kind {
             "products" => {
                 if row < self.list.rows.len() {
@@ -2266,6 +2320,9 @@ impl Controller {
         }
         if event.kind == "price.changed" {
             return self.pricing_event();
+        }
+        if matches!(event.kind.as_str(), "cash.moved" | "day.closed") {
+            return self.cash_event(event);
         }
         if event.kind != "catalog.changed" {
             return Vec::new();
@@ -2647,6 +2704,7 @@ impl Controller {
             Msg::Customers(reply) => self.customer_reply(*reply),
             Msg::Pricing(reply) => self.pricing_reply(*reply),
             Msg::Sales(reply) => self.sales_reply(*reply),
+            Msg::Cash(reply) => self.cash_reply(*reply),
             _ => Vec::new(),
         }
     }

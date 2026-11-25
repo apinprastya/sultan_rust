@@ -98,7 +98,27 @@ pub struct Harness {
     pub owner: User,
     /// Shared by every app this harness builds, so event sockets see events of other requests.
     pub events: EventHub,
+    /// The node's data directory (nota photos, spec 2.7 §2a); removed when the harness goes.
+    pub data_dir: DataDir,
     mysql: Option<(MySqlPool, String)>,
+}
+
+/// A temporary data directory, removed on drop.
+pub struct DataDir(pub std::path::PathBuf);
+
+impl DataDir {
+    fn new() -> Self {
+        let dir =
+            std::env::temp_dir().join(format!("sultan-api-{}", uuid::Uuid::now_v7().simple()));
+        std::fs::create_dir_all(&dir).unwrap();
+        Self(dir)
+    }
+}
+
+impl Drop for DataDir {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
 }
 
 pub struct Response {
@@ -292,6 +312,7 @@ impl Harness {
             cici,
             owner,
             events: EventHub::default(),
+            data_dir: DataDir::new(),
             mysql,
         }
     }
@@ -300,6 +321,7 @@ impl Harness {
         AppState::new(self.db.clone(), node_role, Arc::new(self.clock.clone()))
             .with_session_idle_ms(IDLE_MS)
             .with_events(self.events.clone())
+            .with_data_dir(&self.data_dir.0)
     }
 
     pub fn app(&self) -> Router {

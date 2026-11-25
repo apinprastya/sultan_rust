@@ -118,6 +118,26 @@ pub struct CashMovement {
     pub missing_nota: bool,
 }
 
+/// A nota photo of a cash movement (`PUT /cash-movements/{id}/photos/{photo_id}`, spec 2.7 §2a).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct NotaPhoto {
+    /// The photo ID.
+    pub id: String,
+    /// The cash movement.
+    pub cash_movement_id: String,
+    /// SHA-256 of the stored JPEG (hex).
+    pub sha256: String,
+    /// Size of the stored JPEG in bytes.
+    pub size: u64,
+    /// Who added it.
+    pub added_by: String,
+    /// When (unix ms).
+    pub added_at: i64,
+    /// The `ETag` of the stored JPEG.
+    pub etag: String,
+}
+
 /// One page of `GET /cash-movements`.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]

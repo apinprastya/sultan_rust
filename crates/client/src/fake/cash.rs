@@ -19,10 +19,22 @@
 //! `422 invalid_field`), numbered `JKT01-Z-<YYMMDD>-<NN>`, with an idempotency key. Texts come
 //! from `core::cash` (slip, X, close report, Z) with the fake's branch block.
 //!
+//! A Z takes each session's sales documents like the server (`cash::session_sales`, phase K5):
+//! the sales posted in it (count, Σ line gross, first / last, tax per rate as stored), minus the
+//! tax of the post-voids and returns paid in it (a return line at its sold line's rate,
+//! tax-inclusive), so the Z's sales count, net sales and tax summary are real figures.
+//!
+//! **Nota photos** (§2a, K6): up to three per movement (`409 photo_limit`), the bytes kept as
+//! sent (only sniffed: PNG / JPEG / WebP, else `422 invalid_image`; over 10 MB
+//! `413 payload_too_large`; no scaling, a stand-in hash), by the till's own cashier while the
+//! session is open or a back-office manager; a replay of the same ID and bytes answers the stored
+//! photo. `missing_nota` follows the photos, reversals and the sales settings'
+//! `nota_flag_above`, in lists and the close report.
+//!
 //! **Simplified:** one register (a session on another register, which only blocks the Z of its
-//! day, comes from [`FakeService::open_elsewhere`]), no photos (`missing_nota` at the default Rp 100 000), no
-//! events, a session's sales are the fake's `cash_sales`, and a Z has no sales documents (no
-//! sales count or tax lines).
+//! day, comes from [`FakeService::open_elsewhere`]), no events, and a session's cash sales in the
+//! close figures are the fake's `cash_sales`. `GET /cashier-sessions` names the cashier and the
+//! register (`R1`, `R2`).
 
 use std::collections::HashMap;
 
@@ -46,8 +58,8 @@ use sultan_core::time::Timestamp;
 use super::{BRANCH_ID, FakeService, FakeUser, REGISTER_ID, State, api, ready};
 use crate::cash::{
     CashMovement, CashMovementPage, CashMovementRequest, CashQuery, CashReason, CashReasonBody,
-    CashReport, CashText, CountAmount, FloatInfo, PendingDay, ProposedFloat, ReasonLine, SaleRef,
-    SalesReport, SalesTender, TaxLine, XReport, ZQuery, ZRegister, ZReport, ZReportPage,
+    CashReport, CashText, CountAmount, FloatInfo, NotaPhoto, PendingDay, ProposedFloat, ReasonLine,
+    SaleRef, SalesReport, SalesTender, TaxLine, XReport, ZQuery, ZRegister, ZReport, ZReportPage,
     ZRunRequest, ZSessionLine, ZSnapshot, ZSummary, ZTotals,
 };
 use crate::{CashierSession, ClientError, CloseReport, CloseRequest, Problem, TenderTotal};
@@ -84,6 +96,26 @@ pub(super) struct Cash {
     z: Vec<(ZReport, CoreZ)>,
     in_z: HashMap<String, String>,
     keyed_z: HashMap<String, ZReport>,
+    /// Nota photos by photo ID: the stored bytes and the record.
+    photos: HashMap<String, (Vec<u8>, NotaPhoto)>,
+}
+
+/// The largest photo upload (as the server: 10 MB).
+const MAX_PHOTO_UPLOAD: usize = 10 * 1024 * 1024;
+
+/// Whether `bytes` start like a PNG, JPEG or WebP image (the server sniffs the same).
+fn is_image(bytes: &[u8]) -> bool {
+    bytes.starts_with(b"\x89PNG\r\n\x1a\n")
+        || bytes.starts_with(&[0xff, 0xd8, 0xff])
+        || (bytes.len() >= 12 && &bytes[..4] == b"RIFF" && &bytes[8..12] == b"WEBP")
+}
+
+/// A stand-in for the stored file's SHA-256 (hex, 64 characters).
+fn fake_hash(bytes: &[u8]) -> String {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    bytes.hash(&mut h);
+    format!("{:064x}", h.finish())
 }
 
 impl Default for Cash {
@@ -111,6 +143,7 @@ impl Default for Cash {
             z: Vec::new(),
             in_z: HashMap::new(),
             keyed_z: HashMap::new(),
+            photos: HashMap::new(),
         }
     }
 }
@@ -143,6 +176,11 @@ fn rule(error: &CashError) -> ClientError {
         p = p.with("sessions", numbers.clone());
     }
     p.into()
+}
+
+/// The code of a fake register: `R1`, or `R2` for [`FakeService::open_elsewhere`]'s.
+fn register_code(register: &str) -> &'static str {
+    if register == REGISTER_ID { "R1" } else { "R2" }
 }
 
 fn tz() -> BranchTimeZone {
@@ -424,6 +462,22 @@ impl State {
         })
     }
 
+    /// The caller's ID and whether they hold `report.sales`: a register user or a back-office
+    /// user (the session reads, spec 2.7 K5).
+    pub(super) fn reader(&self, token: &str) -> Result<(String, bool), ClientError> {
+        let who = self.who(token)?;
+        Ok((who.id().to_owned(), who.reports()))
+    }
+
+    /// `session` with the cashier's name and the register's code, as `GET /cashier-sessions`
+    /// answers it.
+    pub(super) fn named(&self, session: &CashierSession) -> CashierSession {
+        let mut named = session.clone();
+        named.cashier_name = self.user(&session.user_id).map(|u| u.name.clone());
+        named.register_code = Some(register_code(&session.register_id).to_owned());
+        named
+    }
+
     /// `Ok(approver)` when `user` holds `permission` for `value`, or a token approves it on
     /// `context` (the server's `overrides::authorize`).
     fn cash_authorize(
@@ -613,7 +667,7 @@ impl State {
             reversed_by: None,
             posted_at: self.now,
             photo_ids: Vec::new(),
-            missing_nota: is_missing_nota(&core, 0, false, DEFAULT_NOTA_FLAG_ABOVE),
+            missing_nota: is_missing_nota(&core, 0, false, self.nota_flag()),
         };
         if let Some(target) = &movement.reverses
             && let Some(original) = self
@@ -631,6 +685,96 @@ impl State {
             core,
         });
         Ok(movement)
+    }
+
+    /// The company's `nota_flag_above` (the sales settings).
+    fn nota_flag(&self) -> Money {
+        rp(self
+            .sales
+            .settings
+            .nota_flag_above
+            .unwrap_or_else(|| DEFAULT_NOTA_FLAG_ABOVE.minor()))
+    }
+
+    /// A stored movement as the server answers it now (the missing-nota flag follows the
+    /// photos, a reversal and the setting).
+    fn cash_view(&self, stored: &Stored) -> CashMovement {
+        let mut m = stored.movement.clone();
+        m.missing_nota = is_missing_nota(
+            &stored.core,
+            m.photo_ids.len(),
+            m.reversed_by.is_some(),
+            self.nota_flag(),
+        );
+        m
+    }
+
+    /// `PUT /cash-movements/{id}/photos/{photo_id}` (spec 2.7 §2a): the till's own cashier while
+    /// the session is open, or a back-office manager; sniffed bytes, 10 MB, three photos.
+    fn add_photo(
+        &mut self,
+        token: &str,
+        movement_id: &str,
+        photo_id: &str,
+        bytes: &[u8],
+    ) -> Result<NotaPhoto, ClientError> {
+        let who = self.who(token)?;
+        let index = self
+            .cash
+            .movements
+            .iter()
+            .position(|m| m.movement.id == movement_id)
+            .ok_or_else(|| api(404, "not_found"))?;
+        let m = &self.cash.movements[index].movement;
+        let allowed = match &who {
+            Who::Till(user) => {
+                m.user_id == user.id
+                    && self
+                        .session
+                        .as_ref()
+                        .is_some_and(|s| s.id == m.cashier_session_id)
+            }
+            Who::Office { .. } => who.reports(),
+        };
+        if !allowed {
+            return Err(denied("cash.out"));
+        }
+        let hash = fake_hash(bytes);
+        if let Some((_, stored)) = self.cash.photos.get(photo_id) {
+            return if stored.cash_movement_id == movement_id && stored.sha256 == hash {
+                Ok(stored.clone())
+            } else {
+                Err(api(409, "conflict"))
+            };
+        }
+        if m.photo_ids.len() >= sultan_core::cash::MAX_PHOTOS {
+            return Err(problem(409, "photo_limit")
+                .with("max", sultan_core::cash::MAX_PHOTOS)
+                .into());
+        }
+        if bytes.len() > MAX_PHOTO_UPLOAD {
+            return Err(api(413, "payload_too_large"));
+        }
+        if !is_image(bytes) {
+            return Err(api(422, "invalid_image"));
+        }
+        let photo = NotaPhoto {
+            id: photo_id.to_owned(),
+            cash_movement_id: movement_id.to_owned(),
+            sha256: hash,
+            size: bytes.len() as u64,
+            added_by: who.id().to_owned(),
+            added_at: self.now,
+            etag: String::new(),
+        };
+        self.cash.movements[index]
+            .movement
+            .photo_ids
+            .push(photo_id.to_owned());
+        self.cash
+            .photos
+            .insert(photo_id.to_owned(), (bytes.to_vec(), photo.clone()));
+        Ok(photo)
     }
 
     fn movement_readable(who: &Who, m: &CashMovement) -> Result<(), ClientError> {
@@ -652,8 +796,8 @@ impl State {
             return Err(denied("report.sales"));
         }
         let limit = q.limit.unwrap_or(50) as usize;
-        let newest = self.cash.movements.iter().rev().map(|m| &m.movement);
-        let after: Vec<&CashMovement> = match &q.before_id {
+        let newest = self.cash.movements.iter().rev().map(|m| self.cash_view(m));
+        let after: Vec<CashMovement> = match &q.before_id {
             None => newest.collect(),
             Some(c) => newest.skip_while(|m| m.id != *c).skip(1).collect(),
         };
@@ -674,7 +818,6 @@ impl State {
                     && (q.missing_nota != Some(true) || m.missing_nota)
             })
             .take(limit)
-            .cloned()
             .collect();
         let next_before_id = items
             .last()
@@ -796,13 +939,20 @@ impl State {
             .filter(|s| s.movement.cashier_session_id == session.id)
             .map(|s| s.core.clone())
             .collect();
+        let photos: std::collections::BTreeMap<CashMovementId, usize> = self
+            .cash
+            .movements
+            .iter()
+            .filter(|s| !s.movement.photo_ids.is_empty())
+            .map(|s| (s.core.id, s.movement.photo_ids.len()))
+            .collect();
         session_figures(&SessionInput {
             opening_cash: rp(session.opening_cash),
             events: &events,
             movements: &movements,
             reasons: &self.core_reasons(),
-            photos: &std::collections::BTreeMap::new(),
-            nota_flag_above: DEFAULT_NOTA_FLAG_ABOVE,
+            photos: &photos,
+            nota_flag_above: self.nota_flag(),
             drawer_opens: self.sales.drawer_opens(&session.id),
             x_reports: self.cash.x_reads.get(&session.id).copied().unwrap_or(0),
         })
@@ -1038,27 +1188,30 @@ impl State {
             .count()
             + 1;
         let number = z_number("JKT01", day, u32::try_from(seq).unwrap_or(u32::MAX));
-        let sales = SessionSales::default();
+        let sales =
+            self.covered_sales(rows.iter().filter(|r| covered.contains(&r.0)).map(|r| r.1))?;
         let mut inputs = Vec::new();
         let mut ids = Vec::new();
         for (id, h, report, _) in &rows {
             if !covered.contains(id) {
                 continue;
             }
-            let (Some(report), Some(close)) = (report, self.cash.closes.get(&h.id)) else {
+            let (Some(report), Some(close), Some(sales)) =
+                (report, self.cash.closes.get(&h.id), sales.get(&h.id))
+            else {
                 continue;
             };
             ids.push(h.id.clone());
             inputs.push(ZSession {
                 number: &h.number,
-                register: "R1",
+                register: register_code(&h.register_id),
                 cashier: &report.cashier_name,
                 opened_at: Timestamp::from_unix_millis(h.opened_at),
                 closed_at: Timestamp::from_unix_millis(h.closed_at.unwrap_or(self.now)),
                 forced: report.forced,
                 close,
                 missing_nota: close.session.missing_nota,
-                sales: &sales,
+                sales,
             });
         }
         let core = build_z(
@@ -1088,6 +1241,17 @@ impl State {
         self.cash.z.push((z.clone(), core));
         self.cash.keyed_z.insert(key.to_owned(), z.clone());
         Ok(z)
+    }
+
+    /// The sales documents of each session a Z covers, by session ID.
+    fn covered_sales<'a>(
+        &self,
+        sessions: impl Iterator<Item = &'a CashierSession>,
+    ) -> Result<HashMap<String, SessionSales>, ClientError> {
+        sessions
+            .map(|h| Ok((h.id.clone(), self.sales.session_sales(&h.id)?)))
+            .collect::<Result<_, CashError>>()
+            .map_err(|e| rule(&e))
     }
 
     fn z_readable(&self, token: &str, id: &str) -> Result<(Who, ZReport, CoreZ), ClientError> {
@@ -1374,10 +1538,48 @@ impl FakeService {
                 .movements
                 .iter()
                 .find(|m| m.movement.id == id)
-                .map(|m| m.movement.clone())
+                .map(|m| s.cash_view(m))
                 .ok_or_else(|| api(404, "not_found"))?;
             State::movement_readable(&who, &m)?;
             Ok(m)
+        })
+    }
+
+    pub(super) fn add_cash_photo_call(
+        &self,
+        token: &str,
+        movement_id: &str,
+        photo_id: &str,
+        bytes: &[u8],
+    ) -> crate::BoxFuture<NotaPhoto> {
+        let detail = format!("{movement_id} {photo_id} {} bytes", bytes.len());
+        run(self, "add_cash_photo", detail, |s| {
+            s.add_photo(token, movement_id, photo_id, bytes)
+        })
+    }
+
+    pub(super) fn cash_photo_call(
+        &self,
+        token: &str,
+        movement_id: &str,
+        photo_id: &str,
+    ) -> crate::BoxFuture<Vec<u8>> {
+        run(self, "cash_photo", photo_id.to_owned(), |s| {
+            let who = s.who(token)?;
+            let m = s
+                .cash
+                .movements
+                .iter()
+                .find(|m| m.movement.id == movement_id)
+                .map(|m| m.movement.clone())
+                .ok_or_else(|| api(404, "not_found"))?;
+            State::movement_readable(&who, &m)?;
+            s.cash
+                .photos
+                .get(photo_id)
+                .filter(|(_, p)| p.cash_movement_id == movement_id)
+                .map(|(bytes, _)| bytes.clone())
+                .ok_or_else(|| api(404, "not_found"))
         })
     }
 

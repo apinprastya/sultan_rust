@@ -112,6 +112,7 @@ fn till_with(fake: FakeService, language: &str, cart_file: Option<CartFile>) -> 
         clock: Arc::new(|| T0),
         start: false,
         cart_file,
+        photos: Arc::new(sultan_ui::photo::FixedPhotos::none()),
     };
     let app = build_app(
         fake.clone(),

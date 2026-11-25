@@ -176,10 +176,12 @@ pub fn value_text(action: &str, value: Option<i64>) -> String {
 }
 
 /// API codes shown with a message of the same code (spec 2.6: the sale's rules; spec 2.7: cash).
-const PLAIN_CODES: [&str; 14] = [
+const PLAIN_CODES: [&str; 16] = [
     "nothing_to_close",
     "already_reversed",
     "photo_limit",
+    "invalid_image",
+    "payload_too_large",
     "tender_reference_required",
     "insufficient_balance",
     "balance_limit",
@@ -416,10 +418,14 @@ pub enum Action {
     Reverse,
     /// Z on the close report: End of day (Z).
     RunZ,
+    /// F on a cash movement: add a nota photo from a file (spec 2.7 §2a).
+    PhotoFile,
+    /// W on a cash movement: add a nota photo from the webcam.
+    PhotoCamera,
 }
 
 impl Action {
-    const ALL: [Self; 57] = [
+    const ALL: [Self; 59] = [
         Self::Confirm,
         Self::Back,
         Self::Retry,
@@ -477,6 +483,8 @@ impl Action {
         Self::CashTab,
         Self::Reverse,
         Self::RunZ,
+        Self::PhotoFile,
+        Self::PhotoCamera,
     ];
 
     /// The ID used by the UI.
@@ -540,6 +548,8 @@ impl Action {
             Self::CashTab => "cash-tab",
             Self::Reverse => "reverse",
             Self::RunZ => "run-z",
+            Self::PhotoFile => "photo-file",
+            Self::PhotoCamera => "photo-camera",
         }
     }
 
@@ -985,6 +995,9 @@ impl Step {
 }
 
 /// The register state; see the module docs.
+// The flags (busy, failed user list, Start screen, camera) are independent facts of the
+// window, not a state that an enum would describe better.
+#[allow(clippy::struct_excessive_bools)]
 #[derive(Debug)]
 pub struct Controller {
     /// Lock-screen users.
@@ -1026,6 +1039,8 @@ pub struct Controller {
     pub register_label: String,
     /// What an approved override retries in [`crate::cash`].
     pub(crate) cash_wait: Option<crate::cash::Waiting>,
+    /// A webcam was found: W adds a nota photo from it (spec 2.7 §2a).
+    pub camera: bool,
 }
 
 impl Controller {
@@ -1053,6 +1068,7 @@ impl Controller {
             perms: Perms::default(),
             register_label: String::new(),
             cash_wait: None,
+            camera: false,
         };
         (controller, vec![Effect::LoadUsers])
     }

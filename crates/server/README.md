@@ -13,6 +13,12 @@ and `docs/spec/2.1-organization-access.md`.
   `routes/cash_movements.rs` (cash in / out / drop, slips, the payout slip),
   `routes/cash_reports.rs` (X report, close report text, `GET /registers/me/float`) and
   `routes/z_reports.rs` (run, list, read, text, days still to close).
+- Nota photos (spec 2.7 §2a, phase K6): `routes/cash_photos.rs` (`PUT|GET
+  /cash-movements/{id}/photos/{photo_id}`), processed by `src/product_image.rs` with the `NOTA`
+  limits (1600×1600, ≤ 400 KB JPEG) and stored as files by `src/attachments.rs` under the node's
+  data directory (`AppState::with_data_dir`; `<dir>/attachments/<2 hex>/<sha256>.jpg`, `0600`).
+  A state without a data directory answers photo calls with `500 internal`. Back the
+  `attachments/` directory up with the database.
 - `src/routes/`: one module per resource (spec 2.1 §8); pricing (spec 2.3) is
   `routes/pricing.rs` (price lists, entries, tax rates, settings, `price.changed`) and
   `routes/pricing_quote.rs` (`POST /pricing/quote` and the lookup's `unit_price`).

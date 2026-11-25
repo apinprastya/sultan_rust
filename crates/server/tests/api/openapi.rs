@@ -118,6 +118,8 @@ async fn openapi_lists_the_routes(h: &Harness) {
         ("/api/v1/cash-movements", "get"),
         ("/api/v1/cash-movements/{id}", "get"), ("/api/v1/cash-movements/{id}", "put"),
         ("/api/v1/cash-movements/{id}/slip", "get"),
+        ("/api/v1/cash-movements/{id}/photos/{photo_id}", "get"),
+        ("/api/v1/cash-movements/{id}/photos/{photo_id}", "put"),
         ("/api/v1/customers/{id}/balance/payouts/{entry_id}/slip", "get"),
         ("/api/v1/cashier-sessions/{id}/x-report", "get"),
         ("/api/v1/cashier-sessions/{id}/x-report/text", "get"),

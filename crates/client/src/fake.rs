@@ -296,12 +296,15 @@ impl State {
             expected_cash: None,
             opening_proposed: None,
             float_kept: None,
+            cashier_name: None,
+            register_code: None,
         }
     }
 
     /// Whether `user` may read `session` (own, or `report.sales`).
-    fn may_read(user: &FakeUser, session: &CashierSession) -> bool {
-        user.reports || session.user_id == user.id
+    /// `reader` is the caller's ID and whether they hold `report.sales`.
+    fn may_read(reader: &(String, bool), session: &CashierSession) -> bool {
+        reader.1 || session.user_id == reader.0
     }
 
     /// Lockout and PIN check (spec 2.1 §4).
@@ -488,14 +491,15 @@ impl Service for FakeService {
         if let Some(e) = failure {
             return ready(Err(e));
         }
-        let user = match s.caller(token) {
-            Ok(u) => u,
+        // A register user, or a back-office user (spec 2.7 K5).
+        let reader = match s.reader(token) {
+            Ok(r) => r,
             Err(e) => return ready(Err(e)),
         };
         let Some((session, report)) = s.history.iter().find(|(h, _)| h.id == session_id) else {
             return ready(Err(api(404, "not_found")));
         };
-        if !State::may_read(&user, session) {
+        if !State::may_read(&reader, session) {
             return ready(Err(Problem::new(403, "permission_denied", "denied")
                 .with("permission", "report.sales")
                 .into()));
@@ -512,13 +516,13 @@ impl Service for FakeService {
         if let Some(e) = failure {
             return ready(Err(e));
         }
-        let user = match s.caller(token) {
-            Ok(u) => u,
+        let reader = match s.reader(token) {
+            Ok(r) => r,
             Err(e) => return ready(Err(e)),
         };
         let limit = query.limit.unwrap_or(100) as usize;
         let matches = |c: &CashierSession| {
-            State::may_read(&user, c)
+            State::may_read(&reader, c)
                 && query.user_id.as_ref().is_none_or(|u| *u == c.user_id)
                 && query
                     .register_id
@@ -542,7 +546,7 @@ impl Service for FakeService {
             .into_iter()
             .filter(|c| matches(c))
             .take(limit)
-            .cloned()
+            .map(|c| s.named(c))
             .collect();
         let next_before_id = items
             .last()
@@ -986,6 +990,25 @@ impl Service for FakeService {
         branch_id: Option<&str>,
     ) -> crate::BoxFuture<Vec<crate::PendingDay>> {
         self.pending_days_call(token, branch_id)
+    }
+
+    fn add_cash_photo(
+        &self,
+        token: &str,
+        movement_id: &str,
+        photo_id: &str,
+        bytes: Vec<u8>,
+    ) -> crate::BoxFuture<crate::NotaPhoto> {
+        self.add_cash_photo_call(token, movement_id, photo_id, &bytes)
+    }
+
+    fn cash_photo(
+        &self,
+        token: &str,
+        movement_id: &str,
+        photo_id: &str,
+    ) -> crate::BoxFuture<Vec<u8>> {
+        self.cash_photo_call(token, movement_id, photo_id)
     }
 }
 

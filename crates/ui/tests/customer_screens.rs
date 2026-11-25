@@ -59,6 +59,7 @@ fn till(language: &str, user: usize) -> Till {
         clock: Arc::new(|| T0),
         start: false,
         cart_file: None,
+        photos: Arc::new(sultan_ui::photo::FixedPhotos::none()),
     };
     let app = build_app(
         fake.clone(),

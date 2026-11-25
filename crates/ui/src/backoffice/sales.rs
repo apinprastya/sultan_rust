@@ -207,7 +207,7 @@ impl<T> Default for DocList<T> {
 impl<T> DocList<T> {
     /// Marks a request as started and returns its number: a fresh one (not `append`)
     /// supersedes every request in flight.
-    fn begin(&mut self, append: bool) -> u64 {
+    pub(super) fn begin(&mut self, append: bool) -> u64 {
         if !append {
             self.seq += 1;
         }
@@ -215,7 +215,7 @@ impl<T> DocList<T> {
         self.seq
     }
 
-    fn take(&mut self, append: bool, rows: Vec<T>, next: Option<String>) {
+    pub(super) fn take(&mut self, append: bool, rows: Vec<T>, next: Option<String>) {
         if append {
             self.rows.extend(rows);
         } else {
@@ -338,14 +338,14 @@ pub struct SalesState {
 }
 
 /// Midnight of local day `date` (unix ms).
-fn local_midnight(date: NaiveDate) -> Option<i64> {
+pub(super) fn local_midnight(date: NaiveDate) -> Option<i64> {
     Local
         .from_local_datetime(&date.and_hms_opt(0, 0, 0)?)
         .earliest()
         .map(|t| t.timestamp_millis())
 }
 
-fn parse_day(text: &str) -> Result<Option<NaiveDate>, ()> {
+pub(super) fn parse_day(text: &str) -> Result<Option<NaiveDate>, ()> {
     let t = text.trim();
     if t.is_empty() {
         return Ok(None);
@@ -973,6 +973,8 @@ impl Controller {
                     receipt_width: WIDTHS[(*i).min(WIDTHS.len() - 1)],
                 })
                 .collect(),
+            // The nota threshold (spec 2.7 §2a) is not on this screen: the server keeps it.
+            nota_flag_above: None,
         };
         s.notice = None;
         vec![self.sales_call(Call::PutSettings(body))]

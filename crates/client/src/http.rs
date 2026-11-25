@@ -722,6 +722,38 @@ impl Service for HttpService {
         Box::pin(send(request))
     }
 
+    fn add_cash_photo(
+        &self,
+        token: &str,
+        movement_id: &str,
+        photo_id: &str,
+        bytes: Vec<u8>,
+    ) -> crate::BoxFuture<crate::NotaPhoto> {
+        let request = self
+            .request(
+                Method::PUT,
+                &format!("/cash-movements/{movement_id}/photos/{photo_id}"),
+                Some(token),
+            )
+            .header("content-type", "application/octet-stream")
+            .body(bytes);
+        Box::pin(send(request))
+    }
+
+    fn cash_photo(
+        &self,
+        token: &str,
+        movement_id: &str,
+        photo_id: &str,
+    ) -> crate::BoxFuture<Vec<u8>> {
+        let request = self.request(
+            Method::GET,
+            &format!("/cash-movements/{movement_id}/photos/{photo_id}"),
+            Some(token),
+        );
+        Box::pin(async move { exchange(request).await.map(|(_, bytes)| bytes) })
+    }
+
     fn post_return(
         &self,
         token: &str,

@@ -1,10 +1,13 @@
 //! The sales settings (spec 2.6 §8, §9; phase S6, deferred from S3).
 //!
-//! - `GET /settings/sales`: `{return_days, receipt_widths: [{branch_id, receipt_width}]}`, every
-//!   branch with its width (32 when none is stored). Any user session or the device token.
-//! - `PUT /settings/sales {return_days, receipt_widths?}`: replaces `return_days` (0–3650, `0` =
-//!   no return window) and sets the width of each listed branch (32, 42 or 48); branches that
-//!   are not listed keep theirs. HQ only (`403 read_only_replica`) and `tender.manage` from any
+//! - `GET /settings/sales`: `{return_days, receipt_widths: [{branch_id, receipt_width}],
+//!   nota_flag_above}`, every branch with its width (32 when none is stored). Any user session or
+//!   the device token.
+//! - `PUT /settings/sales {return_days, receipt_widths?, nota_flag_above?}`: replaces
+//!   `return_days` (0–3650, `0` = no return window) and sets the width of each listed branch (32,
+//!   42 or 48); branches that are not listed keep theirs. `nota_flag_above` (spec 2.7 §2a, phase
+//!   K6: Rp, `0` = off, negative → `422 invalid_field`) is kept when left out, so an older client
+//!   never resets it. HQ only (`403 read_only_replica`) and `tender.manage` from any
 //!   role assignment (the HQ sales permission, like tender types). Audit and outbox
 //!   `sales_settings.put` in the same transaction; an unchanged replay writes nothing.
 //!
@@ -16,6 +19,7 @@ use axum::extract::State;
 use serde::{Deserialize, Serialize};
 use sultan_core::access::Permission;
 use sultan_core::ids::BranchId;
+use sultan_core::money::Money;
 use sultan_db::org;
 use sultan_db::sales::{self, SalesSettings};
 use utoipa::ToSchema;
@@ -45,6 +49,10 @@ pub struct SalesSettingsDto {
     /// The receipt width of each branch (`PUT`: only the listed branches change).
     #[serde(default)]
     pub receipt_widths: Vec<BranchWidthDto>,
+    /// A cash out of at least this many Rupiah without a nota photo is flagged "missing nota"
+    /// (spec 2.7 §2a; default 100 000, `0` = off). `PUT`: left out keeps the stored value.
+    #[serde(default)]
+    pub nota_flag_above: Option<i64>,
 }
 
 async fn load(state: &AppState) -> Result<SalesSettingsDto, ApiError> {
@@ -63,6 +71,7 @@ async fn load(state: &AppState) -> Result<SalesSettingsDto, ApiError> {
                     .map_or(sales::DEFAULT_RECEIPT_WIDTH, |(_, w)| *w),
             })
             .collect(),
+        nota_flag_above: Some(stored.nota_flag_above.minor()),
     })
 }
 
@@ -104,11 +113,20 @@ pub async fn put(
         let branch: BranchId = parse_id(&w.branch_id, "branch_id")?;
         receipt_widths.push((branch, w.receipt_width));
     }
-    // The nota threshold (spec 2.7 §2a) is not in the body yet (phase K6): keep the stored one.
+    let nota_flag_above = match body.nota_flag_above {
+        Some(v) if v < 0 => {
+            return Err(ApiError::invalid_field(
+                "nota_flag_above",
+                "`nota_flag_above` must not be negative",
+            ));
+        }
+        Some(v) => Money::from_minor(v),
+        None => sultan_db::cash::nota_flag_above(&state.db).await?,
+    };
     let settings = SalesSettings {
         return_days: body.return_days,
         receipt_widths,
-        nota_flag_above: sultan_db::cash::nota_flag_above(&state.db).await?,
+        nota_flag_above,
     };
     let now = state.now();
     let (state_ref, actor, settings) = (&state, &actor(&session), &settings);

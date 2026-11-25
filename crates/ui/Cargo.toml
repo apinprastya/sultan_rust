@@ -23,6 +23,16 @@ serde.workspace = true
 serde_json.workspace = true
 tokio = { workspace = true, features = ["rt"] }
 uuid.workspace = true
+# Nota photos at the till (spec 2.7 §2a, K6): the native file dialog. Only the XDG desktop
+# portal backend on Linux (D-Bus, pure Rust), so no GTK development packages are needed.
+rfd = { version = "0.18.0", default-features = false, features = ["xdg-portal"] }
+# The USB webcam (feature `webcam`, off by default): V4L2 / AVFoundation / Media Foundation.
+nokhwa = { version = "0.10.11", default-features = false, features = ["input-native"], optional = true }
+
+[features]
+# W in the cash dialog: a nota photo from a USB webcam (spec 2.7 §2a). Off by default so CI and
+# the headless tests build without a capture library.
+webcam = ["dep:nokhwa"]
 
 [build-dependencies]
 slint-build.workspace = true

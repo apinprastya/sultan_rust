@@ -10,7 +10,14 @@
 //!   `cash.out`). After posting, the slip text is shown in monospace (`GET …/slip`, until 2.11
 //!   prints it); Enter or Esc goes back to a fresh form. On the list, R reverses the highlighted
 //!   movement (the note is asked for; the reversal takes the original's kind, amount and reason)
-//!   and P reprints its slip (COPY). The slip panel is where the nota-photo keys of phase K6 go.
+//!   and P reprints its slip (COPY).
+//! - **Nota photos** (§2a, phase K6): on the slip after posting, or on the highlighted movement
+//!   of the list, F adds a photo from a file and W one from the webcam (only offered when
+//!   [`Controller::camera`]): the bytes come from the window's [`crate::photo::PhotoSource`],
+//!   then `PUT /cash-movements/{id}/photos/{photo_id}` with a new `UUIDv7` per attempt. A
+//!   cancelled picker does nothing; a refused or failed upload shows its message and the
+//!   movement stays posted (F again retries). The list shows each movement's photo count and the
+//!   missing-nota flag.
 //! - **X report** (Shift+F12): `GET /cashier-sessions/{id}/x-report/text` for the caller's open
 //!   session; a cashier without `session.view_expected` gets the manager PIN dialog
 //!   (`context_ref` = the session ID). Esc goes back to the sell screen with the cart kept.
@@ -31,7 +38,8 @@
 use chrono::TimeZone;
 use sultan_client::{
     CashMovement, CashMovementPage, CashMovementRequest, CashQuery, CashReason, CashText,
-    ClientError, CloseReport, PendingDay, ProposedFloat, ProtectedAction, ZReport, ZRunRequest,
+    ClientError, CloseReport, NotaPhoto, PendingDay, ProposedFloat, ProtectedAction, ZReport,
+    ZRunRequest,
 };
 
 use crate::amount::{Digits, rupiah};
@@ -159,6 +167,16 @@ impl CashDialog {
             .iter()
             .filter(|r| r.direction == self.kind.key())
             .collect()
+    }
+
+    /// The movement F / W add a photo to: the slip's, or the highlighted one of the list.
+    #[must_use]
+    pub fn photo_target(&self) -> Option<&CashMovement> {
+        match (self.step, self.focus) {
+            (Step::Slip, _) => self.movements.iter().find(|m| m.number == self.slip_number),
+            (Step::Form, Focus::List) => self.movements.get(self.cursor),
+            _ => None,
+        }
     }
 
     fn selected_reason(&self) -> Option<&CashReason> {
@@ -434,6 +452,16 @@ pub enum Call {
         /// The payout's balance entry.
         entry_id: String,
     },
+    /// A nota photo from the file picker or the webcam, then
+    /// `PUT /cash-movements/{id}/photos/{photo_id}`.
+    Photo {
+        /// The movement.
+        movement_id: String,
+        /// The new photo's ID.
+        photo_id: String,
+        /// From the webcam (W) instead of a file (F).
+        camera: bool,
+    },
 }
 
 /// The answer to a [`Call`].
@@ -462,11 +490,16 @@ pub enum Reply {
     /// [`Call::PayoutSlip`], with the id of the customer who was paid: the slip is only shown
     /// while the dialog still shows that customer.
     PayoutSlip(String, Result<CashText, ClientError>),
+    /// [`Call::Photo`] of this movement: the stored photo, or `None` when nothing was picked. A
+    /// picker or camera failure is [`ClientError::Unexpected`] (the message), a file that is too
+    /// large `413 payload_too_large`.
+    Photo(String, Result<Option<NotaPhoto>, ClientError>),
 }
 
 impl Reply {
     fn error(&self) -> Option<&ClientError> {
         match self {
+            Self::Photo(_, r) => r.as_ref().err(),
             Self::Reasons(r) => r.as_ref().err(),
             Self::Movements(r) => r.as_ref().err(),
             Self::Posted(r) => r.as_ref().err(),
@@ -516,6 +549,15 @@ pub fn cash_notice(error: &ClientError) -> Notice {
         (Some("invalid_field"), Some("reverses")) => Notice::bad("cannot_reverse"),
         (Some("invalid_field"), Some("float_kept")) => Notice::bad("float_above_count"),
         _ => notice_for(error),
+    }
+}
+
+/// The message for a nota photo that was not added: a picker or camera failure names its cause.
+#[must_use]
+pub fn photo_notice(error: &ClientError) -> Notice {
+    match error {
+        ClientError::Unexpected(message) => Notice::new("photo_failed", message.clone(), Tone::Bad),
+        _ => cash_notice(error),
     }
 }
 
@@ -573,6 +615,14 @@ impl Controller {
             Modal::Cash(d) => d,
             _ => return None,
         };
+        let photo_keys = |keys: &mut Vec<Shortcut>| {
+            if d.photo_target().is_some() {
+                keys.push(s(Key::Char('f'), Action::PhotoFile, "photo_file"));
+                if self.camera {
+                    keys.push(s(Key::Char('w'), Action::PhotoCamera, "photo_camera"));
+                }
+            }
+        };
         Some(match d.step {
             Step::Confirm => vec![
                 s(Key::Enter, Confirm, "post_cash"),
@@ -582,17 +632,22 @@ impl Controller {
                 s(Key::Enter, Confirm, "reverse"),
                 s(Key::Escape, Back, "back"),
             ],
-            Step::Slip => vec![
-                s(Key::Enter, Confirm, "done"),
-                s(Key::Escape, Confirm, "done"),
-                s(Key::Char('p'), Action::Reprint, "reprint"),
-            ],
+            Step::Slip => {
+                let mut keys = vec![
+                    s(Key::Enter, Confirm, "done"),
+                    s(Key::Escape, Confirm, "done"),
+                    s(Key::Char('p'), Action::Reprint, "reprint"),
+                ];
+                photo_keys(&mut keys);
+                keys
+            }
             Step::Form if d.focus == Focus::List => {
                 let mut keys = Vec::new();
                 if !d.movements.is_empty() {
                     keys.push(s(Key::Char('r'), Action::Reverse, "reverse"));
                     keys.push(s(Key::Char('p'), Action::Reprint, "reprint"));
                 }
+                photo_keys(&mut keys);
                 keys.push(s(Key::Tab, Action::CashTab, "to_form"));
                 keys.push(s(Key::Escape, Back, "close"));
                 keys
@@ -743,6 +798,20 @@ impl Controller {
                     id,
                     copy: true,
                     override_token: None,
+                });
+            }
+            Action::PhotoFile | Action::PhotoCamera => {
+                let camera = action == Action::PhotoCamera;
+                let Some(movement_id) = d.photo_target().map(|m| m.id.clone()) else {
+                    return Vec::new();
+                };
+                if camera && !self.camera {
+                    return Vec::new();
+                }
+                return self.cash_call(Call::Photo {
+                    movement_id,
+                    photo_id: new_key(),
+                    camera,
                 });
             }
             Action::Confirm => return self.cash_confirm(),
@@ -940,6 +1009,10 @@ impl Controller {
         if let Some(e) = reply.error().filter(|e| ends_login(e)).cloned() {
             return self.fail(&e);
         }
+        if let Reply::Photo(movement_id, result) = reply {
+            self.busy = false;
+            return self.photo_reply(&movement_id, result);
+        }
         let waits = matches!(
             reply,
             Reply::Posted(_) | Reply::X(_) | Reply::Z(_) | Reply::Slip(true, _)
@@ -1112,7 +1185,8 @@ impl Controller {
                 }
                 Vec::new()
             }
-            Reply::Float(Err(_)) => Vec::new(),
+            // Handled above.
+            Reply::Float(Err(_)) | Reply::Photo(..) => Vec::new(),
             Reply::Posted(Err(e)) => {
                 if let Some(d) = self.dialog_mut() {
                     if d.step == Step::Confirm {
@@ -1130,6 +1204,35 @@ impl Controller {
                 Vec::new()
             }
         }
+    }
+
+    /// The answer to [`Call::Photo`]: the photo on its movement and a message; a failure only
+    /// shows its message (the movement stays posted, F again retries).
+    fn photo_reply(
+        &mut self,
+        movement_id: &str,
+        result: Result<Option<NotaPhoto>, ClientError>,
+    ) -> Vec<Effect> {
+        match result {
+            Ok(None) => {}
+            Ok(Some(photo)) => {
+                let number = self.dialog_mut().and_then(|d| {
+                    let m = d.movements.iter_mut().find(|m| m.id == movement_id)?;
+                    if !m.photo_ids.contains(&photo.id) {
+                        m.photo_ids.push(photo.id);
+                    }
+                    m.missing_nota = false;
+                    Some(m.number.clone())
+                });
+                self.set_notice(Notice::new(
+                    "photo_added",
+                    number.unwrap_or_default(),
+                    Tone::Good,
+                ));
+            }
+            Err(e) => self.set_notice(photo_notice(&e)),
+        }
+        Vec::new()
     }
 
     /// The keys of the close report: done, and End of day (Z) when offered.

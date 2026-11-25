@@ -80,6 +80,12 @@ pub struct CashierSession {
     /// The cash kept as float at the close (spec 2.7 §3).
     #[serde(default)]
     pub float_kept: Option<i64>,
+    /// The cashier's display name: only in `GET /cashier-sessions` (spec 2.7 K5).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cashier_name: Option<String>,
+    /// The register's code, e.g. `R2`: only in `GET /cashier-sessions`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub register_code: Option<String>,
 }
 
 /// `GET /cashier-sessions/{id}`: a session and, once closed, its stored close report (the source

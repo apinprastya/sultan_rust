@@ -333,7 +333,11 @@ async fn past_sessions_and_reports() {
         )
         .await
         .unwrap();
-    assert_eq!(page.items, vec![report.session]);
+    // The list also names the cashier and the register (spec 2.7 K5).
+    let mut listed = page.items[0].clone();
+    assert!(listed.cashier_name.take().is_some());
+    assert!(listed.register_code.take().is_some());
+    assert_eq!(vec![listed], vec![report.session]);
     // The cashier may not read the manager's session.
     assert_code(c.session(&ani, &second.id).await, 403, "permission_denied");
     assert_code(

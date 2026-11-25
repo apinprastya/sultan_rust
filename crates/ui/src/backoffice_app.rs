@@ -149,6 +149,7 @@ struct Models {
     price_variant_choices: Rc<VecModel<SharedString>>,
     price_unit_choices: Rc<VecModel<SharedString>>,
     sales: crate::backoffice_sales::SalesModels,
+    cash: crate::backoffice_cash::CashModels,
 }
 
 struct State {
@@ -330,6 +331,9 @@ fn start(service: &dyn BackOffice, effect: &Effect, lang: &str) -> Option<MsgFut
         Effect::Customers { token, call } => Some(start_customer(service, token, call)),
         Effect::Pricing { token, call } => Some(start_pricing(service, token, call)),
         Effect::Sales { token, call } => Some(crate::backoffice_sales::start_sales(
+            service, token, call, lang,
+        )),
+        Effect::Cash { token, call } => Some(crate::backoffice_cash::start_cash(
             service, token, call, lang,
         )),
         Effect::WatchEvents { .. } | Effect::Debounce(_) | Effect::ReadFile(_) | Effect::Exit => {
@@ -675,6 +679,7 @@ fn render(ui: &BackOfficeWindow, c: &Controller, state: &State) {
             || cs.form.as_ref().is_some_and(|f| f.saving)
             || c.pricing.loading
             || c.pricing.editor.saving
+            || c.cash.day.running
             || c.pricing
                 .product
                 .as_ref()
@@ -734,6 +739,8 @@ fn render(ui: &BackOfficeWindow, c: &Controller, state: &State) {
             Some(Confirm::PriceEntryDelete) => "delete-price-entry",
             Some(Confirm::TaxMode) => "tax-mode",
             Some(Confirm::TenderArchive) => "archive-tender",
+            Some(Confirm::RunZ) => "run-z",
+            Some(Confirm::CashReasonArchive) => "archive-cash-reason",
         }
         .into(),
     );
@@ -855,6 +862,7 @@ fn render(ui: &BackOfficeWindow, c: &Controller, state: &State) {
     }
     render_pricing(ui, c, state);
     crate::backoffice_sales::render_sales(ui, c, &state.models.sales);
+    crate::backoffice_cash::render_cash(ui, c, &state.models.cash);
 }
 
 /// `Budi Santoso (K7QH-29XM)`.
@@ -873,6 +881,18 @@ fn confirm_names(c: &Controller) -> (String, String) {
         }),
         Some(Confirm::PriceListArchive) => (c.pricing.editor.name.clone(), String::new()),
         Some(Confirm::TenderArchive) => (c.sales.editor.name.clone(), String::new()),
+        Some(Confirm::CashReasonArchive) => (c.cash.editor.name.clone(), String::new()),
+        Some(Confirm::RunZ) => {
+            let day = c.cash.day.confirm_day.clone().unwrap_or_default();
+            let closed = c
+                .cash
+                .day
+                .pending
+                .iter()
+                .find(|p| p.day == day)
+                .map_or(0, |p| p.closed);
+            (day, closed.to_string())
+        }
         Some(Confirm::TaxMode) => (
             if c.pricing.settings.edit.tax_inclusive {
                 "inclusive"
@@ -1899,6 +1919,7 @@ pub fn build_backoffice(
     ui.set_duplicate_rows(ModelRc::from(models.duplicate_rows.clone()));
     ui.set_negative_rows(ModelRc::from(models.negative_rows.clone()));
     models.sales.attach(&ui);
+    models.cash.attach(&ui);
     ui.set_price_list_rows(ModelRc::from(models.price_list_rows.clone()));
     ui.set_target_choices(ModelRc::from(models.target_choices.clone()));
     ui.set_tax_class_rows(ModelRc::from(models.tax_class_rows.clone()));

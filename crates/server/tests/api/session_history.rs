@@ -408,6 +408,22 @@ async fn list_filters_pages_and_visibility(h: &Harness) {
     let manager_items = items(h.call(&budi, Method::GET, LIST, None).await);
     assert_eq!(manager_items[0]["expected_cash"], 0);
     assert_eq!(manager_items[0]["number"], "JKT01-R2-S-270115-01");
+    // The list names the cashier and the register (spec 2.7 K5); one session does not.
+    assert_eq!(
+        manager_items[0]["cashier_name"],
+        h.budi.display_name.as_str()
+    );
+    assert_eq!(manager_items[0]["register_code"], "R2");
+    assert_eq!(
+        manager_items[1]["register_code"],
+        h.jkt_register.code.as_str()
+    );
+    let one = h.call(&budi, Method::GET, &session_uri(&b_id), None).await;
+    assert!(
+        one.body["session"].get("cashier_name").is_none(),
+        "{}",
+        one.body
+    );
 
     // A register PIN session may list too (its own sessions).
     let r = h.at_register(ani_at, Method::GET, LIST, &[], None).await;

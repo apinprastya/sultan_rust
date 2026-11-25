@@ -265,6 +265,8 @@ impl Modify for SecuritySchemes {
         routes::cash_movements::list,
         routes::cash_movements::slip,
         routes::cash_movements::payout_slip,
+        routes::cash_photos::put,
+        routes::cash_photos::get,
         routes::cash_reports::x_report_json,
         routes::cash_reports::x_report_text,
         routes::cash_reports::close_report_text,
