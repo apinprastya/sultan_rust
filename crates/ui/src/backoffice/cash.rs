@@ -13,9 +13,21 @@
 //!    stored **close report** (`…/report/text`); Ctrl+P reprints it as a COPY. A `cash.moved`
 //!    event of the open session reloads its movements.
 //! 2. **Cash movements** ([`Screen::CashMovements`]) — filters branch, register, session (the
-//!    sessions seen in the sessions list), kind, reason and dates; Enter shows the movement's
-//!    **slip** in the pane beside the list, Ctrl+P its COPY (`sale.reprint`). The pane is where
-//!    the nota photos of phase K6 go.
+//!    sessions seen in the sessions list), kind, reason, dates and **missing nota**
+//!    (`missing_nota=true`: cash outs at or above the company's `nota_flag_above` without a
+//!    photo); each row shows its photo count and a "No nota" flag. Enter shows the movement's
+//!    **slip** in the pane beside the list, Ctrl+P its COPY (`sale.reprint`). Under the slip are
+//!    its **nota photos** (spec 2.7 §2a, phase K7; [`PhotoPane`]): each one is read once
+//!    (`GET …/photos/{photo_id}`) and shown as a thumbnail, the selected one larger; Ctrl+G
+//!    selects the next, Ctrl+E shows it over the whole screen (Esc closes it). **Ctrl+U** adds a
+//!    photo to the highlighted movement from a file (the window's [`crate::photo::PhotoSource`],
+//!    then `PUT …/photos/{photo_id}`): refused on screen without `cash.out` or at 3 photos, and
+//!    the server's refusals (`photo_limit`, too large, not an image, `permission_denied`) are
+//!    messages. After a network failure the picked bytes and the photo ID are kept, and the next
+//!    Ctrl+U on that movement sends them again without asking for a file (an idempotent `PUT`,
+//!    so no duplicate). A photo that cannot be read (`403` for a user with `cash.out` but without
+//!    `report.sales` at the branch, `404` when its file is not on this node) shows a message in
+//!    its place. A `cash.moved` event of a listed movement reads it again (its photos and flag).
 //! 3. **Day close** ([`Screen::DayClose`]) — the **days still to close** of a branch (the
 //!    branch filter, else the user's branch; `GET /z-reports/pending`) with their open and closed
 //!    session counts, then the **Z reports** (`GET /z-reports`, newest first, paged) in one list.
@@ -31,13 +43,14 @@
 //!
 //! Reading needs `report.sales` (spec 2.7 §7); without it the lists say so.
 
-use sultan_client::cash::{DAY_CLOSE, SESSION_VIEW_EXPECTED};
+use sultan_client::cash::{CASH_OUT, DAY_CLOSE, SESSION_VIEW_EXPECTED};
 use sultan_client::sales::TENDER_MANAGE;
 use sultan_client::{
     CashMovement, CashMovementPage, CashQuery, CashReason, CashReasonBody, CashText,
-    CashierSession, ClientError, PendingDay, ServerEvent, SessionDetail, SessionPage, SessionQuery,
-    ZQuery, ZReport, ZReportPage, ZRunRequest, ZSummary,
+    CashierSession, ClientError, NotaPhoto, PendingDay, ServerEvent, SessionDetail, SessionPage,
+    SessionQuery, ZQuery, ZReport, ZReportPage, ZRunRequest, ZSummary,
 };
+use sultan_core::cash::MAX_PHOTOS;
 
 use super::sales::{DocList, REPORT_SALES, local_midnight, parse_day};
 use super::{Confirm, Controller, Effect, Press, PressKey, Screen, Step, notice};
@@ -160,6 +173,42 @@ pub enum Call {
     },
     /// `delete_cash_reason` (archive).
     ArchiveReason(String),
+    /// `cash_movement` (one movement again, after a `cash.moved` event).
+    Movement(String),
+    /// `cash_photo`: the stored JPEG of one nota photo.
+    Photo {
+        /// Movement.
+        movement_id: String,
+        /// Photo.
+        photo_id: String,
+    },
+    /// A file from the window's photo source (the file picker), for this movement.
+    PickPhoto(String),
+    /// `add_cash_photo`.
+    Upload(Upload),
+}
+
+/// A nota photo on its way to the server; kept after a network failure so that the next
+/// Ctrl+U sends the same bytes under the same ID (an idempotent `PUT`).
+#[derive(Clone, PartialEq, Eq)]
+pub struct Upload {
+    /// Movement.
+    pub movement_id: String,
+    /// The new photo's ID (`UUIDv7`).
+    pub photo_id: String,
+    /// The picked file.
+    pub bytes: Vec<u8>,
+}
+
+impl std::fmt::Debug for Upload {
+    // The bytes are left out: a photo is up to 10 MB.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Upload")
+            .field("movement_id", &self.movement_id)
+            .field("photo_id", &self.photo_id)
+            .field("bytes", &self.bytes.len())
+            .finish()
+    }
 }
 
 /// The answer of a [`Call`] (inside [`super::Msg::Cash`]).
@@ -185,6 +234,16 @@ pub enum Reply {
     Reasons(Result<Vec<CashReason>, ClientError>),
     /// [`Call::PutReason`] or [`Call::ArchiveReason`] (true).
     ReasonSaved(bool, Result<CashReason, ClientError>),
+    /// [`Call::Movement`].
+    Movement(Result<CashMovement, ClientError>),
+    /// [`Call::Photo`] (movement, photo).
+    Photo(String, String, Result<Vec<u8>, ClientError>),
+    /// [`Call::PickPhoto`] (movement): the bytes, `None` when the picker was cancelled. A picker
+    /// failure is [`ClientError::Unexpected`] (its message), a file over 10 MB
+    /// `413 payload_too_large`.
+    Picked(String, Result<Option<Vec<u8>>, ClientError>),
+    /// [`Call::Upload`]: what was sent, and the stored photo.
+    Uploaded(Upload, Result<NotaPhoto, ClientError>),
 }
 
 /// The list filters (shared by the sessions and the movements).
@@ -208,6 +267,8 @@ pub struct Filters {
     pub kind: usize,
     /// 0 = every reason, else 1 + the index into [`CashState::reasons`].
     pub reason: usize,
+    /// Only cash outs missing a nota (`missing_nota=true`).
+    pub missing_nota: bool,
     /// A date that could not be read: `from` or `until`.
     pub bad_date: Option<&'static str>,
 }
@@ -235,6 +296,58 @@ impl TextPane {
             loading: true,
             ..Self::default()
         }
+    }
+}
+
+/// One nota photo in the pane.
+#[derive(Clone, PartialEq, Eq)]
+pub enum PhotoImage {
+    /// Asked for.
+    Loading,
+    /// The stored JPEG.
+    Loaded(Vec<u8>),
+    /// Why it cannot be shown.
+    Failed(Notice),
+}
+
+impl std::fmt::Debug for PhotoImage {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Loading => f.write_str("Loading"),
+            Self::Loaded(bytes) => write!(f, "Loaded({} bytes)", bytes.len()),
+            Self::Failed(n) => f.debug_tuple("Failed").field(n).finish(),
+        }
+    }
+}
+
+/// The nota photos of the movement whose slip is shown (Ctrl+2).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct PhotoPane {
+    /// The movement (empty: none shown).
+    pub movement_id: String,
+    /// Its photos, oldest first, with what was read of each.
+    pub photos: Vec<(String, PhotoImage)>,
+    /// The photo shown larger.
+    pub selected: usize,
+    /// The selected photo fills the screen.
+    pub zoom: bool,
+    /// A file is being picked or uploaded.
+    pub busy: bool,
+    /// Added, refusals.
+    pub notice: Option<Notice>,
+}
+
+impl PhotoPane {
+    /// Adds the photos of `ids` not in the pane yet; the calls that read them.
+    fn learn(&mut self, ids: &[String]) -> Vec<String> {
+        let mut asked = Vec::new();
+        for id in ids {
+            if !self.photos.iter().any(|(p, _)| p == id) {
+                self.photos.push((id.clone(), PhotoImage::Loading));
+                asked.push(id.clone());
+            }
+        }
+        asked
     }
 }
 
@@ -337,6 +450,10 @@ pub struct CashState {
     pub movements: DocList<CashMovement>,
     /// The slip of the movement opened in the list.
     pub slip: TextPane,
+    /// The nota photos under the slip.
+    pub photos: PhotoPane,
+    /// The upload that got no answer (a network failure): Ctrl+U on its movement sends it again.
+    pub retry: Option<Upload>,
     /// The day close.
     pub day: DayClose,
     /// The Z shown on the day close.
@@ -486,9 +603,9 @@ impl Controller {
                 .map(|r| r.id.clone()),
             from,
             until,
+            missing_nota: f.missing_nota.then_some(true),
             before_id: before,
             limit: Some(PAGE),
-            ..CashQuery::default()
         })
     }
 
@@ -708,14 +825,231 @@ impl Controller {
         }
     }
 
-    /// The slip of the highlighted movement (Enter), or its COPY (Ctrl+P).
+    /// The slip of the highlighted movement (Enter), or its COPY (Ctrl+P), with its photos.
     fn show_slip(&mut self, copy: bool) -> Vec<Effect> {
         let l = &self.cash.movements;
-        let Some(id) = l.rows.get(l.cursor).map(|m| m.id.clone()) else {
+        let Some(m) = l.rows.get(l.cursor) else {
             return Vec::new();
         };
+        let (id, photo_ids) = (m.id.clone(), m.photo_ids.clone());
         self.cash.slip = TextPane::asking(&id, copy);
-        vec![self.cash_call(Call::Slip { id, copy })]
+        let mut effects = vec![self.cash_call(Call::Slip {
+            id: id.clone(),
+            copy,
+        })];
+        effects.extend(self.show_photos(&id, &photo_ids));
+        effects
+    }
+
+    /// The photo pane of `movement_id` (kept as read when it already shows that movement); the
+    /// calls that read the photos not read yet.
+    fn show_photos(&mut self, movement_id: &str, photo_ids: &[String]) -> Vec<Effect> {
+        let p = &mut self.cash.photos;
+        if p.movement_id != movement_id {
+            *p = PhotoPane {
+                movement_id: movement_id.to_owned(),
+                ..PhotoPane::default()
+            };
+        }
+        let asked = p.learn(photo_ids);
+        asked
+            .into_iter()
+            .map(|photo_id| {
+                self.cash_call(Call::Photo {
+                    movement_id: movement_id.to_owned(),
+                    photo_id,
+                })
+            })
+            .collect()
+    }
+
+    /// Ctrl+U: a nota photo from a file for the highlighted movement (spec 2.7 §2a, `cash.out`).
+    fn add_photo(&mut self) -> Vec<Effect> {
+        let l = &self.cash.movements;
+        let Some(m) = l.rows.get(l.cursor).cloned() else {
+            return Vec::new();
+        };
+        if self.cash.photos.busy {
+            return Vec::new();
+        }
+        // The pane shows the movement the photo is for.
+        let mut effects = if self.cash.photos.movement_id == m.id {
+            Vec::new()
+        } else {
+            self.show_slip(false)
+        };
+        let refusal = if !self.may(CASH_OUT) {
+            Some(notice("photo_denied", CASH_OUT, Tone::Bad))
+        } else if m.photo_ids.len() >= MAX_PHOTOS {
+            Some(notice("photo_limit", MAX_PHOTOS.to_string(), Tone::Bad))
+        } else {
+            None
+        };
+        if refusal.is_some() {
+            self.cash.photos.notice = refusal;
+            return effects;
+        }
+        self.cash.photos.busy = true;
+        self.cash.photos.notice = None;
+        // A retry after a network failure sends the same bytes under the same ID.
+        match self.cash.retry.clone() {
+            Some(upload) if upload.movement_id == m.id => {
+                effects.push(self.cash_call(Call::Upload(upload)));
+            }
+            _ => effects.push(self.cash_call(Call::PickPhoto(m.id))),
+        }
+        effects
+    }
+
+    /// Ctrl+G: the next photo is shown larger.
+    fn next_photo(&mut self) {
+        let p = &mut self.cash.photos;
+        if !p.photos.is_empty() {
+            p.selected = (p.selected + 1) % p.photos.len();
+        }
+    }
+
+    /// Ctrl+E: the selected photo fills the screen (again: back).
+    fn zoom_photo(&mut self) {
+        let p = &mut self.cash.photos;
+        let loaded = matches!(p.photos.get(p.selected), Some((_, PhotoImage::Loaded(_))));
+        p.zoom = !p.zoom && loaded;
+    }
+
+    /// The answer of [`Call::Photo`].
+    fn photo_read(
+        &mut self,
+        movement_id: &str,
+        photo_id: &str,
+        result: Result<Vec<u8>, ClientError>,
+    ) {
+        let image = match result {
+            Ok(bytes) => PhotoImage::Loaded(bytes),
+            Err(e) => PhotoImage::Failed(match e.code() {
+                Some("permission_denied") => {
+                    notice("photo_read_denied", REPORT_SALES, Tone::Neutral)
+                }
+                Some("not_found") => Notice::new("photo_missing", "", Tone::Neutral),
+                _ => match self.failed(&e) {
+                    Some(n) => n,
+                    None => return,
+                },
+            }),
+        };
+        let p = &mut self.cash.photos;
+        if p.movement_id != movement_id {
+            return;
+        }
+        if let Some(slot) = p.photos.iter_mut().find(|(id, _)| id == photo_id) {
+            slot.1 = image;
+        }
+    }
+
+    /// The answer of [`Call::PickPhoto`]: the upload, or why there is none.
+    fn photo_picked(
+        &mut self,
+        movement_id: String,
+        result: Result<Option<Vec<u8>>, ClientError>,
+    ) -> Vec<Effect> {
+        match result {
+            Ok(Some(bytes)) => {
+                let upload = Upload {
+                    movement_id,
+                    photo_id: super::form::new_id(),
+                    bytes,
+                };
+                return vec![self.cash_call(Call::Upload(upload))];
+            }
+            Ok(None) => {}
+            Err(e) => self.cash.photos.notice = self.photo_failed(&e),
+        }
+        self.cash.photos.busy = false;
+        Vec::new()
+    }
+
+    /// The answer of [`Call::Upload`]: the photo joins its movement and the pane; a network
+    /// failure keeps the upload for Ctrl+U.
+    fn photo_uploaded(
+        &mut self,
+        upload: Upload,
+        result: Result<NotaPhoto, ClientError>,
+    ) -> Vec<Effect> {
+        self.cash.photos.busy = false;
+        // Any answer but a network failure ends this upload's retry (another one's stays).
+        if self
+            .cash
+            .retry
+            .as_ref()
+            .is_some_and(|r| r.photo_id == upload.photo_id)
+        {
+            self.cash.retry = None;
+        }
+        match result {
+            Ok(photo) => {
+                let mut number = String::new();
+                let mut ids = Vec::new();
+                for m in &mut self.cash.movements.rows {
+                    if m.id == upload.movement_id {
+                        if !m.photo_ids.contains(&photo.id) {
+                            m.photo_ids.push(photo.id.clone());
+                        }
+                        m.missing_nota = false;
+                        number.clone_from(&m.number);
+                        ids.clone_from(&m.photo_ids);
+                    }
+                }
+                if ids.is_empty() {
+                    ids.push(photo.id.clone());
+                }
+                self.cash.photos.notice = Some(notice("photo_added", number, Tone::Good));
+                if self.cash.photos.movement_id != upload.movement_id {
+                    return Vec::new();
+                }
+                let effects = self.show_photos(&upload.movement_id, &ids);
+                let p = &mut self.cash.photos;
+                p.selected = p
+                    .photos
+                    .iter()
+                    .position(|(id, _)| *id == photo.id)
+                    .unwrap_or(p.selected);
+                effects
+            }
+            Err(e) => {
+                if matches!(e, ClientError::Network(_)) {
+                    self.cash.retry = Some(upload);
+                    self.cash.photos.notice = Some(Notice::bad("photo_retry"));
+                } else {
+                    self.cash.photos.notice = self.photo_failed(&e);
+                }
+                Vec::new()
+            }
+        }
+    }
+
+    /// Why a photo was not added.
+    fn photo_failed(&mut self, e: &ClientError) -> Option<Notice> {
+        let p = e.problem();
+        match e.code() {
+            Some("photo_limit") => Some(notice(
+                "photo_limit",
+                p.and_then(sultan_client::Problem::max)
+                    .map_or_else(|| MAX_PHOTOS.to_string(), |v| v.to_string()),
+                Tone::Bad,
+            )),
+            Some("permission_denied") => Some(notice(
+                "photo_denied",
+                p.and_then(|p| p.permission())
+                    .unwrap_or(CASH_OUT)
+                    .to_owned(),
+                Tone::Bad,
+            )),
+            _ => match e {
+                ClientError::Unexpected(message) => {
+                    Some(notice("photo_failed", message.clone(), Tone::Bad))
+                }
+                _ => self.failed(e),
+            },
+        }
     }
 
     /// The Z highlighted on the day close, if the cursor is on one.
@@ -827,6 +1161,22 @@ impl Controller {
         if p.plain(PressKey::Up) || p.plain(PressKey::Down) {
             return Step::handled(self.move_cash(p.plain(PressKey::Up)));
         }
+        if screen == Screen::CashMovements {
+            let photo = if p.ctrl_char('u') {
+                Some("cash-photo-add")
+            } else if p.ctrl_char('g') {
+                Some("cash-photo-next")
+            } else if p.ctrl_char('e') {
+                Some("cash-photo-zoom")
+            } else if p.plain(PressKey::Escape) && self.cash.photos.zoom {
+                Some("cash-photo-close")
+            } else {
+                None
+            };
+            if let Some(action) = photo {
+                return Step::handled(self.cash_action(action).unwrap_or_default());
+            }
+        }
         let action = match screen {
             Screen::CashSessions | Screen::CashMovements | Screen::DayClose => {
                 if p.plain(PressKey::Enter) {
@@ -906,6 +1256,19 @@ impl Controller {
                 Vec::new()
             }
             "cash-reason-save" => self.save_reason(),
+            "cash-photo-add" => self.add_photo(),
+            "cash-photo-next" => {
+                self.next_photo();
+                Vec::new()
+            }
+            "cash-photo-zoom" => {
+                self.zoom_photo();
+                Vec::new()
+            }
+            "cash-photo-close" => {
+                self.cash.photos.zoom = false;
+                Vec::new()
+            }
             "cash-reason-archive" => {
                 let e = &self.cash.editor;
                 if e.id.is_some() && !e.archived && self.reasons_editable() {
@@ -1016,7 +1379,11 @@ impl Controller {
     }
 
     /// A check box of the section; `None` when not one of them.
-    pub(super) fn cash_toggle(&mut self, kind: &str, field: &str, on: bool) -> Option<()> {
+    pub(super) fn cash_toggle(&mut self, kind: &str, field: &str, on: bool) -> Option<Vec<Effect>> {
+        if (kind, field) == ("cash-filter", "missing_nota") {
+            self.cash.filters.missing_nota = on;
+            return Some(self.reload_cash());
+        }
         if kind != "cash-reason" {
             return None;
         }
@@ -1026,7 +1393,7 @@ impl Controller {
             "active" => e.active = on,
             _ => {}
         }
-        Some(())
+        Some(Vec::new())
     }
 
     /// A picker of the section; `None` when not one of them.
@@ -1092,6 +1459,12 @@ impl Controller {
                 self.select_reason(row);
                 Vec::new()
             }
+            "cash-photo" => {
+                if row < c.photos.photos.len() {
+                    c.photos.selected = row;
+                }
+                Vec::new()
+            }
             _ => return None,
         })
     }
@@ -1106,6 +1479,17 @@ impl Controller {
                 vec![self.cash_call(Call::SessionMovements(id))]
             }
             ("day.closed", Screen::DayClose) if !self.cash.day.running => self.reload_day(),
+            ("cash.moved", Screen::CashMovements) => {
+                // A listed movement changed (a photo): read it again.
+                let id = event.data["movement_id"].as_str().unwrap_or_default();
+                let known = self.cash.movements.rows.iter().any(|m| m.id == id)
+                    || self.cash.photos.movement_id == id;
+                if known && !id.is_empty() {
+                    vec![self.cash_call(Call::Movement(id.to_owned()))]
+                } else {
+                    Vec::new()
+                }
+            }
             _ => Vec::new(),
         }
     }
@@ -1259,6 +1643,27 @@ impl Controller {
                 }
             },
             Reply::ZRun(day, result) => return self.z_ran(&day, *result),
+            Reply::Movement(result) => match result {
+                Ok(m) => {
+                    let shown = self.cash.photos.movement_id == m.id;
+                    let (id, ids) = (m.id.clone(), m.photo_ids.clone());
+                    if let Some(row) = self.cash.movements.rows.iter_mut().find(|r| r.id == m.id) {
+                        *row = m;
+                    }
+                    if shown {
+                        return self.show_photos(&id, &ids);
+                    }
+                }
+                Err(e) => {
+                    // A failed refresh leaves the row as it was; only an ended login matters.
+                    let _ = self.failed(&e);
+                }
+            },
+            Reply::Photo(movement_id, photo_id, result) => {
+                self.photo_read(&movement_id, &photo_id, result);
+            }
+            Reply::Picked(movement_id, result) => return self.photo_picked(movement_id, result),
+            Reply::Uploaded(upload, result) => return self.photo_uploaded(upload, result),
             Reply::Reasons(result) => match result {
                 Ok(mut list) => {
                     list.sort_by(|a, b| {
@@ -1736,5 +2141,213 @@ mod tests {
         assert_eq!(c.cash_toggle("other", "active", true), None);
         assert_eq!(c.cash_choose("other", "x", 0), None);
         assert_eq!(c.cash_choose("cash-filter", "x", 0), None);
+    }
+
+    fn photo(id: &str, movement: &str) -> NotaPhoto {
+        NotaPhoto {
+            id: id.into(),
+            cash_movement_id: movement.into(),
+            ..NotaPhoto::default()
+        }
+    }
+
+    fn upload(movement: &str, id: &str) -> Upload {
+        Upload {
+            movement_id: movement.into(),
+            photo_id: id.into(),
+            bytes: vec![1, 2, 3],
+        }
+    }
+
+    #[test]
+    fn ctrl_u_is_refused_on_screen_without_cash_out_or_at_three_photos() {
+        let mut c = office(&[REPORT_SALES], "b");
+        c.update(Msg::Action("tab-cash-movements".into()));
+        assert!(
+            c.update(Msg::Action("cash-photo-add".into()))
+                .effects
+                .is_empty()
+        );
+        let mut m = moved("01");
+        m.photo_ids = vec!["p1".into()];
+        c.cash.movements.rows = vec![m];
+        let effects = key(&mut c, "u", true);
+        // The slip and the stored photo are read; nothing is picked.
+        assert!(matches!(
+            calls(&effects)[..],
+            [Call::Slip { .. }, Call::Photo { .. }]
+        ));
+        assert_eq!(
+            c.cash
+                .photos
+                .notice
+                .as_ref()
+                .map(|n| (n.code, n.arg.as_str())),
+            Some(("photo_denied", CASH_OUT))
+        );
+        let mut c = all();
+        c.session
+            .as_mut()
+            .unwrap()
+            .me
+            .permissions_anywhere
+            .push(CASH_OUT.into());
+        c.update(Msg::Action("tab-cash-movements".into()));
+        let mut m = moved("01");
+        m.photo_ids = vec!["p1".into(), "p2".into(), "p3".into()];
+        c.cash.movements.rows = vec![m];
+        c.update(Msg::Action("cash-open".into()));
+        assert!(key(&mut c, "u", true).is_empty());
+        assert_eq!(
+            c.cash.photos.notice.as_ref().map(|n| n.code),
+            Some("photo_limit")
+        );
+        // Busy: one at a time.
+        c.cash.movements.rows[0].photo_ids.clear();
+        assert!(matches!(
+            calls(&key(&mut c, "u", true))[..],
+            [Call::PickPhoto(_)]
+        ));
+        assert!(key(&mut c, "u", true).is_empty());
+    }
+
+    #[test]
+    fn photo_answers_and_refusals() {
+        let mut c = all();
+        c.update(Msg::Action("tab-cash-movements".into()));
+        c.cash.movements.rows = vec![moved("01")];
+        c.update(Msg::Action("cash-open".into()));
+        c.cash.photos.busy = true;
+        // A cancelled picker: nothing.
+        assert!(reply(&mut c, Reply::Picked("01".into(), Ok(None))).is_empty());
+        assert!(!c.cash.photos.busy && c.cash.photos.notice.is_none());
+        // The server's refusals.
+        let limit = ClientError::Api(Problem::new(409, "photo_limit", "x").with("max", 3));
+        reply(&mut c, Reply::Uploaded(upload("01", "p"), Err(limit)));
+        assert_eq!(
+            c.cash
+                .photos
+                .notice
+                .as_ref()
+                .map(|n| (n.code, n.arg.as_str())),
+            Some(("photo_limit", "3"))
+        );
+        let denied = ClientError::Api(
+            Problem::new(403, "permission_denied", "x").with("permission", CASH_OUT),
+        );
+        reply(&mut c, Reply::Uploaded(upload("01", "p"), Err(denied)));
+        assert_eq!(
+            c.cash.photos.notice.as_ref().map(|n| n.code),
+            Some("photo_denied")
+        );
+        reply(
+            &mut c,
+            Reply::Picked("01".into(), Err(api(413, "payload_too_large"))),
+        );
+        assert_eq!(
+            c.cash.photos.notice.as_ref().map(|n| n.code),
+            Some("image_too_large")
+        );
+        assert!(c.cash.retry.is_none());
+        // Added to a movement no longer shown (nor listed): only the message; another
+        // movement's pending retry stays.
+        c.cash.retry = Some(upload("01", "r"));
+        assert!(
+            reply(
+                &mut c,
+                Reply::Uploaded(upload("02", "p9"), Ok(photo("p9", "02")))
+            )
+            .is_empty()
+        );
+        assert_eq!(
+            c.cash.photos.notice.as_ref().map(|n| n.code),
+            Some("photo_added")
+        );
+        assert!(c.cash.photos.photos.is_empty());
+        assert!(c.cash.retry.is_some());
+        // Reads: a missing file, a failure, an answer for another movement.
+        c.cash.photos.photos = vec![
+            ("a".into(), PhotoImage::Loading),
+            ("b".into(), PhotoImage::Loading),
+        ];
+        reply(
+            &mut c,
+            Reply::Photo("01".into(), "a".into(), Err(api(404, "not_found"))),
+        );
+        reply(
+            &mut c,
+            Reply::Photo("01".into(), "b".into(), Err(api(500, "internal"))),
+        );
+        reply(&mut c, Reply::Photo("02".into(), "a".into(), Ok(vec![1])));
+        assert!(
+            matches!(&c.cash.photos.photos[0].1, PhotoImage::Failed(n) if n.code == "photo_missing")
+        );
+        assert!(matches!(&c.cash.photos.photos[1].1, PhotoImage::Failed(_)));
+        // Zoom needs a loaded photo; next cycles.
+        c.update(Msg::Action("cash-photo-zoom".into()));
+        assert!(!c.cash.photos.zoom);
+        c.update(Msg::Action("cash-photo-next".into()));
+        assert_eq!(c.cash.photos.selected, 1);
+        c.update(Msg::Action("cash-photo-next".into()));
+        assert_eq!(c.cash.photos.selected, 0);
+        assert_eq!(c.cash_pick("cash-photo", 9), Some(Vec::new()));
+        assert_eq!(c.cash.photos.selected, 0);
+        // A refreshed movement: the row is replaced, its new photos read; a failure is ignored.
+        let mut m = moved("01");
+        m.photo_ids = vec!["a".into(), "c".into()];
+        let effects = reply(&mut c, Reply::Movement(Ok(m)));
+        assert!(matches!(
+            calls(&effects)[..],
+            [Call::Photo { photo_id, .. }] if photo_id == "c"
+        ));
+        assert_eq!(c.cash.movements.rows[0].photo_ids.len(), 2);
+        assert!(reply(&mut c, Reply::Movement(Err(api(500, "internal")))).is_empty());
+        // A login that ended while reading a photo logs out.
+        reply(
+            &mut c,
+            Reply::Photo("01".into(), "c".into(), Err(api(401, "invalid_session"))),
+        );
+        assert!(c.session.is_none());
+    }
+
+    #[test]
+    fn big_bytes_stay_out_of_debug_output() {
+        let u = upload("m", "p");
+        assert_eq!(
+            format!("{u:?}"),
+            r#"Upload { movement_id: "m", photo_id: "p", bytes: 3 }"#
+        );
+        assert_eq!(
+            format!("{:?}", PhotoImage::Loaded(vec![0; 5])),
+            "Loaded(5 bytes)"
+        );
+        assert_eq!(format!("{:?}", PhotoImage::Loading), "Loading");
+        assert!(format!("{:?}", PhotoImage::Failed(Notice::bad("x"))).starts_with("Failed("));
+    }
+
+    #[test]
+    fn the_missing_nota_filter_is_sent_and_cleared() {
+        let mut c = all();
+        c.update(Msg::Action("tab-cash-movements".into()));
+        let effects = c
+            .update(Msg::Toggle {
+                kind: "cash-filter".into(),
+                row: 0,
+                field: "missing_nota".into(),
+                on: true,
+            })
+            .effects;
+        assert!(matches!(
+            calls(&effects)[..],
+            [Call::Movements {
+                query: CashQuery {
+                    missing_nota: Some(true),
+                    ..
+                },
+                ..
+            }]
+        ));
+        c.update(Msg::Action("cash-clear".into()));
+        assert!(!c.cash.filters.missing_nota);
     }
 }

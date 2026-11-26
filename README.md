@@ -137,11 +137,11 @@ The back-office window is keyboard-first too; shortcuts work while a text field 
 | Sales / Returns lists | filters branch, register, from / until (`YYYY-MM-DD`), customer (member code or phone), number, status (sales); Enter in a filter field or Search runs them, Clear resets · ↑/↓ move (past the last row loads more) · Ctrl+L load more · Ctrl+F to the number · Enter open |
 | Sale / Return detail | ↑/↓ pick a linked document (the returns of a sale; a return's original and exchange sale) · Enter open it · Esc back (through the opened documents, then the list) |
 | Tender types | ↑/↓ pick · Ctrl+N new · Ctrl+S save (the kind is fixed once saved) · Ctrl+Shift+A archive (asks first) · needs `tender.manage` at HQ |
-| Sales settings | Ctrl+S save the return window (`return_days`, 0 = no limit) and the receipt width per branch (32 / 42 / 48) · needs `tender.manage` at HQ |
+| Sales settings | Ctrl+S save the return window (`return_days`, 0 = no limit), the receipt width per branch (32 / 42 / 48) and the missing-nota amount (`nota_flag_above`, Rp, 0 = off; left empty it stays as it is) · needs `tender.manage` at HQ |
 | Cash screens (F9) | Ctrl+1 sessions · Ctrl+2 cash movements · Ctrl+3 day close · Ctrl+4 cash reasons · F5 refresh · reading needs `report.sales` |
 | Sessions | filters branch, register, cashier, from / until (`YYYY-MM-DD`, by open time), status; Search or Enter in a date runs them, Clear resets · ↑/↓ move (past the last row loads more) · Ctrl+L load more · Enter open |
 | Session detail | an open session shows its live X (`report.sales` + `session.view_expected`; F5 reads it again), a closed one its close report · ↑/↓ its cash movements · Ctrl+P reprint the close report (COPY) · Esc back |
-| Cash movements | filters branch, register, session, kind, reason, from / until · ↑/↓ move (past the last row loads more) · Ctrl+L load more · Enter shows the slip · Ctrl+P its copy (`sale.reprint`) |
+| Cash movements | filters branch, register, session, kind, reason, from / until and **Missing nota** (cash outs from `nota_flag_above` without a photo; each row shows its photo count and "No nota") · ↑/↓ move (past the last row loads more) · Ctrl+L load more · Enter shows the slip and its nota photos under it (a click on a thumbnail picks it) · Ctrl+P its copy (`sale.reprint`) · Ctrl+U add a nota photo from a file to the highlighted movement (`cash.out`, at most 3; after a network failure Ctrl+U sends the same photo again) · Ctrl+E the picked photo over the screen, Esc closes it · Ctrl+G the next photo |
 | Day close | the branch picker (default your branch) · ↑/↓ through the days still to close, then the Z reports · Enter on a day runs its Z (asks first; `day.close`) · Enter on a Z shows it · Ctrl+P its copy · Ctrl+L more Z reports |
 | Cash reasons | ↑/↓ pick · Ctrl+N new · Ctrl+S save (the direction is fixed once saved) · Ctrl+Shift+A archive (asks first) · needs `tender.manage` at HQ |
 | Groups / Tiers | ↑/↓ pick · Ctrl+S save · Ctrl+N add · Ctrl+Shift+A archive / unarchive · Esc back to the customer list |
@@ -222,8 +222,10 @@ Every setting is taken from, in order: **command-line flag > environment variabl
   of at least `nota_flag_above` (`/settings/sales`, default Rp 100 000) without one is flagged
   "missing nota". The file picker uses the XDG desktop portal on Linux (no portal: F shows the
   error); the webcam needs `cargo build -p sultan-app --features webcam`. The photo bytes are
-  not pushed to HQ yet (no sync worker). The back office does not show or upload nota photos
-  yet; slips and reports are text on screen until 2.11 prints them. The register offers
+  not pushed to HQ yet (no sync worker). The back office (K7) shows a movement's photos under its
+  slip, adds one from a file (Ctrl+U), filters the cash outs missing a nota and sets
+  `nota_flag_above` on the sales settings; it has no webcam. Slips and reports are text on
+  screen until 2.11 prints them. The register offers
   the Z to a cashier without checking for other open sessions (a cashier may not list the days
   still to close); the run then names them.
 - The register sells (spec 2.6 S4): scan, type or search (F2) items into the cart (a rescan adds

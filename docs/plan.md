@@ -436,6 +436,19 @@ Where we are, so any session can pick up from here. Update this section at the e
   31–34), headless tests (§12 39), Postman 159a–h (194 requests), screenshots `12b`, `12d`,
   `12e`. Readings in spec §21 (from K6). The back-office photo view, Ctrl+U upload and the
   missing-nota filter follow K5.
+- **2.7 K7 back-office nota photos (2026-11-25)**, so **2.7 Cash management is complete**: F9 →
+  Ctrl+2 shows the movement's nota photos under its slip (read once, decoded once; thumbnails,
+  Ctrl+E over the screen, Ctrl+G next), Ctrl+U adds one from a file through the window's
+  `PhotoSource` (`BackOfficeOptions::photos`; refused on screen without `cash.out` or at 3; the
+  server's refusals and picker failures as messages; after a network failure Ctrl+U re-sends the
+  kept bytes under the same photo ID), a photo that cannot be read (`403` / `404`) says why in
+  its place, `cash.moved` re-reads a listed movement; the **Missing nota** filter
+  (`missing_nota=true`, the API had it) and a *Nota* column (photo count or "No nota");
+  `nota_flag_above` on the sales settings (empty keeps it, the server's `422` as a message); the
+  register reuses the photo ID after a network failure; the day close's branch picker shows its
+  branch; the header leaves the "Back office" title out at 1024 px instead of eliding it. No API
+  change. README keys, translations, headless tests (spec §12 40–43), screenshots `bo-40`–`bo-42`
+  (and every 1024 px `bo-*` for the header). Readings in spec §22 (from K7).
 - **UI only, except HQ** (§3, 2026-11-09):
   - Start screen on single-app and terminal machines: F1 Kasir, F2 Back office, F3 Settings.
   - Settings: language (F6), set up again (F8), and on a single app "Allow terminals to connect"
@@ -475,11 +488,9 @@ Where we are, so any session can pick up from here. Update this section at the e
 - Each sub-agent worktree builds its own `target/` (20–40 GB with coverage); clear finished ones.
 
 **Next**
-- **2.7 Cash management**: spec agreed (2026-11-19); K1–K6 done. Left: K6's back-office part
-  (the photo view and Ctrl+U upload from a file in the F9 cash movements' slip pane, and the
-  missing-nota filter; spec §10 and §21).
-- Then the remaining P1 specs to discuss (2.4 is P2): 2.8 inventory, 2.9 money, 2.10 reports,
-  2.11 hardware (ESC/POS + drawer), old-Sultan importer.
+- **2.7 Cash management is complete** (K1–K7). Next: discuss **2.8 inventory** (spec first).
+- Then the remaining P1 specs to discuss (2.4 is P2): 2.9 money, 2.10 reports, 2.11 hardware
+  (ESC/POS + drawer), old-Sultan importer.
 
 **Way of working**
 - Each phase is discussed, written as a spec in `docs/spec/`, then built in phases; the user usually

@@ -445,6 +445,35 @@ fn tender_types_crud_and_settings() {
         .unwrap();
     assert_eq!(stored.return_days, 0);
     assert_eq!(stored.receipt_widths[0].receipt_width, 48);
+    assert_eq!(
+        stored.nota_flag_above,
+        Some(100_000),
+        "shown, sent as it was"
+    );
+    // The missing-nota threshold (spec 2.7 §2a): shown grouped; empty keeps it; the server's
+    // 422 below 0 is a message; a new amount is stored.
+    assert_eq!(o.app.ui.get_sales_settings().nota_flag_above, "100.000");
+    o.edit("sales-settings", "nota_flag_above", "");
+    o.ctrl("s");
+    let put = o.fake.calls_of("put_sales_settings");
+    assert!(!put.last().unwrap().contains("nota_flag_above"), "{put:?}");
+    o.edit("sales-settings", "nota_flag_above", "-1");
+    o.ctrl("s");
+    assert_eq!(
+        o.text(o.app.ui.get_sales_settings().notice),
+        "Type the missing-nota amount in Rupiah, 0 or more (0 = off)."
+    );
+    o.edit("sales-settings", "nota_flag_above", "lima");
+    o.ctrl("s");
+    assert_eq!(o.fake.calls_of("put_sales_settings").len(), put.len() + 1);
+    o.edit("sales-settings", "nota_flag_above", "Rp 250.000");
+    o.ctrl("s");
+    assert_eq!(o.text(o.app.ui.get_sales_settings().notice), "Saved.");
+    let stored = o
+        .runtime
+        .block_on(o.fake.sales_settings(&o.owner()))
+        .unwrap();
+    assert_eq!(stored.nota_flag_above, Some(250_000));
     // The receipts follow the saved width.
     let sale = o.demo.sales[0].summary.id.clone();
     let receipt = o

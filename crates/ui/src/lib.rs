@@ -28,7 +28,9 @@
 //!   product list, product form, category and brand editors, and the customer screens (spec 2.5,
 //!   phase M4: list, form, groups, tiers, duplicates and merge, negative balances, erase, balance
 //!   settings; [`backoffice::customers`]), a window of its own with its own controller, driven
-//!   through [`sultan_client::BackOffice`].
+//!   through [`sultan_client::BackOffice`]. Its cash screens ([`backoffice::cash`],
+//!   [`backoffice_cash`], spec 2.7 K5 and K7) show and add nota photos through the same
+//!   [`photo::PhotoSource`] (a file only; [`backoffice_app::BackOfficeOptions::photos`]).
 //! - `ui/*.slint`: the window, mostly declarative. Every user-facing string is `@tr()` in
 //!   `ui/theme.slint` or `ui/app.slint`; the Indonesian translation is bundled from
 //!   `translations/id/LC_MESSAGES/sultan-ui.po` and picked from the system locale or

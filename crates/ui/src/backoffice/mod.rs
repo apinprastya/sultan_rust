@@ -2065,8 +2065,8 @@ impl Controller {
         if self.sales_toggle(kind, field, on).is_some() {
             return Vec::new();
         }
-        if self.cash_toggle(kind, field, on).is_some() {
-            return Vec::new();
+        if let Some(effects) = self.cash_toggle(kind, field, on) {
+            return effects;
         }
         let can = self.can_manage();
         let branches: Vec<String> = self

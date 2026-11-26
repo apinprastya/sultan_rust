@@ -370,6 +370,31 @@ export global BoStrings {
         if (code == "direction_fixed") {
             return @tr("The direction of a saved reason cannot change.");
         }
+        // Nota photos (spec 2.7 §2a, K7).
+        if (code == "photo_denied") {
+            return @tr("Adding a nota photo needs the permission {}.", arg);
+        }
+        if (code == "photo_limit") {
+            return @tr("A cash movement has at most {} nota photos.", arg);
+        }
+        if (code == "photo_added") {
+            return @tr("Nota photo added to {}.", arg);
+        }
+        if (code == "photo_failed") {
+            return @tr("No photo was added: {}.", arg);
+        }
+        if (code == "photo_retry") {
+            return @tr("No photo was added: the server could not be reached. Ctrl+U sends the same photo again.");
+        }
+        if (code == "photo_read_denied") {
+            return @tr("Seeing the photo needs the permission {}.", arg);
+        }
+        if (code == "photo_missing") {
+            return @tr("The photo is not on this server yet.");
+        }
+        if (code == "invalid_nota_flag") {
+            return @tr("Type the missing-nota amount in Rupiah, 0 or more (0 = off).");
+        }
         // Pricing (spec 2.3, R4).
         if (code == "price_read_only") {
             return @tr("Read-only: changing prices needs the permission price.manage. Ask the owner.");
@@ -658,7 +683,7 @@ export global BoStrings {
             return @tr("reversed");
         }
         if (code == "cash_flag_missing_nota") {
-            return @tr("missing nota");
+            return @tr("No nota");
         }
         // Pricing (spec 2.3, R4): list kinds, row states.
         if (code == "kind_default") {

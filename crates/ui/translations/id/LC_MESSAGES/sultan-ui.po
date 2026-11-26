@@ -3316,9 +3316,6 @@ msgstr "pembatalan"
 msgid "reversed"
 msgstr "dibatalkan"
 
-msgid "missing nota"
-msgstr "tanpa nota"
-
 msgid "Cash & Z"
 msgstr "Kas & Z"
 
@@ -3351,3 +3348,63 @@ msgstr "Foto: {}"
 
 msgid "No nota"
 msgstr "Tanpa nota"
+
+msgid "Missing nota"
+msgstr "Tanpa nota"
+
+msgid "Nota"
+msgstr "Nota"
+
+msgid "Nota photos ({} of 3)"
+msgstr "Foto nota ({} dari 3)"
+
+msgid "Enter shows the photos of the highlighted movement; Ctrl+U adds one from a file."
+msgstr "Enter menampilkan foto mutasi yang disorot; Ctrl+U menambah satu dari berkas."
+
+msgid "No nota photo yet: this cash out is flagged missing nota."
+msgstr "Belum ada foto nota: kas keluar ini ditandai tanpa nota."
+
+msgid "No nota photo yet."
+msgstr "Belum ada foto nota."
+
+msgid "Adding the photo…"
+msgstr "Menambahkan foto…"
+
+msgid "Nota photo {}"
+msgstr "Foto nota {}"
+
+msgid "Add photo"
+msgstr "Tambah foto"
+
+msgid "Enlarge"
+msgstr "Perbesar"
+
+msgid "Next photo"
+msgstr "Berikutnya"
+
+msgid "Missing nota from (Rp, 0 = off)"
+msgstr "Tanpa nota mulai (Rp, 0 = mati)"
+
+msgid "A cash out of at least this amount without a nota photo is flagged “missing nota”. Left empty, the current amount stays."
+msgstr "Kas keluar sebesar ini atau lebih tanpa foto nota ditandai “tanpa nota”. Bila dikosongkan, jumlah yang sekarang tetap."
+
+msgid "Adding a nota photo needs the permission {}."
+msgstr "Menambah foto nota memerlukan izin {}."
+
+msgid "A cash movement has at most {} nota photos."
+msgstr "Satu mutasi kas paling banyak punya {} foto nota."
+
+msgid "No photo was added: {}."
+msgstr "Foto tidak ditambahkan: {}."
+
+msgid "No photo was added: the server could not be reached. Ctrl+U sends the same photo again."
+msgstr "Foto tidak ditambahkan: server tidak dapat dihubungi. Ctrl+U mengirim foto yang sama lagi."
+
+msgid "Seeing the photo needs the permission {}."
+msgstr "Melihat foto memerlukan izin {}."
+
+msgid "The photo is not on this server yet."
+msgstr "Foto belum ada di server ini."
+
+msgid "Type the missing-nota amount in Rupiah, 0 or more (0 = off)."
+msgstr "Ketik jumlah tanpa nota dalam Rupiah, 0 atau lebih (0 = mati)."

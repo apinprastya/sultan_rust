@@ -14,10 +14,13 @@
 //! - **Nota photos** (§2a, phase K6): on the slip after posting, or on the highlighted movement
 //!   of the list, F adds a photo from a file and W one from the webcam (only offered when
 //!   [`Controller::camera`]): the bytes come from the window's [`crate::photo::PhotoSource`],
-//!   then `PUT /cash-movements/{id}/photos/{photo_id}` with a new `UUIDv7` per attempt. A
-//!   cancelled picker does nothing; a refused or failed upload shows its message and the
-//!   movement stays posted (F again retries). The list shows each movement's photo count and the
-//!   missing-nota flag.
+//!   then `PUT /cash-movements/{id}/photos/{photo_id}` with a new `UUIDv7` per photo; after a
+//!   network failure (or a cancelled picker) the next F / W on the same movement reuses the ID,
+//!   so a photo the server stored before the answer was lost is not added twice when the same
+//!   file is picked again (another file then gets `409 conflict`, and the attempt after that a
+//!   new ID). A cancelled picker does nothing; a refused or failed upload shows its message and
+//!   the movement stays posted (F again retries). The list shows each movement's photo count
+//!   and the missing-nota flag.
 //! - **X report** (Shift+F12): `GET /cashier-sessions/{id}/x-report/text` for the caller's open
 //!   session; a cashier without `session.view_expected` gets the manager PIN dialog
 //!   (`context_ref` = the session ID). Esc goes back to the sell screen with the cart kept.
@@ -808,9 +811,15 @@ impl Controller {
                 if camera && !self.camera {
                     return Vec::new();
                 }
+                // After a network failure the same ID again: no duplicate if it was stored.
+                let photo_id = match &self.photo_retry {
+                    Some((m, id)) if *m == movement_id => id.clone(),
+                    _ => new_key(),
+                };
+                self.photo_retry = Some((movement_id.clone(), photo_id.clone()));
                 return self.cash_call(Call::Photo {
                     movement_id,
-                    photo_id: new_key(),
+                    photo_id,
                     camera,
                 });
             }
@@ -1213,6 +1222,10 @@ impl Controller {
         movement_id: &str,
         result: Result<Option<NotaPhoto>, ClientError>,
     ) -> Vec<Effect> {
+        // The ID is kept only for a retry after a network failure (or a cancelled picker).
+        if !matches!(result, Ok(None) | Err(ClientError::Network(_))) {
+            self.photo_retry = None;
+        }
         match result {
             Ok(None) => {}
             Ok(Some(photo)) => {

@@ -1,23 +1,35 @@
-//! The glue of the back office's cash screens (spec 2.7 phase K5): starting the calls of
+//! The glue of the back office's cash screens (spec 2.7 phases K5 and K7): starting the calls of
 //! [`crate::backoffice::cash`] and showing its state in the window. Kept apart from
 //! [`crate::backoffice_app`] only for size.
+//!
+//! Nota photos: Ctrl+U asks the window's [`PhotoSource`] for a file (a file over 10 MB is
+//! `413 payload_too_large`, a picker failure [`ClientError::Unexpected`], as at the register);
+//! the stored JPEGs are decoded into `slint::Image`s once per photo ID (a photo never changes).
 
+use std::cell::RefCell;
+use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
 use std::rc::Rc;
 
 use slint::{Model, ModelRc, SharedString, VecModel};
-use sultan_client::{BackOffice, CashMovement, CloseReport, CountAmount, SessionDetail};
+use sultan_client::{
+    BackOffice, CashMovement, ClientError, CloseReport, CountAmount, Problem, SessionDetail,
+};
 
 use crate::amount::{rupiah, signed_rupiah};
-use crate::backoffice::cash::{Call, DIRECTIONS, KINDS, Pane, Reply, STATUSES, TextPane};
+use crate::backoffice::cash::{
+    Call, DIRECTIONS, KINDS, Pane, PhotoImage, Reply, STATUSES, TextPane,
+};
 use crate::backoffice::sales::place_of;
 use crate::backoffice::{Controller, Msg};
 use crate::controller::Notice;
 use crate::input::date_time;
+use crate::photo::{PhotoError, PhotoSource};
 use crate::{
     BackOfficeWindow, BoCashFilters, BoDayClose, BoDocList, BoFact, BoMovementRow, BoPendingRow,
-    BoReasonEditor, BoReasonRow, BoSessionRow, BoSessionView, BoTextPane, BoZRow, Note,
+    BoPhoto, BoPhotoPane, BoReasonEditor, BoReasonRow, BoSessionRow, BoSessionView, BoTextPane,
+    BoZRow, Note,
 };
 
 type MsgFuture = Pin<Box<dyn Future<Output = Msg> + Send>>;
@@ -40,6 +52,9 @@ pub struct CashModels {
     cashier_choices: Rc<VecModel<SharedString>>,
     session_choices: Rc<VecModel<SharedString>>,
     reason_choices: Rc<VecModel<SharedString>>,
+    photos: Rc<VecModel<BoPhoto>>,
+    /// Decoded nota photos by photo ID.
+    decoded: RefCell<HashMap<String, slint::Image>>,
 }
 
 impl CashModels {
@@ -60,6 +75,16 @@ impl CashModels {
         ui.set_cash_cashier_choices(ModelRc::from(self.cashier_choices.clone()));
         ui.set_cash_session_choices(ModelRc::from(self.session_choices.clone()));
         ui.set_cash_reason_choices(ModelRc::from(self.reason_choices.clone()));
+        ui.set_cash_photos(ModelRc::from(self.photos.clone()));
+    }
+
+    /// The image of a stored photo, decoded once.
+    fn image(&self, id: &str, bytes: &[u8]) -> slint::Image {
+        self.decoded
+            .borrow_mut()
+            .entry(id.to_owned())
+            .or_insert_with(|| crate::backoffice_app::decode(bytes))
+            .clone()
     }
 }
 
@@ -81,8 +106,16 @@ fn index(i: usize) -> i32 {
     i32::try_from(i).unwrap_or(i32::MAX)
 }
 
-/// Starts a cash call; the answer comes back as [`Msg::Cash`].
-pub fn start_cash(service: &dyn BackOffice, token: &str, call: &Call, lang: &str) -> MsgFuture {
+/// Starts a cash call; the answer comes back as [`Msg::Cash`]. `photos` answers
+/// [`Call::PickPhoto`].
+#[allow(clippy::too_many_lines)] // one arm per call
+pub fn start_cash(
+    service: &dyn BackOffice,
+    photos: &dyn PhotoSource,
+    token: &str,
+    call: &Call,
+    lang: &str,
+) -> MsgFuture {
     macro_rules! call {
         ($future:expr, $reply:expr) => {{
             let future = $future;
@@ -178,6 +211,44 @@ pub fn start_cash(service: &dyn BackOffice, token: &str, call: &Call, lang: &str
         Call::ArchiveReason(id) => call!(service.delete_cash_reason(token, id), |r| {
             Reply::ReasonSaved(true, r)
         }),
+        Call::Movement(id) => call!(service.cash_movement(token, id), Reply::Movement),
+        Call::Photo {
+            movement_id,
+            photo_id,
+        } => {
+            let (m, p) = (movement_id.clone(), photo_id.clone());
+            call!(service.cash_photo(token, movement_id, photo_id), move |r| {
+                Reply::Photo(m, p, r)
+            })
+        }
+        Call::PickPhoto(movement_id) => {
+            let m = movement_id.clone();
+            call!(photos.pick_file(), move |r: crate::photo::Picked| {
+                Reply::Picked(
+                    m,
+                    r.map_err(|e| match e {
+                        PhotoError::TooLarge => ClientError::Api(Problem::new(
+                            413,
+                            "payload_too_large",
+                            "the file is larger than 10 MB",
+                        )),
+                        PhotoError::Failed(message) => ClientError::Unexpected(message),
+                    }),
+                )
+            })
+        }
+        Call::Upload(upload) => {
+            let sent = upload.clone();
+            call!(
+                service.add_cash_photo(
+                    token,
+                    &upload.movement_id,
+                    &upload.photo_id,
+                    upload.bytes.clone()
+                ),
+                move |r| Reply::Uploaded(sent, r)
+            )
+        }
     }
 }
 
@@ -235,6 +306,7 @@ fn movement_row(m: &CashMovement) -> BoMovementRow {
         reason: reason.into(),
         amount: signed_rupiah(m.effect).into(),
         flag: flag.into(),
+        photos: index(m.photo_ids.len()),
     }
 }
 
@@ -271,6 +343,41 @@ fn closed_facts(r: &CloseReport, out: &mut Vec<BoFact>) {
         f.tone = -1;
         out.push(f);
     }
+}
+
+/// The nota photos under the slip (Ctrl+2).
+fn render_photos(ui: &BackOfficeWindow, c: &Controller, models: &CashModels) {
+    let p = &c.cash.photos;
+    let rows: Vec<BoPhoto> = p
+        .photos
+        .iter()
+        .map(|(id, image)| match image {
+            PhotoImage::Loading => BoPhoto {
+                loading: true,
+                ..BoPhoto::default()
+            },
+            PhotoImage::Loaded(bytes) => BoPhoto {
+                image: models.image(id, bytes),
+                ..BoPhoto::default()
+            },
+            PhotoImage::Failed(n) => BoPhoto {
+                notice: note(Some(n)),
+                ..BoPhoto::default()
+            },
+        })
+        .collect();
+    let selected = rows.get(p.selected).cloned().unwrap_or_default();
+    sync(&models.photos, rows);
+    let movement = c.cash.movements.rows.iter().find(|m| m.id == p.movement_id);
+    ui.set_cash_photo_pane(BoPhotoPane {
+        shown: !p.movement_id.is_empty(),
+        selected: index(p.selected),
+        large: selected,
+        zoom: p.zoom,
+        busy: p.busy,
+        missing: movement.is_some_and(|m| m.missing_nota),
+        notice: note(p.notice.as_ref()),
+    });
 }
 
 fn session_facts(c: &Controller, d: &SessionDetail) -> Vec<BoFact> {
@@ -352,6 +459,7 @@ pub fn render_cash(ui: &BackOfficeWindow, c: &Controller, models: &CashModels) {
         status_index: index(f.status.min(STATUSES.len() - 1)),
         kind_index: index(f.kind.min(KINDS.len() - 1)),
         reason_index: index(f.reason),
+        missing_nota: f.missing_nota,
         from: f.from.as_str().into(),
         until: f.until.as_str().into(),
         date_error: f.bad_date.map_or_else(Note::default, |field| Note {
@@ -439,6 +547,7 @@ pub fn render_cash(ui: &BackOfficeWindow, c: &Controller, models: &CashModels) {
     );
     ui.set_cash_slip_pane(pane(&st.slip));
     sync(&models.slip, lines(&st.slip.lines));
+    render_photos(ui, c, models);
 
     // Day close.
     let d = &st.day;
@@ -448,8 +557,14 @@ pub fn render_cash(ui: &BackOfficeWindow, c: &Controller, models: &CashModels) {
         .and_then(|b| c.reference.branches.iter().find(|x| x.id == *b))
         .map(|b| format!("{} · {}", b.code, b.name))
         .unwrap_or_default();
+    let branch_index = d
+        .branch
+        .as_ref()
+        .and_then(|b| c.reference.branches.iter().position(|x| x.id == *b))
+        .map_or(0, |i| index(i + 1));
     ui.set_day_close(BoDayClose {
         branch: branch.into(),
+        branch_index,
         cursor: index(d.cursor),
         pending_count: index(d.pending.len()),
         loading: d.pending_loading || d.z.loading,

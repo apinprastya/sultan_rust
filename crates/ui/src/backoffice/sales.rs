@@ -14,8 +14,10 @@
 //! 3. **Tender types** ([`Screen::TenderTypes`], HQ, `tender.manage`) — every tender type with an
 //!    editor: Ctrl+N new, Ctrl+S save, Ctrl+Shift+A archive (asks first). The kind is fixed once
 //!    saved. Without `tender.manage` (or on a branch node, `read_only_replica`) it is read-only.
-//! 4. **Sales settings** ([`Screen::SalesSettings`]) — `return_days` (0 = no limit) and the
-//!    receipt width of each branch (32 / 42 / 48); Ctrl+S saves (HQ, `tender.manage`).
+//! 4. **Sales settings** ([`Screen::SalesSettings`]) — `return_days` (0 = no limit), the
+//!    receipt width of each branch (32 / 42 / 48) and the missing-nota threshold
+//!    `nota_flag_above` (spec 2.7 §2a, Rp, 0 = off; left empty it is not sent and the server
+//!    keeps it; below 0 the server's `422` is shown); Ctrl+S saves (HQ, `tender.manage`).
 //!
 //! The customer form's **purchase history** ([`Screen::CustomerHistory`], Ctrl+H on the form,
 //! spec 2.5 §9): the customer's sales and returns across branches (merged customers included,
@@ -302,6 +304,8 @@ pub struct SettingsEditor {
     pub stored: Option<SalesSettings>,
     /// `return_days` as typed.
     pub return_days: String,
+    /// `nota_flag_above` as typed (empty: kept as stored).
+    pub nota_flag_above: String,
     /// The width index per branch (into [`WIDTHS`]), by branch ID.
     pub widths: Vec<(String, usize)>,
     /// The node refused writes.
@@ -963,6 +967,16 @@ impl Controller {
             s.notice = Some(Notice::bad("invalid_return_days"));
             return Vec::new();
         }
+        // Empty keeps the stored threshold; a negative one is the server's to refuse (`422`).
+        let typed = s.nota_flag_above.trim();
+        let nota_flag_above = if typed.is_empty() {
+            None
+        } else if let Some(v) = super::pricing::parse_amount(typed) {
+            Some(v)
+        } else {
+            s.notice = Some(Notice::bad("invalid_nota_flag"));
+            return Vec::new();
+        };
         let body = SalesSettings {
             return_days,
             receipt_widths: s
@@ -973,8 +987,7 @@ impl Controller {
                     receipt_width: WIDTHS[(*i).min(WIDTHS.len() - 1)],
                 })
                 .collect(),
-            // The nota threshold (spec 2.7 §2a) is not on this screen: the server keeps it.
-            nota_flag_above: None,
+            nota_flag_above,
         };
         s.notice = None;
         vec![self.sales_call(Call::PutSettings(body))]
@@ -1008,6 +1021,7 @@ impl Controller {
             ("tender", "name") => self.sales.editor.name = value,
             ("tender", "sort") => self.sales.editor.sort = value,
             ("sales-settings", "return_days") => self.sales.settings.return_days = value,
+            ("sales-settings", "nota_flag_above") => self.sales.settings.nota_flag_above = value,
             _ => {
                 let _ = row;
             }
@@ -1309,6 +1323,10 @@ impl Controller {
                 Ok(s) => {
                     let ed = &mut self.sales.settings;
                     ed.return_days = s.return_days.to_string();
+                    ed.nota_flag_above = s
+                        .nota_flag_above
+                        .map(|v| crate::amount::group(v.unsigned_abs()))
+                        .unwrap_or_default();
                     ed.widths = s
                         .receipt_widths
                         .iter()
@@ -1332,7 +1350,13 @@ impl Controller {
                     if e.code() == Some("read_only_replica") {
                         self.sales.settings.replica = true;
                     }
-                    self.sales.settings.notice = self.sales_failed(&e);
+                    self.sales.settings.notice = if e.code() == Some("invalid_field")
+                        && e.problem().and_then(|p| p.field()) == Some("nota_flag_above")
+                    {
+                        Some(Notice::bad("invalid_nota_flag"))
+                    } else {
+                        self.sales_failed(&e)
+                    };
                 }
             },
             Reply::Found(typed, _) if typed != self.sales.filters.customer.trim() => {}

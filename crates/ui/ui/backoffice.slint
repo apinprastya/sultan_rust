@@ -24,8 +24,8 @@ export { BoCustomerRow, BoCustomerList, BoCustomerForm, BoBalanceRow, BoNamedRow
 export { BoPrices, BoPriceEntryRow, BoPriceTierRow, BoPriceListRow, BoPriceListEditor, BoTaxRateRow, BoTaxRates, BoPricingSettings }
 import { SalesListScreen, SalesDetailScreen, CustomerHistoryScreen, TenderTypesScreen, SalesSettingsScreen, BoDocRow, BoDocList, BoSalesFilters, BoFact, BoSalesDetail, BoTenderRow, BoTenderEditor, BoSalesSettings, BoWidthRow } from "bo_sales.slint";
 export { BoDocRow, BoDocList, BoSalesFilters, BoFact, BoSalesDetail, BoTenderRow, BoTenderEditor, BoSalesSettings, BoWidthRow }
-import { CashSessionsScreen, CashSessionDetailScreen, CashMovementsScreen, DayCloseScreen, CashReasonsScreen, BoCashFilters, BoSessionRow, BoMovementRow, BoSessionView, BoTextPane, BoPendingRow, BoZRow, BoDayClose, BoReasonRow, BoReasonEditor } from "bo_cash.slint";
-export { BoCashFilters, BoSessionRow, BoMovementRow, BoSessionView, BoTextPane, BoPendingRow, BoZRow, BoDayClose, BoReasonRow, BoReasonEditor }
+import { CashSessionsScreen, CashSessionDetailScreen, CashMovementsScreen, DayCloseScreen, CashReasonsScreen, BoCashFilters, BoSessionRow, BoMovementRow, BoSessionView, BoTextPane, BoPendingRow, BoZRow, BoDayClose, BoReasonRow, BoReasonEditor, BoPhoto, BoPhotoPane } from "bo_cash.slint";
+export { BoCashFilters, BoSessionRow, BoMovementRow, BoSessionView, BoTextPane, BoPendingRow, BoZRow, BoDayClose, BoReasonRow, BoReasonEditor, BoPhoto, BoPhotoPane }
 
 export struct BoLogin {
     server: string,
@@ -111,15 +111,21 @@ component Header inherits Rectangle {
                 }
             }
         }
-        Text {
-            text: @tr("Back office");
-            color: Theme.text;
-            font-size: 17px;
-            font-weight: 700;
-            vertical-alignment: center;
-            // On a narrow window (1024 px) the title gives way to the nav buttons.
+        // On a narrow window (1024 px) the title gives way to the nine buttons: it is left out
+        // when it does not fit whole, rather than elided to "B…"; the "S" mark stays.
+        Rectangle {
             min-width: 0px;
-            overflow: elide;
+            preferred-width: title.preferred-width;
+            title := Text {
+                width: parent.width;
+                height: parent.height;
+                visible: parent.width >= self.preferred-width;
+                text: @tr("Back office");
+                color: Theme.text;
+                font-size: 17px;
+                font-weight: 700;
+                vertical-alignment: center;
+            }
         }
         Rectangle {
             width: 8px;
@@ -901,6 +907,8 @@ export component BackOfficeWindow inherits Window {
     in property <BoDocList> cash-movement-list;
     in property <BoTextPane> cash-slip-pane;
     in property <[string]> cash-slip;
+    in property <BoPhotoPane> cash-photo-pane;
+    in property <[BoPhoto]> cash-photos;
     in property <BoDayClose> day-close;
     in property <[BoPendingRow]> pending-rows;
     in property <[BoZRow]> z-rows;
@@ -1375,7 +1383,12 @@ export component BackOfficeWindow inherits Window {
                     list: root.cash-movement-list;
                     pane: root.cash-slip-pane;
                     slip: root.cash-slip;
+                    photo-pane: root.cash-photo-pane;
+                    photos: root.cash-photos;
                     serial: root.cash-serial;
+                    toggle(k, r, f, on) => {
+                        root.toggle(k, r, f, on);
+                    }
                     action(id) => {
                         root.action(id);
                     }

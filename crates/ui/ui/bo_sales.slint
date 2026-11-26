@@ -81,6 +81,7 @@ export struct BoTenderEditor {
 
 export struct BoSalesSettings {
     return-days: string,
+    nota-flag-above: string,
     can-edit: bool,
     loaded: bool,
     notice: Note,
@@ -839,6 +840,18 @@ export component SalesSettingsScreen inherits VerticalLayout {
                 }
                 Hint {
                     text: @tr("A return by receipt older than this needs a manager's approval at the till.");
+                }
+                for s in [root.serial]: Field {
+                    label: @tr("Missing nota from (Rp, 0 = off)");
+                    text: root.settings.nota-flag-above;
+                    placeholder: "100.000";
+                    enabled: root.settings.can-edit;
+                    edited(t) => {
+                        root.edit("sales-settings", 0, 0, "nota_flag_above", t);
+                    }
+                }
+                Hint {
+                    text: @tr("A cash out of at least this amount without a nota photo is flagged “missing nota”. Left empty, the current amount stays.");
                 }
                 SectionTitle {
                     text: @tr("Receipt width per branch");
