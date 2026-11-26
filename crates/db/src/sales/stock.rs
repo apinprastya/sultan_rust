@@ -321,6 +321,17 @@ pub(super) async fn insert_return(
                 LotRule::None,
                 line,
             ));
+        } else if write_off {
+            // Not a restock: it comes in at the average, without a lot, so the `return` +
+            // `write_off` pair nets to zero quantity and value (§2, §20 reading 12).
+            moves.push(base(
+                m.variant,
+                MovementKind::Return,
+                m.base_qty,
+                Valuation::Average,
+                LotRule::None,
+                line,
+            ));
         } else {
             let rows: Vec<&MovementRecord> = match ret.and_then(|l| l.sale_line) {
                 Some(sl) => sale_rows
@@ -336,7 +347,6 @@ pub(super) async fn insert_return(
             match restock_parts(&rows, m.base_qty) {
                 Some(parts) => {
                     for (lot, qty, value) in parts {
-                        let lot = if write_off { LotRule::None } else { lot };
                         moves.push(base(
                             m.variant,
                             MovementKind::Return,

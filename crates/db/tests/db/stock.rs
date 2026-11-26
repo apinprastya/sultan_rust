@@ -307,6 +307,16 @@ async fn sales_write_values_and_reverse_exactly(db: &Db) {
         ),
         (MovementKind::Return, q(2), Some(rp(333)), Some(1))
     );
+    assert_eq!(cost(db, &s, tea).await, (q(5), rp(832), Some(rp(166))));
+    // 5 more at 300 → 10 @ 2 332: the average (233) is no longer the sale line's value (167).
+    opening(
+        db,
+        &s,
+        &[(tea, pcs, 5, 300, None)],
+        NOV16 + 3 * HOUR + HOUR / 2,
+    )
+    .await;
+    assert_eq!(cost(db, &s, tea).await, (q(10), rp(2_332), Some(rp(233))));
     let off = return_of(
         &s.till,
         &sold,
@@ -335,8 +345,11 @@ async fn sales_write_values_and_reverse_exactly(db: &Db) {
             (MovementKind::WriteOff, q(-1))
         ]
     );
-    assert_eq!(moves[0].value, Some(rp(167)));
-    assert!(moves[1].value.is_some());
+    // A written-off return comes in and goes out at the average: the pair leaves the cost as it
+    // was (a sale-line value in would leave 10 @ 2 272).
+    assert_eq!(moves[0].value, Some(rp(233)));
+    assert_eq!(moves[1].value, Some(rp(-233)));
+    assert_eq!(cost(db, &s, tea).await, (q(10), rp(2_332), Some(rp(233))));
     // A variant never received sells without a cost (§17 case 4).
     let stray = cash_sale(&s.till, &[item(VariantId::generate(), pcs, 100, 1)], NOV16);
     let (_, sold) = post(db, &stray).await.unwrap();
@@ -348,7 +361,7 @@ async fn sales_write_values_and_reverse_exactly(db: &Db) {
         stock::branch_on_hand(db, s.till.o.jkt.id, tea)
             .await
             .unwrap(),
-        q(5)
+        q(10)
     );
     assert_balanced(db).await;
 }
