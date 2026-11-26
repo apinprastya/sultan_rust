@@ -28,10 +28,13 @@
 //!   transaction's own reads said it would pass is a lost race: [`DbError::Conflict`], retryable.
 //!   On the rerun the reads are fresh and report the real refusal (`has_returns`,
 //!   `return_qty_exceeded`, `conflict`).
-//! - **Stock** (D9, [`stock_on_hand`]): the movements are appended to `stock_movement`
-//!   (append-only by trigger) at the register's default location, else the branch's receiving
-//!   default location, else without a location (spec 2.6 §19, from S2). Selling marks the
-//!   variants used ([`crate::catalog::mark_used`]), so they are never hard-deleted.
+//! - **Stock** (D9, [`stock_on_hand`]): the movements are posted through the inventory ledger
+//!   ([`crate::stock::post_moves`], spec 2.8 §2) at the register's default location, else the
+//!   branch's receiving default location, else without a location (spec 2.6 §19, from S2), with
+//!   their values: a sale at the average cost (lots FEFO), a post-void puts back exactly what the
+//!   sale took, a restocked return comes back at the value the sale line took, a write-off at the
+//!   average. Selling marks the variants used ([`crate::catalog::mark_used`]), so they are never
+//!   hard-deleted.
 //!
 //! Known limitations: line voids and cart voids (§3) are audit entries the server writes; they are
 //! not part of [`session_events`]. Returns cannot be voided yet (no flow in the spec), so every

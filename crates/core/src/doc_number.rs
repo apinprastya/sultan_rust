@@ -152,6 +152,32 @@ impl LocalDay {
         Some(Self { year, month, day })
     }
 
+    /// The day `days` later (earlier when negative), e.g. a due date or an expiry warning
+    /// horizon; `None` outside years 1–9999.
+    #[must_use]
+    pub fn add_days(self, days: i64) -> Option<Self> {
+        let date = self.date()?;
+        let moved = date.checked_add_signed(chrono::TimeDelta::try_days(days)?)?;
+        Self::from_key(
+            i64::from(moved.year()) * 10_000
+                + i64::from(moved.month()) * 100
+                + i64::from(moved.day()),
+        )
+    }
+
+    /// The number of days from `earlier` to `self` (negative when `earlier` is later).
+    #[must_use]
+    pub fn days_since(self, earlier: Self) -> i64 {
+        match (self.date(), earlier.date()) {
+            (Some(a), Some(b)) => (a - b).num_days(),
+            _ => 0,
+        }
+    }
+
+    fn date(self) -> Option<chrono::NaiveDate> {
+        chrono::NaiveDate::from_ymd_opt(self.year, self.month, self.day)
+    }
+
     /// The `YYMMDD` printed in document numbers (e.g. `261107`).
     #[must_use]
     pub fn yymmdd(self) -> String {
@@ -203,6 +229,20 @@ pub fn cash_movement_number(
 #[must_use]
 pub fn z_number(branch_code: &str, day: LocalDay, seq: u32) -> String {
     format!("{branch_code}-Z-{}-{seq:02}", day.yymmdd())
+}
+
+/// The number of the `seq`-th inventory document of `kind` of `day` at a branch (spec 2.8 I19):
+/// `JKT01-PO-261126-01`, `-GR-` goods receipt, `-RS-` supplier return, `-TR-` transfer, `-IT-`
+/// internal transfer, `-ADJ-` adjustment, `-OP-` opname, `-OS-` opening stock. One sequence per
+/// branch, kind and branch-local day, at least two digits.
+#[must_use]
+pub fn stock_number(
+    branch_code: &str,
+    kind: crate::stock::DocKind,
+    day: LocalDay,
+    seq: u32,
+) -> String {
+    format!("{branch_code}-{}-{}-{seq:02}", kind.prefix(), day.yymmdd())
 }
 
 #[cfg(test)]
@@ -375,6 +415,56 @@ mod tests {
             );
             assert_eq!(z_number("JKT01", day, seq), z, "{zone} {at}");
         }
+    }
+
+    /// Spec 2.8 §17 case 12: inventory numbers per branch and local day for every prefix.
+    #[test]
+    fn stock_numbers_per_branch_and_local_day() {
+        use crate::stock::DocKind;
+        // 2026-11-26T00:00:00Z.
+        const NOV26_UTC: i64 = NOV7_UTC + 19 * 24 * HOUR;
+        let jkt = tz("Asia/Jakarta");
+        let before = LocalDay::of(Timestamp::from_unix_millis(NOV26_UTC + 17 * HOUR - 1), jkt);
+        let after = LocalDay::of(Timestamp::from_unix_millis(NOV26_UTC + 17 * HOUR), jkt);
+        #[rustfmt::skip]
+        let cases = [
+            (DocKind::PurchaseOrder, "JKT01", before, 1, "JKT01-PO-261126-01"),
+            (DocKind::GoodsReceipt, "JKT01", before, 2, "JKT01-GR-261126-02"),
+            (DocKind::SupplierReturn, "JKT01", after, 1, "JKT01-RS-261127-01"),
+            (DocKind::Transfer, "BDG01", after, 12, "BDG01-TR-261127-12"),
+            (DocKind::InternalTransfer, "BDG01", before, 3, "BDG01-IT-261126-03"),
+            (DocKind::Adjustment, "JKT01", after, 100, "JKT01-ADJ-261127-100"),
+            (DocKind::Opname, "JKT01", before, 1, "JKT01-OP-261126-01"),
+            (DocKind::OpeningStock, "JKT01", after, 9, "JKT01-OS-261127-09"),
+        ];
+        for (kind, branch, day, seq, expected) in cases {
+            assert_eq!(stock_number(branch, kind, day, seq), expected);
+        }
+    }
+
+    #[test]
+    fn day_arithmetic() {
+        let day = LocalDay::from_key(20_261_126).unwrap();
+        #[rustfmt::skip]
+        let cases = [
+            (0, Some(20_261_126)),
+            (5, Some(20_261_201)),
+            (30, Some(20_261_226)),
+            (36, Some(20_270_101)),
+            (-26, Some(20_261_031)),
+            (i64::MAX, None),
+            (3_000_000, None),
+        ];
+        for (days, key) in cases {
+            assert_eq!(day.add_days(days).map(LocalDay::key), key, "{days}");
+        }
+        let later = LocalDay::from_key(20_270_101).unwrap();
+        assert_eq!(later.days_since(day), 36);
+        assert_eq!(day.days_since(later), -36);
+        assert_eq!(day.days_since(day), 0);
+        // A clamped day outside chrono's range has no date.
+        let far = LocalDay::of(Timestamp::from_unix_millis(i64::MAX), tz("UTC"));
+        assert_eq!(far.add_days(1), None);
     }
 
     #[test]

@@ -8,7 +8,7 @@ use sultan_core::pricing::PriceListId;
 use sultan_core::sale::{
     CartTotals, LineTotals, MAX_LINES, PaidSale, PriceMode, RefundMethod, ReturnedSoFar, SaleError,
     SaleStatus, SaleTender, ScaleLabel, StockLine, StockMovementKind, TenderKind, VoidPlan,
-    VoidReason, void_movements,
+    VoidReason,
 };
 use sultan_core::time::Timestamp;
 use uuid::Uuid;
@@ -809,16 +809,7 @@ pub(super) async fn post(
     .await?;
     insert_sale(tx, sale, &number, now).await?;
     let location = stock::register_location(tx, sale.register).await?;
-    stock::insert(
-        tx,
-        sale.branch,
-        location,
-        "sale",
-        *sale.id.as_uuid(),
-        &sale.movements,
-        sale.posted_at,
-    )
-    .await?;
+    stock::insert_sale(tx, sale, location).await?;
     append_balance(
         tx,
         sale.customer,
@@ -1117,27 +1108,10 @@ pub(super) async fn insert_refund_tenders(
     Ok(())
 }
 
-/// Appends the `sale_void` movements that put the sale's `sale` movements back where they were
-/// taken from.
+/// Appends the `sale_void` movements that put back exactly what the sale's `sale` movements
+/// took (quantity, value, lot, location; spec 2.8 §2).
 async fn put_back_stock(tx: &mut Tx, v: &NewSaleVoid) -> SaleResult<()> {
-    let original = stock::document_movements(Conn::Tx(&mut *tx), *v.sale.as_uuid()).await?;
-    for m in original
-        .iter()
-        .filter(|m| m.movement.kind == StockMovementKind::Sale)
-    {
-        let back = void_movements(&[m.movement])?;
-        stock::insert(
-            tx,
-            m.branch,
-            m.location,
-            "sale",
-            *v.sale.as_uuid(),
-            &back,
-            v.voided_at,
-        )
-        .await?;
-    }
-    Ok(())
+    stock::put_back_sale(tx, *v.sale.as_uuid(), v.voided_at).await
 }
 
 /// The outbox payload of a post-void.

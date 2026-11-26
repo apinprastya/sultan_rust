@@ -22,3 +22,5 @@ mod pricing;
 mod sales;
 mod sales_fixtures;
 mod sales_returns;
+mod stock;
+mod stock_docs;

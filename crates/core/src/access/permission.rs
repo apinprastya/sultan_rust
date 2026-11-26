@@ -54,7 +54,8 @@ pub enum Permission {
     OrgManage,
     /// `user.unlock`: unlock a locked-out user.
     UserUnlock,
-    /// `stock.adjust`: stock adjustments.
+    /// `stock.adjust`: stock adjustments, opening stock, posting an opname and stock reasons
+    /// (HQ) (spec 2.8 §12).
     StockAdjust,
     /// `report.sales`: sales reports.
     ReportSales,
@@ -92,11 +93,21 @@ pub enum Permission {
     CashDrop,
     /// `day.close`: run the Z report of a branch's business day (spec 2.7 §6, K19).
     DayClose,
+    /// `supplier.manage`: suppliers and supplier items (HQ only, spec 2.8 §12).
+    SupplierManage,
+    /// `purchase.order`: purchase orders, reorder rules and suggested POs (spec 2.8 §12).
+    PurchaseOrder,
+    /// `purchase.receive`: goods receipts and supplier returns (spec 2.8 §12).
+    PurchaseReceive,
+    /// `stock.transfer`: transfers between branches and internal transfers (spec 2.8 §12).
+    StockTransfer,
+    /// `stock.count`: start an opname and count into it (spec 2.8 §12).
+    StockCount,
 }
 
 impl Permission {
     /// Every permission in the catalog, in catalog order.
-    pub const ALL: [Self; 36] = [
+    pub const ALL: [Self; 41] = [
         Self::SaleCreate,
         Self::SaleDiscount,
         Self::SaleCartDiscount,
@@ -133,6 +144,11 @@ impl Permission {
         Self::TenderManage,
         Self::CashDrop,
         Self::DayClose,
+        Self::SupplierManage,
+        Self::PurchaseOrder,
+        Self::PurchaseReceive,
+        Self::StockTransfer,
+        Self::StockCount,
     ];
 
     /// The stable string key, e.g. `"sale.discount"`.
@@ -175,6 +191,11 @@ impl Permission {
             Self::TenderManage => "tender.manage",
             Self::CashDrop => "cash.drop",
             Self::DayClose => "day.close",
+            Self::SupplierManage => "supplier.manage",
+            Self::PurchaseOrder => "purchase.order",
+            Self::PurchaseReceive => "purchase.receive",
+            Self::StockTransfer => "stock.transfer",
+            Self::StockCount => "stock.count",
         }
     }
 
@@ -417,7 +438,7 @@ mod tests {
             Ok(Permission::CatalogViewArchived)
         );
         assert_eq!(Permission::CatalogManage.limit_kind(), None);
-        assert_eq!(Permission::ALL.len(), 36);
+        assert_eq!(Permission::ALL.len(), 41);
     }
 
     #[test]
@@ -478,6 +499,24 @@ mod tests {
             assert_eq!(key.parse::<Permission>(), Ok(p));
             assert_eq!(p.limit_kind(), None, "{key}");
             assert!(p.is_overridable(), "{key}");
+        }
+    }
+
+    #[test]
+    fn inventory_keys_are_stable_unlimited_and_not_overridable() {
+        // Spec 2.8 §12: back-office work done under one's own login.
+        for (p, key) in [
+            (Permission::SupplierManage, "supplier.manage"),
+            (Permission::PurchaseOrder, "purchase.order"),
+            (Permission::PurchaseReceive, "purchase.receive"),
+            (Permission::StockTransfer, "stock.transfer"),
+            (Permission::StockCount, "stock.count"),
+            (Permission::StockAdjust, "stock.adjust"),
+        ] {
+            assert_eq!(p.as_str(), key);
+            assert_eq!(key.parse::<Permission>(), Ok(p));
+            assert_eq!(p.limit_kind(), None, "{key}");
+            assert!(!p.is_overridable(), "{key}");
         }
     }
 
