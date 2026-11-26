@@ -4,7 +4,8 @@
 //! files `5e`–`5h` and `6`) and every back-office screen (phase C4,
 //! files `bo-*`; the customer screens of spec 2.5 M4 are `bo-10`–`bo-19`, the pricing screens of
 //! spec 2.3 R4 `bo-20`–`bo-24`, the sales screens of spec 2.6 S6 `bo-25`–`bo-31`, the cash
-//! screens of spec 2.7 K5 `bo-32`–`bo-39`) to PNG
+//! screens of spec 2.7 K5 `bo-32`–`bo-39`, the missing-nota filter and the nota photos of K7
+//! `bo-40`–`bo-42`) to PNG
 //! with Slint's software renderer (no display needed), driven by keys against the fake service,
 //! like the headless tests. The register shots use a fixed time (`NOW`, 2027-01-15 15:00 WIB);
 //! the header clock shows it in the local time zone, so run it with `TZ=Asia/Jakarta`.
@@ -730,6 +731,8 @@ fn backoffice(
     options.debounce = std::time::Duration::ZERO;
     options.username = "owner".into();
     options.start = true;
+    // Ctrl+U on the cash movements: a picked nota photo, at once.
+    options.photos = Arc::new(FixedPhotos::file(demo_nota(0)));
     let app: BackOfficeApp = build_backoffice(
         fake.clone(),
         Runner::Block(runtime.handle().clone()),
@@ -928,7 +931,90 @@ fn backoffice(
     key(w, &[Key::DownArrow.into()]);
     key(w, &[Key::DownArrow.into()]);
     shot("bo-39-cash-reasons")?;
+
+    // Nota photos (spec 2.7 K7): a Rp 30.000 threshold flags Ani's and Budi's cash outs; the
+    // filter lists them; Ctrl+U adds a photo to the first, which shows under its slip.
+    let mut settings = runtime.block_on(fake.sales_settings(&token))?;
+    settings.nota_flag_above = Some(30_000);
+    runtime.block_on(fake.put_sales_settings(&token, &settings))?;
+    ctrl("2");
+    ui.invoke_toggle("cash-filter".into(), 0, "missing_nota".into(), true);
+    key(w, &[Key::Return.into()]);
+    shot("bo-40-cash-missing-nota")?;
+    let budi = runtime.block_on(fake.pin_login("u-budi", "9999"))?.token;
+    let out = fake
+        .cash_movements_posted()
+        .into_iter()
+        .find(|m| m.amount == 35_000)
+        .ok_or("Budi's cash out")?;
+    runtime.block_on(fake.add_cash_photo(
+        &budi,
+        &out.id,
+        "0190a000-0000-7000-8000-0000000000f1",
+        demo_nota(1),
+    ))?;
+    ui.invoke_toggle("cash-filter".into(), 0, "missing_nota".into(), false);
+    let row = ui
+        .get_cash_movement_rows()
+        .iter()
+        .position(|r| r.number == out.number)
+        .unwrap_or_default();
+    ui.invoke_pick("cash-movement-row".into(), i32::try_from(row)?, 0);
+    ctrl("u");
+    shot("bo-41-cash-nota-photos")?;
+    ctrl("e");
+    shot("bo-42-cash-nota-zoom")?;
+    key(w, &[Key::Escape.into()]);
     Ok(())
+}
+
+/// A photographed shop receipt ("nota") for the nota photos: a paper slip with lines of text,
+/// a total and a stamp; `variant` shifts the lines so two photos differ.
+fn demo_nota(variant: u32) -> Vec<u8> {
+    let (width, height) = (300_u32, 440_u32);
+    let mut bytes = Vec::new();
+    {
+        let mut encoder = png::Encoder::new(&mut bytes, width, height);
+        encoder.set_color(png::ColorType::Rgb);
+        encoder.set_depth(png::BitDepth::Eight);
+        let mut writer = encoder.write_header().expect("png header");
+        let mut data = Vec::with_capacity((width * height * 3) as usize);
+        for y in 0..height {
+            for x in 0..width {
+                let paper = (30..270).contains(&x) && (16..424).contains(&y);
+                let row = (y + 14 * variant) / 22;
+                let text_line = paper
+                    && (60..380).contains(&y)
+                    && (y % 22) < 7
+                    && x >= 50
+                    && x < 160 + (row * 37 % 80);
+                let price =
+                    paper && (60..340).contains(&y) && (y % 22) < 7 && (200..250).contains(&x);
+                let header = paper && (28..48).contains(&y) && (80..220).contains(&x);
+                let total = paper && (392..406).contains(&y) && (150..250).contains(&x);
+                let dx = f64::from(x) - 215.0;
+                let dy = f64::from(y) - 390.0;
+                let ring = (dx * dx + dy * dy).sqrt();
+                let stamp = paper && (20.0..26.0).contains(&ring) && variant == 0;
+                let pixel: [u8; 3] = if !paper {
+                    // The counter under the paper, a little shaded.
+                    let shade = u8::try_from((x + y) / 24).unwrap_or(0);
+                    [92_u8.saturating_sub(shade), 74_u8.saturating_sub(shade), 60]
+                } else if stamp {
+                    [60, 90, 200]
+                } else if header || total {
+                    [40, 40, 44]
+                } else if text_line || price {
+                    [110, 110, 116]
+                } else {
+                    [246, 243, 232]
+                };
+                data.extend_from_slice(&pixel);
+            }
+        }
+        writer.write_image_data(&data).expect("png data");
+    }
+    bytes
 }
 
 /// Cash for the cash screens: Ani (with the sales demo's open session) takes a float top-up in,

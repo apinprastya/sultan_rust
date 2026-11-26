@@ -1204,6 +1204,8 @@ impl BackOffice for FakeService {
                 // Cash (spec 2.7 §7): the X report and the Z, like the seeded Manager.
                 here.push(crate::cash::SESSION_VIEW_EXPECTED.to_owned());
                 here.push(crate::cash::DAY_CLOSE.to_owned());
+                // Nota photos in the back office (spec 2.7 §2a).
+                here.push(crate::cash::CASH_OUT.to_owned());
             }
             let anywhere = here.clone();
             Me {

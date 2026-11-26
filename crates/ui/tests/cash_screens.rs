@@ -749,6 +749,9 @@ fn nota_photo_from_a_file_on_the_slip_and_the_list() {
             .contains(&format!("{} bytes", PNG.len())),
         "{calls:?}"
     );
+    // The retry after the network failure sent the same photo ID (an idempotent PUT).
+    let photo_id = |call: &String| call.split(' ').nth(1).unwrap_or_default().to_owned();
+    assert_eq!(photo_id(&calls[0]), photo_id(&calls[1]), "{calls:?}");
     // On the list, the highlighted movement: the on-screen button does the same as F.
     t.press(&["Esc"]);
     t.keys(&["Tab", "Tab"]);
@@ -764,6 +767,12 @@ fn nota_photo_from_a_file_on_the_slip_and_the_list() {
     );
     t.click("Photo from file");
     assert_eq!(t.photo_rows(), [(2, false)]);
+    let calls = t.fake.calls_of("add_cash_photo");
+    assert_ne!(
+        photo_id(&calls[1]),
+        photo_id(&calls[2]),
+        "a new photo, a new ID"
+    );
     t.typed("f");
     assert_eq!(t.photo_rows(), [(3, false)]);
     t.typed("f");

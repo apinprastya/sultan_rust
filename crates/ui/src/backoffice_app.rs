@@ -33,6 +33,7 @@ use crate::backoffice::form::{FormError, ProductForm, Tab};
 use crate::backoffice::pricing::{self, Call as PriceCall, Reply as PriceReply};
 use crate::backoffice::{Confirm, Controller, Deletable, Effect, Msg, Press, Screen, TYPES};
 use crate::controller::Notice;
+use crate::photo::{NativePhotos, PhotoSource};
 use crate::{
     BackOfficeWindow, BoBalanceRow, BoBalanceSettings, BoBarcode, BoBranch, BoBrandEditor,
     BoCategoryEditor, BoCombo, BoComponent, BoCustomerForm, BoCustomerList, BoCustomerRow, BoForm,
@@ -44,7 +45,7 @@ use crate::{
 use crate::{amount, input};
 
 /// What the back-office window needs besides the service.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct BackOfficeOptions {
     /// The server, shown on the login screen and in the header.
     pub server: String,
@@ -57,6 +58,21 @@ pub struct BackOfficeOptions {
     /// Opened from the Start screen: the login screen offers F9 to go back to it (the window
     /// closes).
     pub start: bool,
+    /// Where Ctrl+U gets a nota photo (spec 2.7 §2a): the file dialog ([`NativePhotos`]); tests
+    /// inject bytes ([`crate::photo::FixedPhotos`]). The back office never uses the webcam.
+    pub photos: Arc<dyn PhotoSource>,
+}
+
+impl std::fmt::Debug for BackOfficeOptions {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("BackOfficeOptions")
+            .field("server", &self.server)
+            .field("username", &self.username)
+            .field("language", &self.language)
+            .field("debounce", &self.debounce)
+            .field("start", &self.start)
+            .finish_non_exhaustive()
+    }
 }
 
 impl BackOfficeOptions {
@@ -69,6 +85,7 @@ impl BackOfficeOptions {
             language: None,
             debounce: Duration::from_millis(300),
             start: false,
+            photos: Arc::new(NativePhotos),
         }
     }
 }
@@ -205,7 +222,12 @@ impl BackOfficeApp {
 
 /// Starts the call of `effect`; `None` for the effects the glue handles itself.
 #[allow(clippy::too_many_lines)] // one arm per call
-fn start(service: &dyn BackOffice, effect: &Effect, lang: &str) -> Option<MsgFuture> {
+fn start(
+    service: &dyn BackOffice,
+    photos: &dyn PhotoSource,
+    effect: &Effect,
+    lang: &str,
+) -> Option<MsgFuture> {
     macro_rules! call {
         ($future:expr, $msg:expr) => {{
             let future = $future;
@@ -334,7 +356,7 @@ fn start(service: &dyn BackOffice, effect: &Effect, lang: &str) -> Option<MsgFut
             service, token, call, lang,
         )),
         Effect::Cash { token, call } => Some(crate::backoffice_cash::start_cash(
-            service, token, call, lang,
+            service, photos, token, call, lang,
         )),
         Effect::WatchEvents { .. } | Effect::Debounce(_) | Effect::ReadFile(_) | Effect::Exit => {
             None
@@ -538,7 +560,12 @@ impl State {
                 _ => {}
             }
             let lang = crate::backoffice_sales::receipt_language(self.options.language.as_deref());
-            let Some(future) = start(self.service.as_ref(), &effect, &lang) else {
+            let Some(future) = start(
+                self.service.as_ref(),
+                self.options.photos.as_ref(),
+                &effect,
+                &lang,
+            ) else {
                 continue;
             };
             match &self.runner {

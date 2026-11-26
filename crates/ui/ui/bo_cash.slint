@@ -1,6 +1,6 @@
-// The back office's cash screens (spec 2.7, phase K5): cashier sessions with the live X or the
-// close report, cash movements with their slips, the day close (Z) and the cash reasons (F9,
-// tabs Ctrl+1 … Ctrl+4). Rust (`crates/ui/src/backoffice/cash.rs`) decides everything; these
+// The back office's cash screens (spec 2.7, phases K5 and K7): cashier sessions with the live X
+// or the close report, cash movements with their slips and nota photos, the day close (Z) and the
+// cash reasons (F9, tabs Ctrl+1 … Ctrl+4). Rust (`crates/ui/src/backoffice/cash.rs`) decides everything; these
 // components show it and report edits and clicks like the other screens.
 //
 // Text fields are rebuilt when Rust bumps `serial`.
@@ -20,6 +20,7 @@ export struct BoCashFilters {
     status-index: int,
     kind-index: int,
     reason-index: int,
+    missing-nota: bool,
     from: string,
     until: string,
     date-error: Note,
@@ -45,6 +46,26 @@ export struct BoMovementRow {
     amount: string,
     // "", "reversal", "reversed" or "missing_nota".
     flag: string,
+    // Nota photos.
+    photos: int,
+}
+
+// One nota photo: the image once read, or why it is not shown.
+export struct BoPhoto {
+    image: image,
+    loading: bool,
+    notice: Note,
+}
+
+// The nota photos of the movement whose slip is shown.
+export struct BoPhotoPane {
+    shown: bool,
+    selected: int,
+    large: BoPhoto,
+    zoom: bool,
+    busy: bool,
+    missing: bool,
+    notice: Note,
 }
 
 export struct BoSessionView {
@@ -81,6 +102,7 @@ export struct BoZRow {
 
 export struct BoDayClose {
     branch: string,
+    branch-index: int,
     cursor: int,
     pending-count: int,
     loading: bool,
@@ -224,19 +246,26 @@ component TextPaneCard inherits Card {
     }
 }
 
-// A cash movement's kind, the reason and the flag in one cell.
+// A cash movement's kind, the reason with a reversal flag, and its nota: the photo count or
+// "No nota" (its own column, so a narrow window never elides it).
 component MovementCells inherits HorizontalLayout {
     in property <BoMovementRow> item;
     in property <bool> show-time: true;
     spacing: 10px;
-    Cell { width: 170px; text: root.item.number; font-weight: 600; }
+    Cell { width: 160px; text: root.item.number; font-weight: 600; }
     if root.show-time: Cell { width: 110px; text: root.item.time; color: Theme.muted; }
     Cell { width: 112px; text: BoStrings.label("cash_kind_" + root.item.kind); color: Theme.muted; }
     Cell {
         horizontal-stretch: 1;
         preferred-width: 0px;
-        text: root.item.reason + (root.item.flag == "" ? "" : " · " + BoStrings.label("cash_flag_" + root.item.flag));
-        color: root.item.flag == "missing_nota" ? Theme.warn : Theme.text;
+        text: root.item.reason + (root.item.flag == "" || root.item.flag == "missing_nota" ? "" : " · " + BoStrings.label("cash_flag_" + root.item.flag));
+    }
+    Cell {
+        width: 64px;
+        text: root.item.flag == "missing_nota" ? BoStrings.label("cash_flag_missing_nota") : root.item.photos > 0 ? "\{root.item.photos}/3" : "";
+        font-size: root.item.flag == "missing_nota" ? 11px : 13px;
+        horizontal-alignment: center;
+        color: root.item.flag == "missing_nota" ? Theme.warn : Theme.muted;
     }
     Cell { width: 100px; text: root.item.amount; horizontal-alignment: right; color: root.item.flag == "reversed" ? Theme.muted : Theme.text; }
 }
@@ -252,6 +281,7 @@ component CashFiltersBar inherits VerticalLayout {
     in property <[string]> reason-choices;
     callback edit(string, int, int, string, string);
     callback choose(string, int, string, int);
+    callback toggle(string, int, string, bool);
     callback action(string);
     spacing: 8px;
     HorizontalLayout {
@@ -348,6 +378,18 @@ component CashFiltersBar inherits VerticalLayout {
             }
             accepted => {
                 root.action("cash-search");
+            }
+        }
+        if !root.sessions: VerticalLayout {
+            alignment: end;
+            CheckBox {
+                height: 32px;
+                text: @tr("Missing nota");
+                checked: root.filters.missing-nota;
+                accessible-label: @tr("Missing nota");
+                toggled => {
+                    root.toggle("cash-filter", 0, "missing_nota", self.checked);
+                }
             }
         }
         VerticalLayout {
@@ -671,8 +713,120 @@ export component CashSessionDetailScreen inherits VerticalLayout {
     }
 }
 
-// Cash movements (Ctrl+2) with the slip of the opened one.
-export component CashMovementsScreen inherits VerticalLayout {
+// The nota photos of the movement whose slip is shown: thumbnails (click selects), Ctrl+U adds
+// one from a file, Ctrl+E shows the selected one over the screen, Ctrl+G selects the next.
+component PhotoCard inherits Card {
+    in property <BoPhotoPane> pane;
+    in property <[BoPhoto]> photos;
+    callback action(string);
+    callback pick(string, int, int);
+    VerticalLayout {
+        padding: 14px;
+        spacing: 8px;
+        SectionTitle {
+            text: @tr("Nota photos ({} of 3)", root.photos.length);
+        }
+        if !root.pane.shown: Hint {
+            text: @tr("Enter shows the photos of the highlighted movement; Ctrl+U adds one from a file.");
+        }
+        if root.pane.shown && root.photos.length == 0: Hint {
+            text: root.pane.missing ? @tr("No nota photo yet: this cash out is flagged missing nota.") : @tr("No nota photo yet.");
+            color: root.pane.missing ? Theme.warn : Theme.muted;
+        }
+        if root.pane.busy: Hint {
+            text: @tr("Adding the photo…");
+        }
+        Banner {
+            note: root.pane.notice;
+        }
+        if root.photos.length > 0: HorizontalLayout {
+            spacing: 8px;
+            alignment: start;
+            for ph[i] in root.photos: Rectangle {
+                width: 80px;
+                height: 80px;
+                border-radius: 6px;
+                border-width: i == root.pane.selected ? 2px : 1px;
+                border-color: i == root.pane.selected ? Theme.accent : Theme.border;
+                background: Theme.raised;
+                clip: true;
+                accessible-role: button;
+                accessible-label: @tr("Nota photo {}", i + 1);
+                accessible-action-default => {
+                    root.pick("cash-photo", i, 0);
+                }
+                Image {
+                    x: 3px;
+                    y: 3px;
+                    width: parent.width - 6px;
+                    height: parent.height - 6px;
+                    source: ph.image;
+                    image-fit: contain;
+                }
+                if ph.loading: Hint {
+                    text: @tr("Loading…");
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+                if ph.notice.code != "": Text {
+                    x: 4px;
+                    width: parent.width - 8px;
+                    height: parent.height;
+                    text: BoStrings.message(ph.notice.code, ph.notice.arg);
+                    color: Theme.muted;
+                    font-size: 10px;
+                    wrap: word-wrap;
+                    vertical-alignment: center;
+                    horizontal-alignment: center;
+                }
+                TouchArea {
+                    mouse-cursor: pointer;
+                    clicked => {
+                        root.pick("cash-photo", i, 0);
+                    }
+                    double-clicked => {
+                        root.pick("cash-photo", i, 0);
+                        root.action("cash-photo-zoom");
+                    }
+                }
+            }
+        }
+        HorizontalLayout {
+            alignment: start;
+            KeyButton {
+                keys: "Ctrl+U";
+                text: @tr("Add photo");
+                enabled: !root.pane.busy;
+                clicked => {
+                    root.action("cash-photo-add");
+                }
+            }
+        }
+        if root.photos.length > 0: HorizontalLayout {
+            spacing: 6px;
+            alignment: start;
+            KeyButton {
+                keys: "Ctrl+E";
+                text: @tr("Enlarge");
+                compact: true;
+                clicked => {
+                    root.action("cash-photo-zoom");
+                }
+            }
+            if root.photos.length > 1: KeyButton {
+                keys: "Ctrl+G";
+                text: @tr("Next photo");
+                compact: true;
+                clicked => {
+                    root.action("cash-photo-next");
+                }
+            }
+        }
+    }
+}
+
+// Cash movements (Ctrl+2) with the slip and the nota photos of the opened one.
+export component CashMovementsScreen inherits Rectangle {
     in property <string> screen;
     in property <BoCashFilters> filters;
     in property <[string]> branch-choices;
@@ -683,111 +837,182 @@ export component CashMovementsScreen inherits VerticalLayout {
     in property <BoDocList> list;
     in property <BoTextPane> pane;
     in property <[string]> slip;
+    in property <BoPhotoPane> photo-pane;
+    in property <[BoPhoto]> photos;
     in property <int> serial;
     callback action(string);
     callback edit(string, int, int, string, string);
     callback choose(string, int, string, int);
+    callback toggle(string, int, string, bool);
     callback pick(string, int, int);
-    padding: 16px;
-    spacing: 12px;
 
-    CashTabs {
-        screen: root.screen;
-        action(id) => {
-            root.action(id);
+    VerticalLayout {
+        padding: 16px;
+        spacing: 12px;
+
+        CashTabs {
+            screen: root.screen;
+            action(id) => {
+                root.action(id);
+            }
         }
-    }
-    for s in [root.serial]: CashFiltersBar {
-        filters: root.filters;
-        sessions: false;
-        branch-choices: root.branch-choices;
-        register-choices: root.register-choices;
-        session-choices: root.session-choices;
-        reason-choices: root.reason-choices;
-        edit(k, r, x, f, v) => {
-            root.edit(k, r, x, f, v);
+        for s in [root.serial]: CashFiltersBar {
+            filters: root.filters;
+            sessions: false;
+            branch-choices: root.branch-choices;
+            register-choices: root.register-choices;
+            session-choices: root.session-choices;
+            reason-choices: root.reason-choices;
+            edit(k, r, x, f, v) => {
+                root.edit(k, r, x, f, v);
+            }
+            choose(k, r, f, i) => {
+                root.choose(k, r, f, i);
+            }
+            toggle(k, r, f, on) => {
+                root.toggle(k, r, f, on);
+            }
+            action(id) => {
+                root.action(id);
+            }
         }
-        choose(k, r, f, i) => {
-            root.choose(k, r, f, i);
+        Banner {
+            note: root.list.notice;
         }
-        action(id) => {
-            root.action(id);
-        }
-    }
-    Banner {
-        note: root.list.notice;
-    }
-    HorizontalLayout {
-        spacing: 16px;
-        vertical-stretch: 1;
-        Card {
-            horizontal-stretch: 1;
-            VerticalLayout {
-                padding: 1px;
-                HorizontalLayout {
-                    height: 34px;
-                    padding-left: 14px;
-                    padding-right: 14px;
-                    spacing: 10px;
-                    Head { width: 170px; text: @tr("Number"); }
-                    Head { width: 110px; text: @tr("Date and time"); }
-                    Head { width: 112px; text: @tr("Kind"); }
-                    Head { horizontal-stretch: 1; preferred-width: 0px; text: @tr("Reason"); }
-                    Head { width: 100px; text: @tr("Amount"); horizontal-alignment: right; }
-                }
-                Rectangle {
-                    height: 1px;
-                    background: Theme.border;
-                }
-                ListView {
-                    vertical-stretch: 1;
-                    for row[i] in root.rows: Rectangle {
-                        height: 36px;
-                        background: i == root.list.cursor ? Theme.accent-soft : touch.has-hover ? Theme.raised : transparent;
-                        accessible-role: list-item;
-                        accessible-label: row.number;
-                        accessible-action-default => {
-                            root.pick("cash-movement-row", i, 0);
-                        }
-                        touch := TouchArea {
-                            clicked => {
+        HorizontalLayout {
+            spacing: 16px;
+            vertical-stretch: 1;
+            Card {
+                horizontal-stretch: 1;
+                VerticalLayout {
+                    padding: 1px;
+                    HorizontalLayout {
+                        height: 34px;
+                        padding-left: 14px;
+                        padding-right: 14px;
+                        spacing: 10px;
+                        Head { width: 160px; text: @tr("Number"); }
+                        Head { width: 110px; text: @tr("Date and time"); }
+                        Head { width: 112px; text: @tr("Kind"); }
+                        Head { horizontal-stretch: 1; preferred-width: 0px; text: @tr("Reason"); }
+                        Head { width: 64px; text: @tr("Nota"); horizontal-alignment: center; }
+                        Head { width: 100px; text: @tr("Amount"); horizontal-alignment: right; }
+                    }
+                    Rectangle {
+                        height: 1px;
+                        background: Theme.border;
+                    }
+                    ListView {
+                        vertical-stretch: 1;
+                        for row[i] in root.rows: Rectangle {
+                            height: 36px;
+                            background: i == root.list.cursor ? Theme.accent-soft : touch.has-hover ? Theme.raised : transparent;
+                            accessible-role: list-item;
+                            accessible-label: row.number;
+                            accessible-action-default => {
                                 root.pick("cash-movement-row", i, 0);
                             }
-                            double-clicked => {
-                                root.pick("cash-movement-row", i, 0);
-                                root.action("cash-open");
+                            touch := TouchArea {
+                                clicked => {
+                                    root.pick("cash-movement-row", i, 0);
+                                }
+                                double-clicked => {
+                                    root.pick("cash-movement-row", i, 0);
+                                    root.action("cash-open");
+                                }
+                            }
+                            MovementCells {
+                                x: 14px;
+                                width: parent.width - 28px;
+                                height: parent.height;
+                                item: row;
                             }
                         }
-                        MovementCells {
-                            x: 14px;
-                            width: parent.width - 28px;
-                            height: parent.height;
-                            item: row;
+                    }
+                    if root.list.empty: Hint {
+                        x: 14px;
+                        text: @tr("Nothing found.");
+                    }
+                    ListKeys {
+                        list: root.list;
+                        has-rows: root.rows.length > 0;
+                        open-text: @tr("Slip");
+                        copy: true;
+                        action(id) => {
+                            root.action(id);
                         }
                     }
                 }
-                if root.list.empty: Hint {
-                    x: 14px;
-                    text: @tr("Nothing found.");
+            }
+            // The slip, and its nota photos under it.
+            VerticalLayout {
+                width: 300px;
+                spacing: 12px;
+                TextPaneCard {
+                    vertical-stretch: 1;
+                    title: @tr("Slip");
+                    pane: root.pane;
+                    lines: root.slip;
+                    empty-hint: @tr("Enter shows the slip of the highlighted movement.");
                 }
-                ListKeys {
-                    list: root.list;
-                    has-rows: root.rows.length > 0;
-                    open-text: @tr("Slip");
-                    copy: true;
+                PhotoCard {
+                    vertical-stretch: 0;
+                    pane: root.photo-pane;
+                    photos: root.photos;
                     action(id) => {
                         root.action(id);
+                    }
+                    pick(k, r, s) => {
+                        root.pick(k, r, s);
                     }
                 }
             }
         }
-        // The slip; the nota photos of phase K6 go under it.
-        TextPaneCard {
-            width: 300px;
-            title: @tr("Slip");
-            pane: root.pane;
-            lines: root.slip;
-            empty-hint: @tr("Enter shows the slip of the highlighted movement.");
+    }
+
+    // The selected photo over the screen (Ctrl+E; Esc or a click closes it).
+    if root.photo-pane.zoom: Rectangle {
+        x: 0;
+        y: 0;
+        width: root.width;
+        height: root.height;
+        background: #000000d0;
+        TouchArea {
+            clicked => {
+                root.action("cash-photo-close");
+            }
+        }
+        Image {
+            x: 24px;
+            y: 24px;
+            width: parent.width - 48px;
+            height: parent.height - 90px;
+            source: root.photo-pane.large.image;
+            image-fit: contain;
+            accessible-role: image;
+            accessible-label: @tr("Nota photo {}", root.photo-pane.selected + 1);
+        }
+        HorizontalLayout {
+            x: 24px;
+            y: parent.height - 56px;
+            width: parent.width - 48px;
+            height: 34px;
+            spacing: 8px;
+            alignment: center;
+            if root.photos.length > 1: KeyButton {
+                keys: "Ctrl+G";
+                text: @tr("Next photo");
+                clicked => {
+                    root.action("cash-photo-next");
+                }
+            }
+            KeyButton {
+                keys: "Esc";
+                text: @tr("Close");
+                clicked => {
+                    root.action("cash-photo-close");
+                }
+            }
         }
     }
 }
@@ -821,7 +1046,8 @@ export component DayCloseScreen inherits VerticalLayout {
             width: 160px;
             label: @tr("Branch");
             model: root.branch-choices;
-            index: root.filters.branch-index;
+            // The branch the days are of (the filter's, else the user's own).
+            index: root.day.branch-index;
             selected(i) => {
                 root.choose("cash-filter", 0, "branch", i);
             }

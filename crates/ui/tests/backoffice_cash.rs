@@ -16,10 +16,12 @@ use slint::platform::{Key, PointerEventButton, WindowEvent};
 use slint::{ComponentHandle, LogicalSize, Model, SharedString};
 use sultan_client::fake::{FakeService, SEED_REASONS};
 use sultan_client::{
-    CashMovementRequest, ClientError, CloseRequest, Problem, ServerEvent, Service,
+    BackOffice, CashMovementRequest, ClientError, CloseRequest, Problem, SalesSettings,
+    ServerEvent, Service,
 };
 use sultan_core::doc_number::{BranchTimeZone, LocalDay};
 use sultan_core::time::Timestamp;
+use sultan_ui::photo::{FixedPhotos, PhotoError};
 use sultan_ui::{BackOfficeApp, BackOfficeOptions, Note, Runner, build_backoffice};
 
 const DAY: i64 = 86_400_000;
@@ -110,6 +112,11 @@ async fn seed(fake: &FakeService, blocked: bool) -> Seeded {
 }
 
 fn office(blocked: bool) -> Office {
+    office_with(blocked, FixedPhotos::none())
+}
+
+/// [`office`] whose file picker answers `photos`.
+fn office_with(blocked: bool, photos: FixedPhotos) -> Office {
     thread_local!(static READY: std::cell::Cell<bool> = const { std::cell::Cell::new(false) });
     if !READY.get() {
         i_slint_backend_testing::init_no_event_loop();
@@ -125,6 +132,7 @@ fn office(blocked: bool) -> Office {
     let mut options = BackOfficeOptions::new("http://127.0.0.1:8080");
     options.language = Some("en".to_owned());
     options.debounce = Duration::ZERO;
+    options.photos = Arc::new(photos);
     let app = build_backoffice(
         fake.clone(),
         Runner::Block(runtime.handle().clone()),
@@ -457,6 +465,9 @@ fn day_close_runs_the_z_after_asking() {
     o.press(&["F9"]);
     o.ctrl("3");
     assert_eq!(o.screen(), "day-close");
+    // The picker shows the user's own branch (the filter is "all").
+    assert_eq!(o.app.ui.get_day_close().branch_index, 1);
+    assert_eq!(o.app.ui.get_cash_filters().branch_index, 0);
     let pending: Vec<_> = o.app.ui.get_pending_rows().iter().collect();
     assert_eq!(pending.len(), 1);
     assert_eq!(
@@ -691,4 +702,236 @@ impl Office {
             .unwrap()
             .token
     }
+}
+
+/// A small real PNG (the back office decodes the photos it shows).
+fn png() -> Vec<u8> {
+    let image = image::RgbImage::from_pixel(4, 6, image::Rgb([240, 236, 220]));
+    let mut out = Vec::new();
+    image::DynamicImage::ImageRgb8(image)
+        .write_to(&mut std::io::Cursor::new(&mut out), image::ImageFormat::Png)
+        .unwrap();
+    out
+}
+
+impl Office {
+    /// The photo count and flag of each movement row.
+    fn photo_rows(&self) -> Vec<(i32, String)> {
+        self.app
+            .ui
+            .get_cash_movement_rows()
+            .iter()
+            .map(|r| (r.photos, r.flag.to_string()))
+            .collect()
+    }
+
+    /// The photo ID of each `add_cash_photo` call.
+    fn uploads(&self) -> Vec<String> {
+        self.fake
+            .calls_of("add_cash_photo")
+            .iter()
+            .map(|c| c.split(' ').nth(1).unwrap_or_default().to_owned())
+            .collect()
+    }
+
+    fn photo_note(&self) -> String {
+        self.text(self.app.ui.get_cash_photo_pane().notice)
+    }
+
+    /// Sets the company's missing-nota threshold.
+    fn nota_flag_above(&self, amount: i64) {
+        let owner = self
+            .runtime
+            .block_on(self.fake.password_login("owner", "owner-pass-1"))
+            .unwrap()
+            .token;
+        let body = SalesSettings {
+            nota_flag_above: Some(amount),
+            ..self
+                .runtime
+                .block_on(self.fake.sales_settings(&owner))
+                .unwrap()
+        };
+        self.runtime
+            .block_on(self.fake.put_sales_settings(&owner, &body))
+            .unwrap();
+    }
+}
+
+/// Spec 2.7 §12 cases 40–42 (K7): the missing-nota filter and flag, Ctrl+U from a file with the
+/// photo shown under the slip, the larger view, the limit of 3, a network failure retried with
+/// the same photo ID, and a photo that cannot be read.
+#[test]
+#[allow(clippy::too_many_lines)] // one walk through the pane
+fn nota_photos_under_the_slip_and_the_missing_nota_filter() {
+    let o = office_with(false, FixedPhotos::file(png()));
+    // Ani's Rp 25.000 cash out is above a Rp 20.000 threshold: missing a nota.
+    o.nota_flag_above(20_000);
+    o.login("owner");
+    o.press(&["F9"]);
+    o.ctrl("2");
+    assert_eq!(
+        o.photo_rows(),
+        [
+            (0, String::new()),
+            (0, "missing_nota".to_owned()),
+            (0, String::new())
+        ]
+    );
+    let row = o.app.ui.get_cash_movement_rows().row_data(1).unwrap();
+    assert_eq!(
+        o.app.ui.invoke_label("cash_flag_missing_nota".into()),
+        "No nota"
+    );
+    assert!(!row.number.is_empty());
+    // The filter: only the cash out missing its nota.
+    o.choose("cash-filter", "kind", 0);
+    o.app
+        .ui
+        .invoke_toggle("cash-filter".into(), 0, "missing_nota".into(), true);
+    assert!(o.app.ui.get_cash_filters().missing_nota);
+    assert_eq!(o.photo_rows(), [(0, "missing_nota".to_owned())]);
+    assert!(
+        o.fake
+            .calls_of("cash_movements")
+            .last()
+            .unwrap()
+            .contains("\"missing_nota\":true")
+    );
+    // Before Enter the pane says how to see the photos; Ctrl+U shows the slip and adds one.
+    assert!(!o.app.ui.get_cash_photo_pane().shown);
+    o.ctrl("u");
+    let pane = o.app.ui.get_cash_photo_pane();
+    assert!(pane.shown && !pane.busy && !pane.missing);
+    assert_eq!(
+        o.photo_note(),
+        format!("Nota photo added to {}.", row.number)
+    );
+    assert!(Office::joined(&o.app.ui.get_cash_slip()).contains("CASH OUT"));
+    assert_eq!(o.photo_rows(), [(1, String::new())]);
+    let photos: Vec<_> = o.app.ui.get_cash_photos().iter().collect();
+    assert_eq!(photos.len(), 1);
+    assert_eq!(photos[0].image.size().width, 4, "the stored photo, decoded");
+    assert_eq!(o.fake.calls_of("cash_photo").len(), 1);
+    // The larger view: Ctrl+E, Esc closes it; the button does the same.
+    o.ctrl("e");
+    assert!(o.app.ui.get_cash_photo_pane().zoom);
+    assert_eq!(o.app.ui.get_cash_photo_pane().large.image.size().height, 6);
+    o.press(&["Esc"]);
+    assert!(!o.app.ui.get_cash_photo_pane().zoom);
+    o.click("Enlarge");
+    assert!(o.app.ui.get_cash_photo_pane().zoom);
+    o.click("Close");
+    assert!(!o.app.ui.get_cash_photo_pane().zoom);
+
+    // A network failure: the message; Ctrl+U sends the same photo again (no picker, same ID).
+    o.fake
+        .fail_on("add_cash_photo", ClientError::Network("down".into()));
+    o.click("Add photo");
+    assert!(o.photo_note().contains("Ctrl+U"), "{}", o.photo_note());
+    o.ctrl("u");
+    let ids = o.uploads();
+    assert_eq!(ids.len(), 3);
+    assert_eq!(ids[1], ids[2], "the retry reuses the photo ID");
+    assert_ne!(ids[0], ids[1]);
+    assert_eq!(o.app.ui.get_cash_photos().row_count(), 2);
+    assert_eq!(
+        o.app.ui.get_cash_photo_pane().selected,
+        1,
+        "the new one is shown"
+    );
+    o.ctrl("g");
+    assert_eq!(o.app.ui.get_cash_photo_pane().selected, 0);
+    o.app.ui.invoke_pick("cash-photo".into(), 1, 0);
+    assert_eq!(o.app.ui.get_cash_photo_pane().selected, 1);
+    // The third; a fourth is refused on screen, without a call.
+    o.ctrl("u");
+    assert_eq!(o.photo_rows(), [(3, String::new())]);
+    o.ctrl("u");
+    assert_eq!(o.photo_note(), "A cash movement has at most 3 nota photos.");
+    assert_eq!(o.uploads().len(), 4);
+
+    // The server's refusals are messages: a picture that is not one.
+    o.app
+        .ui
+        .invoke_toggle("cash-filter".into(), 0, "missing_nota".into(), false);
+    assert_eq!(o.photo_rows().len(), 3);
+    o.press(&["Up"]);
+    o.fake.fail_on(
+        "add_cash_photo",
+        Problem::new(422, "invalid_image", "x").into(),
+    );
+    o.ctrl("u");
+    assert!(o.photo_note().contains("not a PNG"), "{}", o.photo_note());
+    assert!(Office::joined(&o.app.ui.get_cash_slip()).contains("SAFE DROP"));
+    // Its photo was stored meanwhile (at the till): a cash.moved event reads the movement again,
+    // and a photo that cannot be read says why in its place.
+    let drop = o.fake.cash_movements_posted()[2].clone();
+    assert_eq!(drop.kind, "drop");
+    let budi = o.fake_token();
+    o.runtime
+        .block_on(o.fake.add_cash_photo(
+            &budi,
+            &drop.id,
+            "0190a000-0000-7000-8000-0000000000f1",
+            png(),
+        ))
+        .unwrap();
+    o.fake.fail_on(
+        "cash_photo",
+        Problem::new(403, "permission_denied", "x")
+            .with("permission", "report.sales")
+            .into(),
+    );
+    o.fake.emit(ServerEvent {
+        kind: "cash.moved".into(),
+        data: serde_json::json!({ "session_id": o.open.0, "movement_id": drop.id }),
+    });
+    o.app.pump();
+    assert_eq!(o.photo_rows()[0].0, 1);
+    let photo = o.app.ui.get_cash_photos().row_data(0).unwrap();
+    assert!(o.text(photo.notice).contains("report.sales"));
+    // An event about a movement not on screen asks nothing.
+    let asked = o.fake.calls_of("cash_movement").len();
+    o.fake.emit(ServerEvent {
+        kind: "cash.moved".into(),
+        data: serde_json::json!({ "session_id": "s", "movement_id": "elsewhere" }),
+    });
+    o.app.pump();
+    assert_eq!(o.fake.calls_of("cash_movement").len(), asked);
+}
+
+/// Ctrl+U when the picker fails, or is cancelled.
+#[test]
+fn a_failed_or_cancelled_picker_adds_nothing() {
+    let failing = FixedPhotos {
+        file: Err(PhotoError::Failed("no portal".into())),
+        camera: None,
+    };
+    let o = office_with(false, failing);
+    o.login("owner");
+    o.press(&["F9"]);
+    o.ctrl("2");
+    o.ctrl("u");
+    assert_eq!(o.photo_note(), "No photo was added: no portal.");
+    assert!(o.uploads().is_empty());
+    let o = office_with(false, FixedPhotos::none());
+    o.login("owner");
+    o.press(&["F9"]);
+    o.ctrl("2");
+    o.ctrl("u");
+    assert_eq!(o.photo_note(), "");
+    assert!(!o.app.ui.get_cash_photo_pane().busy);
+    let o = office_with(
+        false,
+        FixedPhotos {
+            file: Err(PhotoError::TooLarge),
+            camera: None,
+        },
+    );
+    o.login("owner");
+    o.press(&["F9"]);
+    o.ctrl("2");
+    o.ctrl("u");
+    assert!(o.photo_note().contains("10 MB"), "{}", o.photo_note());
 }

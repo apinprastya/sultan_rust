@@ -1041,6 +1041,9 @@ pub struct Controller {
     pub(crate) cash_wait: Option<crate::cash::Waiting>,
     /// A webcam was found: W adds a nota photo from it (spec 2.7 §2a).
     pub camera: bool,
+    /// The movement and photo ID of the last nota photo sent: kept after a network failure,
+    /// so F / W on that movement reuse the ID (the server's `PUT` is idempotent).
+    pub(crate) photo_retry: Option<(String, String)>,
 }
 
 impl Controller {
@@ -1068,6 +1071,7 @@ impl Controller {
             perms: Perms::default(),
             register_label: String::new(),
             cash_wait: None,
+            photo_retry: None,
             camera: false,
         };
         (controller, vec![Effect::LoadUsers])
@@ -1556,6 +1560,7 @@ impl Controller {
         self.perms = Perms::default();
         self.retry = None;
         self.cash_wait = None;
+        self.photo_retry = None;
         self.tenders.clear();
         self.busy = false;
         self.generation += 1;

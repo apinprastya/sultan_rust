@@ -542,6 +542,7 @@ pub fn render_sales(ui: &BackOfficeWindow, c: &Controller, models: &SalesModels)
     let s = &st.settings;
     ui.set_sales_settings(BoSalesSettings {
         return_days: s.return_days.as_str().into(),
+        nota_flag_above: s.nota_flag_above.as_str().into(),
         can_edit: c.can_manage_tenders() && !s.replica,
         loaded: s.stored.is_some(),
         notice: note(s.notice.as_ref()),
