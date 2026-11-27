@@ -160,6 +160,54 @@ id_type!(
     /// A Z report (end of day per branch), spec 2.7 §6.
     ZReportId
 );
+id_type!(
+    /// A supplier (HQ master data), spec 2.8 §3.
+    SupplierId
+);
+id_type!(
+    /// A stock adjustment reason (HQ master data), spec 2.8 §7.
+    StockReasonId
+);
+id_type!(
+    /// A purchase order, spec 2.8 §6.
+    PurchaseOrderId
+);
+id_type!(
+    /// A goods receipt (with the supplier's invoice), spec 2.8 §6.
+    GoodsReceiptId
+);
+id_type!(
+    /// A return to a supplier, spec 2.8 §6.
+    SupplierReturnId
+);
+id_type!(
+    /// A transfer between branches, spec 2.8 §8.
+    TransferId
+);
+id_type!(
+    /// A transfer between two locations of one branch, spec 2.8 §8.
+    InternalTransferId
+);
+id_type!(
+    /// A stock adjustment, spec 2.8 §7.
+    AdjustmentId
+);
+id_type!(
+    /// A stock count (opname), spec 2.8 §11.
+    OpnameId
+);
+id_type!(
+    /// An opening stock document, spec 2.8 §7.
+    OpeningStockId
+);
+id_type!(
+    /// An expiry lot (branch, location, variant, batch, expiry), spec 2.8 §9.
+    LotId
+);
+id_type!(
+    /// A payable created by a posted goods receipt, spec 2.8 §6.
+    PayableId
+);
 
 #[cfg(test)]
 mod tests {

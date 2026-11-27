@@ -254,8 +254,22 @@ audit log viewer · light/dark theme · i18n ID/EN.
   with 2.9 · drawer opens counted from the audit · Shift+F5 / Shift+F12 / Z on the register, F9
   Cash in the back office · `tender.manage` manages reasons · no old-Sultan cash import · text
   layouts in `core` now · the close report keeps its two blocks.
+- **2026-11-26 2.8 Inventory** (spec: `docs/spec/2.8-inventory.md` §0, I1–I22): **all of plan
+  §2.8 in P1** (also expiry lots and suggested POs from sales velocity; serial numbers and repack
+  stay P2) · PO optional, the **goods receipt carries the supplier invoice** (partial deliveries),
+  a posted receipt creates a payable that 2.9 pays · **moving average per branch and variant**
+  (value + quantity, no drift), purchase PPN in the cost unless the company is **PKP**, other costs
+  spread by value · negative stock allowed everywhere, warned · inter-branch transfers now on one
+  database (in transit, shortage = transit loss at the sender), cross-node after sync · opname
+  while selling (variance against snapshot + movements since), uncounted items asked about at
+  posting · stock reasons are HQ data · an opening stock document · min / max + velocity
+  reorder suggestions · receipts show cost and margin, prices stay in F7 · light expiry lots
+  (FEFO, nobody picks a batch) with an Expiring list · new keys `supplier.manage`,
+  `purchase.order`, `purchase.receive`, `stock.transfer`, `stock.count`; cost needs
+  `report.profit` · back office **F10 Stock** and **F11 Purchasing** · on hand at the till ·
+  old Sultan: suppliers, stock as opening stock, unpaid purchases.
 
-## Status (updated 2026-11-25)
+## Status (updated 2026-11-26)
 
 Where we are, so any session can pick up from here. Update this section at the end of every phase.
 
@@ -436,6 +450,41 @@ Where we are, so any session can pick up from here. Update this section at the e
   31–34), headless tests (§12 39), Postman 159a–h (194 requests), screenshots `12b`, `12d`,
   `12e`. Readings in spec §21 (from K6). The back-office photo view, Ctrl+U upload and the
   missing-nota filter follow K5.
+- **2.8 Inventory** N1 `core::stock` (2026-11-26, `crates/core/src/stock/`): the 15 movement
+  kinds of §2 plus `receipt_void` with their signs, document kinds and the `-PO-` `-GR-` `-RS-`
+  `-TR-` `-IT-` `-ADJ-` `-OP-` `-OS-` numbers per branch and local day
+  (`doc_number::stock_number`, `LocalDay::add_days` / `days_since`); the moving average
+  (`CostState`: value + quantity + reference fraction, incoming at a cost with the negative and
+  no-cost cases, out and in at the average, no drift at 0, "no cost yet" = `None`, increases with
+  a typed cost, receipt reversal); receipt totals (tax included / added / none, header discount,
+  other costs and PPN spread by the largest remainder, landed cost PKP vs non-PKP, units to base
+  units) and the supplier return credit; FEFO lots with "no lot" going negative, expiry status;
+  opname counts (scan adds, typed replaces), variance against snapshot + movements since, the
+  full count's uncounted (set to 0 / leave); reorder (min / max, low stock, velocity suggestion
+  rounded up to the purchase unit); transfer value and lot splits; the stock card's running
+  balance; field rules (reasons and their seeds, adjustment lines, suppliers, settings);
+  permissions `supplier.manage`, `purchase.order`, `purchase.receive`, `stock.transfer`,
+  `stock.count`. Readings in spec §20.
+- **2.8 Inventory** N2 `db` (2026-11-26, `crates/db/src/stock/`, migration
+  `20261126000001_inventory`): `stock_movement` rebuilt with `value`, `lot_id`, `doc_line` and the
+  new kinds (2.6 rows without a location moved to the receiving default, else a created "Stok
+  lama"; triggers kept); `stock_balance`, `stock_cost` (built from the ledger) and `stock_lot`
+  kept equal to the ledger by `post_moves` (FEFO split, `FOR UPDATE` on MySQL); suppliers and
+  supplier items (one preferred per variant), stock reasons seeded …0501–…0506, inventory
+  settings, product `track_expiry` / `expiry_warn_days`, reorder rules; POs (draft / order /
+  close / cancel, auto close, over-receipt warning), goods receipts (drafts, posting with landed
+  cost, lots, last price, PO lines and a payable; duplicate invoice per supplier; void with
+  `receipt_in_use`), payables, supplier returns (≤ received − returned, credit), transfers
+  (request / ship / receive with a transit loss at the sender / cancel, `other_node`), internal
+  transfers, adjustments (unit cost needed without a cost), opening stock, opnames (snapshot +
+  mark, counts from several users, one open per location and variant by a lock row, post with
+  uncounted set to 0 or left, cancel); on hand, stock card, lots, on order, in transit, low stock
+  and suggested POs. Sales and returns now post through the ledger with values (sale at the
+  average, a post-void puts back exactly what the sale took, a restock at the sale line's value
+  into its lots, a write-off at the average). Grants for Manager and Stock clerk (who loses
+  `stock.adjust`) delivered to existing installs. Audit and outbox are left to the N3 routes.
+  DB tests §17 13–21 on SQLite and MySQL (`tests/db/stock.rs`, `stock_docs.rs`, the 2.7 → 2.8
+  upgrade). Readings in spec §20.
 - **UI only, except HQ** (§3, 2026-11-09):
   - Start screen on single-app and terminal machines: F1 Kasir, F2 Back office, F3 Settings.
   - Settings: language (F6), set up again (F8), and on a single app "Allow terminals to connect"
@@ -475,11 +524,11 @@ Where we are, so any session can pick up from here. Update this section at the e
 - Each sub-agent worktree builds its own `target/` (20–40 GB with coverage); clear finished ones.
 
 **Next**
-- **2.7 Cash management**: spec agreed (2026-11-19); K1–K6 done. Left: K6's back-office part
-  (the photo view and Ctrl+U upload from a file in the F9 cash movements' slip pane, and the
-  missing-nota filter; spec §10 and §21).
-- Then the remaining P1 specs to discuss (2.4 is P2): 2.8 inventory, 2.9 money, 2.10 reports,
-  2.11 hardware (ESC/POS + drawer), old-Sultan importer.
+- **2.7 Cash management is complete** (K1–K7).
+- **2.8 Inventory**: spec agreed (2026-11-26, `docs/spec/2.8-inventory.md`). N1–N2 done; next N3
+  server + client.
+- Then the remaining P1 specs to discuss (2.4 is P2): 2.9 money, 2.10 reports, 2.11 hardware
+  (ESC/POS + drawer), old-Sultan importer.
 
 **Way of working**
 - Each phase is discussed, written as a spec in `docs/spec/`, then built in phases; the user usually

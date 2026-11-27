@@ -7,8 +7,8 @@ Persistence for Sultan POS: sqlx migrations and repositories for SQLite and MySQ
   differs), embedded with `sqlx::migrate!` and applied by `Db::migrate()` (`build.rs` rebuilds the
   crate when a migration changes).
 - `src/`: one module per area (`org`, `users`, `roles`, `seed`, `devices`, `auth`, `overrides`,
-  `cashier_sessions`, `catalog`, `customers`, `pricing`, `sales`, `cash`, `audit`, `outbox`,
-  `idempotency`). The queries are
+  `cashier_sessions`, `catalog`, `customers`, `pricing`, `sales`, `cash`, `stock`, `audit`,
+  `outbox`, `idempotency`). The queries are
   shared between backends and use the runtime query API, so building never needs a `DATABASE_URL`.
 
 ## Sales (spec 2.6, phase S2)
@@ -22,7 +22,7 @@ Persistence for Sultan POS: sqlx migrations and repositories for SQLite and MySQ
 | `sale_void`, `sale_void_tender` | The post-void: the paying (current) session, reason, refund split and how it was paid back (cash or balance). |
 | `sale_return`, `sale_return_line`, `sale_return_tender` | Returns (by receipt with `sale_id` + `sale_line_no`, or without), restock / write-off per line, refund tenders (cash, balance, `exchange`), the exchange's new sale. |
 | `held_cart` | Branch-local held carts (JSON payload, item count, total); `taken_*` once resumed. Not synced. |
-| `stock_movement` | The append-only stock ledger (D9, triggers like `audit_log`): base-unit `base_qty` signed by kind (`sale` −, `sale_void` +, `return` +, `write_off` −), branch + location, document. On hand = Σ `base_qty`; no cached balance yet (2.8). |
+| `stock_movement` | The append-only stock ledger (D9, triggers like `audit_log`): base-unit `base_qty` signed by kind (`sale` −, `sale_void` +, `return` +, `write_off` −), branch + location, document. Since 2.8 it has a value, a lot and the document line and is written through `stock::post_moves` (see Inventory below). |
 
 - **Numbers:** `MAX(seq) + 1` per register and branch-local day inside the posting transaction,
   guarded by `UNIQUE (register_id, local_day, seq)` on `sale` and on `sale_return`, like cashier
@@ -83,6 +83,48 @@ Persistence for Sultan POS: sqlx migrations and repositories for SQLite and MySQ
 - **Grants:** the migration gives Manager `cash.drop` and `day.close`, and Cashier `cash.out`
   ≤ Rp 50 000 only when Cashier has no `cash.out` grant yet; `seed_defaults` does the same on a
   fresh install and keeps rewriting Owner.
+
+## Inventory (spec 2.8, phase N2)
+
+`src/stock/` and `20261126000001_inventory.sql`:
+
+| Table | What |
+|---|---|
+| `stock_movement` | Rebuilt (SQLite cannot change a `CHECK`): the 15 kinds of spec 2.8 §2 plus `receipt_void`, signs checked per kind, `value` (signed Rp, `NULL` = no cost, every row from before 2.8), `lot_id`, `doc_kind` (`sale`, `return`, `goods_receipt`, `supplier_return`, `transfer`, `internal_transfer`, `adjustment`, `opname`, `opening_stock`), `doc_line`. 2.6 rows without a location moved to the branch's receiving default (else any live location, else a location "Stok lama" created for it). Append-only triggers recreated. |
+| `stock_balance` | On hand per (branch, location, variant), built from the ledger by the migration and kept equal to it by every posting. A movement without a location (a branch with no location at all) is balanced under the all-zero location ID (`stock::NO_LOCATION`). |
+| `stock_cost` | The moving average per (branch, variant): `qty`, `value` and the reference cost `ref_value / ref_qty` (`NULL` = no cost yet). Rows from before 2.8 have no cost. |
+| `stock_lot` | Expiry lots per (branch, location, variant, batch, expiry). "No lot" is on hand minus the lots and may go negative. |
+| `supplier`, `supplier_item` | HQ master data. `supplier_item.preferred_variant` (= `variant_id` when preferred) under `UNIQUE`: one preferred supplier per variant; `UNIQUE (supplier_id, supplier_code)`; `last_price` per base unit and `last_unit_id` set by posted receipts. |
+| `stock_reason` | HQ master data, direction `in` / `out` / `both`, seeded …0501–…0506 (Rusak, Kedaluwarsa, Hilang, Sampel, Pemakaian sendiri, Koreksi with a note). |
+| `inventory_settings` | One company row: `pkp`, `standard_ppn_rate_bp`, `expiry_warn_days`, `velocity_days`, `cover_days`. |
+| `product` + | `track_expiry`, `expiry_warn_days`. |
+| `reorder_rule` | Min / max per (branch, variant). |
+| `purchase_order`, `_line` | `draft → ordered → closed`, or `cancelled`; numbered when ordered; lines keep `received_qty` (base units). |
+| `goods_receipt`, `_line`, `payable` | Receipts with the supplier invoice; `invoice_active` (= `invoice_no` while posted) under `UNIQUE (supplier_id, invoice_active)`; per line the landed cost and lot; one payable per posted receipt. |
+| `supplier_return`, `_line` | Returns to the supplier with the credit. |
+| `stock_transfer`, `_line`, `_lot` | Transfers between branches with shipped / received / lost quantities and values, and the lots that travel. |
+| `internal_transfer`, `stock_adjustment`, `opening_stock` (+ `_line`) | Posted at once. |
+| `opname`, `opname_scope`, `opname_line`, `opname_count`, `opname_lock` | Counts: snapshot per line, append-only count entries, one lock row per (location, variant) for the one-open-opname rule. |
+
+- **Posting** (`stock::post_moves`): checks the kind's sign, splits an outgoing FEFO movement into
+  one row per lot taken, values each part from `core::stock::CostState`, appends the rows and
+  updates `stock_balance`, `stock_cost` and `stock_lot` in the caller's transaction. On MySQL the
+  cost row and the lots are read `FOR UPDATE`; on SQLite `BEGIN IMMEDIATE` serializes writers.
+  Balances use an upsert (`ON CONFLICT … DO UPDATE` / `ON DUPLICATE KEY UPDATE … AS new`).
+- **Sales and returns** post through it (`sales/stock.rs`): a sale at the average (FEFO), a
+  post-void mirrors each sale row (quantity, value, lot), a restocked return comes back at the
+  sale line's value (into its lots), a write-off at the average.
+- **Numbers:** `<BRANCH>-<PREFIX>-<YYMMDD>-<NN>` per branch, prefix and branch-local day, as
+  `MAX(seq) + 1` under `UNIQUE (branch_id, local_day, seq)` per document table.
+- **Audit and outbox** are the caller's (the N3 server appends them in the same transaction), so
+  these repositories only store the documents and the ledger.
+- **Grants:** the migration gives Manager `supplier.manage`, `purchase.order`,
+  `purchase.receive`, `stock.transfer`, `stock.count`, gives Stock clerk the last three and takes
+  its `stock.adjust` away (spec 2.8 §12; nothing used it before); `seed_defaults` does the same
+  on a fresh install.
+- **Tests:** `tests/db/stock.rs` and `tests/db/stock_docs.rs` (spec 2.8 §17 cases 13–21 at the db
+  level) check after each scenario that every cache equals the ledger (`assert_balanced`), and the
+  upgrade from a 2.7 database (`*_upgrade_builds_the_balance`).
 
 ## Tests
 
@@ -157,7 +199,8 @@ kill %1 && rm -rf "$DIR"
   `live_target` and `default_key` under `UNIQUE` keys, like the phone above. The repository reports
   `price_list_conflict` first; the indexes catch races.
 - The migrations create triggers that make `audit_log`, `customer_balance_entry`,
-  `stock_movement`, `cash_movement`, `cash_movement_photo` and `z_report` append-only.
+  `stock_movement`, `cash_movement`, `cash_movement_photo`, `z_report` and `opname_count`
+  append-only.
   With binary logging on (the default), a user without `SUPER` needs
   `log_bin_trust_function_creators = 1` to create them.
 - Session numbers (`cashier_sessions::insert`) are allocated as `MAX(seq) + 1` inside the open

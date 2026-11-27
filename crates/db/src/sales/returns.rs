@@ -690,16 +690,7 @@ pub async fn post_return(
         take_from_sale(tx, sale, &taken).await?;
     }
     let location = stock::register_location(tx, r.register).await?;
-    stock::insert(
-        tx,
-        r.branch,
-        location,
-        "return",
-        *r.id.as_uuid(),
-        &r.movements,
-        r.posted_at,
-    )
-    .await?;
+    stock::insert_return(tx, r, location).await?;
     let place = Place {
         branch: r.branch,
         register: r.register,

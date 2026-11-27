@@ -49,7 +49,11 @@ const fn pct(percent: u16) -> Limit {
 /// grants as they are, so an older Manager keeps an unlimited one; sales grants spec 2.6 §11, by
 /// `20261117000001_sales.sql`: `sale.reprint` for Manager, `tender.manage` for Owner only; cash
 /// grants spec 2.7 §7, by `20261119000001_cash.sql`: `cash.drop` and `day.close` for Manager, and
-/// `cash.out` ≤ Rp 50 000 for Cashier only when the Cashier role has no `cash.out` grant yet). Only
+/// `cash.out` ≤ Rp 50 000 for Cashier only when the Cashier role has no `cash.out` grant yet;
+/// inventory grants spec 2.8 §12, by `20261126000001_inventory.sql`: `supplier.manage`,
+/// `purchase.order`, `purchase.receive`, `stock.transfer`, `stock.count` for Manager, the last three
+/// for Stock clerk, whose `stock.adjust` is taken away because 2.8 gives it to Owner and Manager
+/// only and nothing used it before). Only
 /// Owner is reset by [`seed_defaults`]; the others are created once and are then editable.
 ///
 /// # Panics
@@ -105,6 +109,11 @@ pub fn default_roles() -> Vec<Role> {
                 (P::SaleReprint, None),
                 (P::CashDrop, None),
                 (P::DayClose, None),
+                (P::SupplierManage, None),
+                (P::PurchaseOrder, None),
+                (P::PurchaseReceive, None),
+                (P::StockTransfer, None),
+                (P::StockCount, None),
             ],
         ),
         role(
@@ -125,7 +134,12 @@ pub fn default_roles() -> Vec<Role> {
         role(
             STOCK_CLERK_ROLE,
             "Stock clerk",
-            &[(P::StockAdjust, None), (P::CatalogManage, None)],
+            &[
+                (P::CatalogManage, None),
+                (P::PurchaseReceive, None),
+                (P::StockTransfer, None),
+                (P::StockCount, None),
+            ],
         ),
         role(
             VIEWER_ROLE,

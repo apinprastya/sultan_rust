@@ -15,6 +15,11 @@
 //!   purchase history (spec 2.6) live in [`sales`].
 //! - Cash reasons, cash movements and their nota photos, the float between sessions and the Z
 //!   report (spec 2.7) live in [`cash`].
+//! - The stock ledger with its cached balances, average costs and expiry lots, suppliers, stock
+//!   reasons, the inventory settings and the inventory documents (purchase orders, goods
+//!   receipts and payables, supplier returns, transfers, adjustments, opening stock, opnames,
+//!   reorder rules; spec 2.8) live in [`stock`]. Sales and returns post their movements through
+//!   it.
 //! - Rows map to and from the domain types of `sultan_core`. No access rule lives here: the
 //!   server checks permissions, lockout, override approval and the Owner invariant with `core`.
 //!
@@ -46,6 +51,7 @@ pub mod pricing;
 pub mod roles;
 pub mod sales;
 pub mod seed;
+pub mod stock;
 pub mod users;
 
 pub use conn::{Backend, Conn, Db, Tx, secure_sqlite_files};

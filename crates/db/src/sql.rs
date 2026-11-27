@@ -7,9 +7,11 @@ use sqlx::mysql::MySqlRow;
 use sqlx::sqlite::SqliteRow;
 use sultan_core::catalog::Qty;
 use sultan_core::ids::{
-    BarcodeId, BranchId, BrandId, CashMovementId, CashReasonId, CashierSessionId, CategoryId,
-    CompanyId, HeldCartId, LocationId, NotaPhotoId, OptionId, OptionValueId, ProductId, RegisterId,
-    ReturnId, RoleId, SaleId, TaxClassId, TenderTypeId, UnitId, UserId, VariantId, ZReportId,
+    AdjustmentId, BarcodeId, BranchId, BrandId, CashMovementId, CashReasonId, CashierSessionId,
+    CategoryId, CompanyId, GoodsReceiptId, HeldCartId, InternalTransferId, LocationId, LotId,
+    NotaPhotoId, OpeningStockId, OpnameId, OptionId, OptionValueId, PayableId, ProductId,
+    PurchaseOrderId, RegisterId, ReturnId, RoleId, SaleId, StockReasonId, SupplierId,
+    SupplierReturnId, TaxClassId, TenderTypeId, TransferId, UnitId, UserId, VariantId, ZReportId,
 };
 use sultan_core::money::Money;
 use sultan_core::pricing::{PriceEntryId, PriceListId};
@@ -55,6 +57,18 @@ macro_rules! arg_from_id {
     )*};
 }
 arg_from_id!(
+    AdjustmentId,
+    GoodsReceiptId,
+    InternalTransferId,
+    LotId,
+    OpeningStockId,
+    OpnameId,
+    PayableId,
+    PurchaseOrderId,
+    StockReasonId,
+    SupplierId,
+    SupplierReturnId,
+    TransferId,
     BarcodeId,
     BranchId,
     BrandId,
@@ -136,6 +150,16 @@ impl From<Money> for Arg {
 impl From<Qty> for Arg {
     fn from(q: Qty) -> Self {
         Self::I64(q.thousandths())
+    }
+}
+impl From<Option<Qty>> for Arg {
+    fn from(q: Option<Qty>) -> Self {
+        Self::OptI64(q.map(Qty::thousandths))
+    }
+}
+impl From<Option<Money>> for Arg {
+    fn from(m: Option<Money>) -> Self {
+        Self::OptI64(m.map(Money::minor))
     }
 }
 impl From<&str> for Arg {
@@ -340,6 +364,16 @@ pub(crate) fn money(row: &dyn Row, col: &str) -> Result<Money> {
 /// Reads a quantity column (thousandths).
 pub(crate) fn qty(row: &dyn Row, col: &str) -> Result<Qty> {
     row.i64(col).map(Qty::from_thousandths)
+}
+
+/// Reads a nullable quantity column (thousandths).
+pub(crate) fn opt_qty(row: &dyn Row, col: &str) -> Result<Option<Qty>> {
+    Ok(row.opt_i64(col)?.map(Qty::from_thousandths))
+}
+
+/// Reads a nullable money column.
+pub(crate) fn opt_money(row: &dyn Row, col: &str) -> Result<Option<Money>> {
+    Ok(row.opt_i64(col)?.map(Money::from_minor))
 }
 
 /// Reads a 32-byte hash column.
