@@ -1310,13 +1310,14 @@ pub async fn list_rules(
 /// `PUT /api/v1/reorder-rules/{branch_id}/{variant_id}` (`purchase.order` at the branch).
 ///
 /// # Errors
-/// `403 permission_denied`, `422 invalid_field` (`min`, `max`).
+/// `403 permission_denied`, `404 not_found` (branch, variant), `422 invalid_field` (`min`, `max`).
 #[utoipa::path(put, path = "/api/v1/reorder-rules/{branch_id}/{variant_id}", tag = "stock",
     security(("bearer" = [])),
     params(("branch_id" = String, Path, description = "Branch ID"), ("variant_id" = String, Path, description = "Variant ID")),
     request_body = ReorderRuleBody,
     responses((status = 201, body = ReorderRuleDto), (status = 200, body = ReorderRuleDto),
-        (status = 403, body = crate::openapi::Problem), (status = 422, body = crate::openapi::Problem)))]
+        (status = 403, body = crate::openapi::Problem), (status = 404, body = crate::openapi::Problem),
+        (status = 422, body = crate::openapi::Problem)))]
 pub async fn put_rule(
     State(state): State<AppState>,
     session: UserSession,

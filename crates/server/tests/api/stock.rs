@@ -194,6 +194,22 @@ async fn clerk(h: &Harness) -> (sultan_db::users::User, String) {
     (u, token)
 }
 
+/// A user at Jakarta whose only key is `report.profit` (a role the Owner creates).
+async fn profit_reader(h: &Harness, owner: &str) -> String {
+    let id: sultan_core::ids::RoleId = new_id().parse().unwrap();
+    let r = h
+        .call(
+            owner,
+            Method::PUT,
+            &format!("/api/v1/roles/{id}"),
+            Some(json!({ "name": "Auditor", "grants": [{ "permission": "report.profit" }] })),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.body);
+    h.add_user("audit", id, BranchScope::Branch(h.jkt.id)).await;
+    h.password_token("audit", BUDI_PASSWORD).await
+}
+
 fn adjustment(item: &Item, qty: i64, reason: &str) -> Value {
     json!({
         "lines": [{
@@ -733,6 +749,15 @@ async fn purchase_order_lifecycle(h: &Harness) {
     )
     .await
     .assert_problem(422, "invalid_field");
+    // No rule for a variant the catalog does not have.
+    h.call(
+        o,
+        Method::PUT,
+        &format!("/api/v1/reorder-rules/{}/{}", h.jkt.id, new_id()),
+        Some(json!({ "min_thousandths": 1_000, "max_thousandths": 2_000 })),
+    )
+    .await
+    .assert_problem(404, "not_found");
 }
 
 /// Spec §17 case 17: a supplier return against a receipt line returns at most what it
@@ -1142,6 +1167,10 @@ async fn costs_hidden_without_report_profit(h: &Harness) {
         )
         .await;
     r.assert_problem(403, "permission_denied");
+    // `report.profit` alone is an inventory read key (§12), and it shows the cost.
+    let auditor = profit_reader(h, o).await;
+    let r = row(h, &auditor, &s.tea.variant).await;
+    assert!(r.get("unit_cost").is_some(), "{r}");
     let list = h
         .call(&sri, Method::GET, "/api/v1/opening-stock", None)
         .await;

@@ -1305,6 +1305,24 @@ async fn reorder_rules_and_suggestions(db: &Db) {
             .code(),
         Some("invalid_field")
     );
+    for orphan in [
+        ReorderRule {
+            branch: BranchId::generate(),
+            ..rule
+        },
+        ReorderRule {
+            variant: VariantId::generate(),
+            ..rule
+        },
+    ] {
+        assert_eq!(
+            stock::put_reorder_rule(&mut tx, &orphan, &stock::Actor::default(), t(3))
+                .await
+                .unwrap_err()
+                .code(),
+            Some("not_found")
+        );
+    }
     tx.commit().await.unwrap();
     let lines = stock::suggest_purchase_order(db, s.supplier.id, jkt, t(NOV16))
         .await

@@ -82,7 +82,8 @@ pub async fn list_reorder_rules<'c>(
 /// `purchase.order`): `0 ≤ min ≤ max`.
 ///
 /// # Errors
-/// [`StockDbError::Rule`] (`min`, `max`); the database error.
+/// [`StockDbError::Rule`] (`min`, `max`); [`StockDbError::NotFound`] (`branch`, `variant`);
+/// the database error.
 pub async fn put_reorder_rule(
     tx: &mut Tx,
     rule: &ReorderRule,
@@ -90,6 +91,27 @@ pub async fn put_reorder_rule(
     now: Timestamp,
 ) -> StockResult<Written> {
     check_rule(rule.min, rule.max)?;
+    // The table has no foreign keys: refuse a rule for a branch or variant that does not exist.
+    let branch = sql::fetch_optional(
+        Conn::Tx(&mut *tx),
+        "SELECT 1 AS x FROM branch WHERE id = ?",
+        args![rule.branch],
+        |_| Ok(()),
+    )
+    .await?;
+    if branch.is_none() {
+        return Err(StockDbError::NotFound("branch"));
+    }
+    let variant = sql::fetch_optional(
+        Conn::Tx(&mut *tx),
+        "SELECT 1 AS x FROM variant WHERE id = ?",
+        args![rule.variant],
+        |_| Ok(()),
+    )
+    .await?;
+    if variant.is_none() {
+        return Err(StockDbError::NotFound("variant"));
+    }
     let before = get_reorder_rule(Conn::Tx(&mut *tx), rule.branch, rule.variant).await?;
     if before.as_ref() == Some(rule) {
         return Ok(Written::Unchanged);

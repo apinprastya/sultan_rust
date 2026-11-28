@@ -46,6 +46,7 @@ db_tests!(
     stock_reasons_seed_put_archive,
     inventory_settings_and_product_expiry,
     stock_card_lots_and_on_hand,
+    expiring_lists_without_product_overrides,
     seeded_grants,
     ledger_is_append_only_with_new_kinds,
 );
@@ -1025,6 +1026,55 @@ async fn inventory_settings_and_product_expiry(db: &Db) {
     );
     tx.commit().await.unwrap();
     assert!(stock::get_inventory_settings(db).await.unwrap().pkp);
+}
+
+/// Spec §9, I22: with no product's own warn days the Expiring lists use the company's (30).
+async fn expiring_lists_without_product_overrides(db: &Db) {
+    let s = shop(db).await;
+    let mut tx = db.begin().await.unwrap();
+    stock::set_product_expiry(
+        &mut tx,
+        s.milk.draft.id,
+        ProductExpiry {
+            track_expiry: true,
+            expiry_warn_days: None,
+        },
+        &stock::Actor::default(),
+        t(21),
+    )
+    .await
+    .unwrap();
+    tx.commit().await.unwrap();
+    let milk = Shop::v(&s.milk);
+    let pcs = Shop::base(&s.milk);
+    opening(
+        db,
+        &s,
+        &[
+            (milk, pcs, 2, 1_000, Some(("SOON", 20_261_210))),
+            (milk, pcs, 3, 1_000, Some(("LATER", 20_270_101))),
+        ],
+        NOV16 - HOUR,
+    )
+    .await;
+    let today = day(20_261_116);
+    let lots = stock::list_expiring_lots(db, Some(s.till.o.jkt.id), None, None, today)
+        .await
+        .unwrap();
+    assert_eq!(lots.len(), 1);
+    assert_eq!(lots[0].batch, "SOON");
+    let rows = stock::list_on_hand(
+        db,
+        &OnHandFilter {
+            branch: Some(s.till.o.jkt.id),
+            expiring: Some(today),
+            ..OnHandFilter::default()
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].variant, milk);
 }
 
 /// The stock card's running balance, the on-hand list and its filters (§14, §16).

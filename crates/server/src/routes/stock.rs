@@ -3,7 +3,8 @@
 //! **Permissions** (§12): writes check their key at the document's branch
 //! ([`require_at`]); reading on hand, stock cards, lots and documents needs any of
 //! `supplier.manage`, `purchase.order`, `purchase.receive`, `stock.transfer`, `stock.count`,
-//! `stock.adjust` or `report.sales` at the branch ([`require_read`]). Without `report.profit`
+//! `stock.adjust`, `report.profit` or `report.sales` at the branch ([`require_read`]). Without
+//! `report.profit`
 //! at the branch, cost and value fields are **left out** of the answers ([`CostView`]): unit cost,
 //! movement and line values, landed cost, transfer values, purchase-order prices, suggested
 //! prices and the supplier's last price. A field that is present and `null` means "no cost yet"
@@ -118,13 +119,14 @@ where
 }
 
 /// The keys that let a caller read inventory (§12).
-pub const READ_KEYS: [Permission; 7] = [
+pub const READ_KEYS: [Permission; 8] = [
     Permission::SupplierManage,
     Permission::PurchaseOrder,
     Permission::PurchaseReceive,
     Permission::StockTransfer,
     Permission::StockCount,
     Permission::StockAdjust,
+    Permission::ReportProfit,
     Permission::ReportSales,
 ];
 

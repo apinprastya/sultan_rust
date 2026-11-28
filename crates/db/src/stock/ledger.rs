@@ -588,7 +588,8 @@ const ON_HAND_SELECT: &str = "SELECT b.branch_id, b.location_id, b.variant_id, b
 
 /// The expiry horizon of a product as SQL over `p.expiry_warn_days`: `today` + its warn days,
 /// else + the company's (§9). Days cannot be added to a `YYYYMMDD` key in portable SQL, so each
-/// warn-days value in use gets its own branch of a `CASE`.
+/// warn-days value in use gets its own branch of a `CASE`. Without any override it is just the
+/// company's horizon (`CASE` needs at least one `WHEN`).
 async fn horizon_sql(conn: &mut Conn<'_>, today: LocalDay) -> Result<(String, Vec<Arg>)> {
     let default = super::get_inventory_settings(conn.reborrow())
         .await?
@@ -601,6 +602,9 @@ async fn horizon_sql(conn: &mut Conn<'_>, today: LocalDay) -> Result<(String, Ve
     )
     .await?;
     let by = |days: i64| today.add_days(days).map_or(99_991_231, LocalDay::key);
+    if overrides.is_empty() {
+        return Ok(("?".into(), vec![by(i64::from(default)).into()]));
+    }
     let mut text = String::from("CASE");
     let mut a: Vec<Arg> = Vec::new();
     for days in overrides {
