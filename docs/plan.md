@@ -269,7 +269,7 @@ audit log viewer · light/dark theme · i18n ID/EN.
   `report.profit` · back office **F10 Stock** and **F11 Purchasing** · on hand at the till ·
   old Sultan: suppliers, stock as opening stock, unpaid purchases.
 
-## Status (updated 2026-11-26)
+## Status (updated 2026-11-27)
 
 Where we are, so any session can pick up from here. Update this section at the end of every phase.
 
@@ -485,6 +485,28 @@ Where we are, so any session can pick up from here. Update this section at the e
   `stock.adjust`) delivered to existing installs. Audit and outbox are left to the N3 routes.
   DB tests §17 13–21 on SQLite and MySQL (`tests/db/stock.rs`, `stock_docs.rs`, the 2.7 → 2.8
   upgrade). Readings in spec §20.
+- **2.8 Inventory** N3 `server` + client (2026-11-27): first the N2 fix: `db::stock` writes now
+  append their audit row and outbox event themselves, like `cash` and `sales` (§15 kinds, the
+  documents with their lines and ledger rows; spec §20 reading 21). Routes of §16
+  (`routes/{stock,suppliers,purchasing,stock_docs}.rs`): suppliers, supplier items, stock
+  reasons and `/settings/inventory` as HQ data (`read_only_replica` on a branch node); purchase
+  orders (draft, order, close, cancel), goods receipts (draft, post with `over_received`, void
+  with a manager: `stock.adjust` is now overridable and only the void takes `X-Override`;
+  `receipt_in_use`), supplier returns, transfers (request at the receiver, ship, receive with a
+  transit loss, cancel; `other_node`), internal transfers, adjustments, opening stock, opnames
+  (start, counts, post with `stock.count` + `stock.adjust`, cancel; `opname_open`), reorder
+  rules, suggestions and low stock, payables; on hand with the N2-deferred filters (category,
+  brand, text, negative / low / expiring, keyset `cursor`), stock card, lots and the Expiring
+  list; `GET /registers/me/stock/{variant_id}` for the till (device token, no cost); the §12
+  permission checks with cost and value fields left out without `report.profit`;
+  `negative_after` in posting answers (§4 warning); `Idempotency-Key` on action `POST`s; events
+  `stock.changed` (sales, post-voids and returns too) and `transfer.changed` to both branches;
+  the product `PUT` with `track_expiry` / `expiry_warn_days`; error codes `receipt_in_use`,
+  `opname_open`, `other_node` (with UI messages); utoipa docs; API tests §17 13–22
+  (`tests/api/stock.rs`, SQLite and MySQL); the client's inventory types and calls on
+  `BackOffice` (and the till's on hand on `Service`) with the HTTP implementation and a fake
+  using `core::stock`; the Postman folder "Inventory (spec 2.8)" (242 requests). Readings in spec
+  §21 (from N3).
 - **UI only, except HQ** (§3, 2026-11-09):
   - Start screen on single-app and terminal machines: F1 Kasir, F2 Back office, F3 Settings.
   - Settings: language (F6), set up again (F8), and on a single app "Allow terminals to connect"
@@ -525,8 +547,8 @@ Where we are, so any session can pick up from here. Update this section at the e
 
 **Next**
 - **2.7 Cash management is complete** (K1–K7).
-- **2.8 Inventory**: spec agreed (2026-11-26, `docs/spec/2.8-inventory.md`). N1–N2 done; next N3
-  server + client.
+- **2.8 Inventory**: spec agreed (2026-11-26, `docs/spec/2.8-inventory.md`). N1–N3 done; next N4
+  back office F11 Purchasing.
 - Then the remaining P1 specs to discuss (2.4 is P2): 2.9 money, 2.10 reports, 2.11 hardware
   (ESC/POS + drawer), old-Sultan importer.
 

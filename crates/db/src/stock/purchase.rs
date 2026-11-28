@@ -13,6 +13,7 @@ use sultan_core::money::Money;
 use sultan_core::stock::{DocKind, check_note, to_base};
 use sultan_core::time::Timestamp;
 
+use super::json::{doc_actor, purchase_order_json, record_doc};
 use super::numbers::allocate;
 use super::{
     StockDbError, StockResult, Written, check_lines, doc_location, line_no, opt_day, variant_info,
@@ -46,7 +47,9 @@ impl PurchaseOrderStatus {
         }
     }
 
-    fn from_key(key: &str) -> Option<Self> {
+    /// The value of a stored name.
+    #[must_use]
+    pub fn from_key(key: &str) -> Option<Self> {
         [Self::Draft, Self::Ordered, Self::Closed, Self::Cancelled]
             .into_iter()
             .find(|s| s.as_str() == key)
@@ -368,6 +371,10 @@ pub async fn put_purchase_order(
     let stored = get_purchase_order(Conn::Tx(&mut *tx), po.id)
         .await?
         .ok_or(DbError::NotFound("purchase order"))?;
+    if before.as_ref() == Some(&stored) {
+        return Ok((Written::Unchanged, stored));
+    }
+    recorded(tx, po.user, "purchase_order.put", &stored, now).await?;
     Ok((
         if before.is_some() {
             Written::Updated
@@ -382,6 +389,37 @@ async fn load(tx: &mut Tx, id: PurchaseOrderId) -> StockResult<PurchaseOrder> {
     get_purchase_order(Conn::Tx(&mut *tx), id)
         .await?
         .ok_or(StockDbError::NotFound("purchase order"))
+}
+
+/// Loads the order and records `action` on it (`purchase_order.changed`).
+async fn changed(
+    tx: &mut Tx,
+    id: PurchaseOrderId,
+    user: UserId,
+    action: &str,
+    at: Timestamp,
+) -> StockResult<(Written, PurchaseOrder)> {
+    let po = load(tx, id).await?;
+    recorded(tx, user, action, &po, at).await?;
+    Ok((Written::Updated, po))
+}
+
+async fn recorded(
+    tx: &mut Tx,
+    user: UserId,
+    action: &str,
+    po: &PurchaseOrder,
+    at: Timestamp,
+) -> Result<()> {
+    record_doc(
+        tx,
+        &doc_actor(user, po.branch),
+        at,
+        (action, "purchase_order.changed"),
+        *po.id.as_uuid(),
+        purchase_order_json(po),
+    )
+    .await
 }
 
 /// Orders a draft (`POST /purchase-orders/{id}/order`, `purchase.order`): numbers it `-PO-` on
@@ -414,7 +452,7 @@ pub async fn order_purchase_order(
         args![n.number, n.day, n.seq, at, user, at, id],
     )
     .await?;
-    Ok((Written::Updated, load(tx, id).await?))
+    changed(tx, id, user, "purchase_order.order", at).await
 }
 
 /// Closes an ordered purchase order by hand ("close the rest", `purchase.order`). A closed one
@@ -433,7 +471,7 @@ pub async fn close_purchase_order(
         PurchaseOrderStatus::Closed => Ok((Written::Unchanged, po)),
         PurchaseOrderStatus::Ordered => {
             close(tx, id, Some(user), at).await?;
-            Ok((Written::Updated, load(tx, id).await?))
+            changed(tx, id, user, "purchase_order.close", at).await
         }
         s => Err(StockDbError::state("purchase order", s.as_str())),
     }
@@ -484,7 +522,7 @@ pub async fn cancel_purchase_order(
         args![at, user, at, id],
     )
     .await?;
-    Ok((Written::Updated, load(tx, id).await?))
+    changed(tx, id, user, "purchase_order.cancel", at).await
 }
 
 /// Adds `qty` base units to the received quantity of a PO line, closes the order once every

@@ -346,6 +346,10 @@ pub struct ProductForm {
     /// The editable state.
     pub data: FormData,
     baseline: FormData,
+    /// Expiry tracking as loaded (spec 2.8 §9; not edited on this form yet), kept on save.
+    pub track_expiry: bool,
+    /// The expiring-list days as loaded, kept on save.
+    pub expiry_warn_days: Option<u32>,
 }
 
 impl ProductForm {
@@ -402,6 +406,8 @@ impl ProductForm {
             tab: Tab::General,
             errors: Vec::new(),
             has_image: false,
+            track_expiry: false,
+            expiry_warn_days: None,
             baseline: data.clone(),
             data,
         }
@@ -544,6 +550,8 @@ impl ProductForm {
             tab: Tab::General,
             errors: Vec::new(),
             has_image,
+            track_expiry: p.track_expiry,
+            expiry_warn_days: p.expiry_warn_days,
             baseline: data.clone(),
             data,
         };
@@ -1057,6 +1065,8 @@ impl ProductForm {
             used: self.used,
             created_at: 0,
             updated_at: 0,
+            track_expiry: self.track_expiry,
+            expiry_warn_days: self.expiry_warn_days,
         }
     }
 

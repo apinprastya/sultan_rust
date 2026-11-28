@@ -47,6 +47,15 @@ use crate::sales::{
     ReturnRequest, Sale, SalePage, SaleRequest, SaleReturn, SaleSummary, SalesSettings, TenderType,
     TenderTypeBody, VoidRequest,
 };
+use crate::stock::{
+    Adjustment, AdjustmentBody, CardPage, CardQuery, CountEntry, GoodsReceipt, InternalTransfer,
+    InternalTransferBody, InventorySettings, Lot, LotQuery, MoveBody, OnHandPage, OnHandQuery,
+    OpeningBody, OpeningStock, Opname, OpnameBody, OrderAction, Payable, PayableQuery,
+    PurchaseOrder, PurchaseOrderBody, ReceiptBody, ReorderRule, ReorderRuleBody, StockDocQuery,
+    StockReason, StockReasonBody, SuggestedLine, Supplier, SupplierBody, SupplierItem,
+    SupplierItemBody, SupplierReturn, SupplierReturnBody, TillStock, Transfer, TransferAction,
+    TransferBody,
+};
 use crate::{
     BackOffice, Branch, CashierSession, ClientError, CloseReport, CloseRequest, EventSink,
     LockUser, Login, OverrideGrant, OverrideRequest, Problem, ProtectedAction, ProtectedResult,
@@ -754,6 +763,15 @@ impl Service for HttpService {
         Box::pin(async move { exchange(request).await.map(|(_, bytes)| bytes) })
     }
 
+    fn till_stock(&self, token: &str, variant_id: &str) -> crate::BoxFuture<TillStock> {
+        let token = (!token.is_empty()).then_some(token);
+        Box::pin(send(self.request(
+            Method::GET,
+            &format!("/registers/me/stock/{variant_id}"),
+            token,
+        )))
+    }
+
     fn post_return(
         &self,
         token: &str,
@@ -1432,9 +1450,438 @@ impl BackOffice for HttpService {
             .json(body);
         Box::pin(send(request))
     }
+
+    fn suppliers(&self, token: &str, include_archived: bool) -> crate::BoxFuture<Vec<Supplier>> {
+        self.get_query("/suppliers", token, &[("archived", include_archived)])
+    }
+
+    fn put_supplier(
+        &self,
+        token: &str,
+        id: &str,
+        body: &SupplierBody,
+    ) -> crate::BoxFuture<Supplier> {
+        self.put_json(token, &format!("/suppliers/{id}"), body)
+    }
+
+    fn delete_supplier(&self, token: &str, id: &str) -> crate::BoxFuture<Supplier> {
+        Box::pin(send(self.request(
+            Method::DELETE,
+            &format!("/suppliers/{id}"),
+            Some(token),
+        )))
+    }
+
+    fn supplier_items(
+        &self,
+        token: &str,
+        supplier_id: &str,
+    ) -> crate::BoxFuture<Vec<SupplierItem>> {
+        self.get(token, &format!("/suppliers/{supplier_id}/items"))
+    }
+
+    fn put_supplier_item(
+        &self,
+        token: &str,
+        supplier_id: &str,
+        variant_id: &str,
+        body: &SupplierItemBody,
+    ) -> crate::BoxFuture<SupplierItem> {
+        self.put_json(
+            token,
+            &format!("/suppliers/{supplier_id}/items/{variant_id}"),
+            body,
+        )
+    }
+
+    fn stock_reasons(
+        &self,
+        token: &str,
+        include_archived: bool,
+    ) -> crate::BoxFuture<Vec<StockReason>> {
+        self.get_query("/stock-reasons", token, &[("archived", include_archived)])
+    }
+
+    fn put_stock_reason(
+        &self,
+        token: &str,
+        id: &str,
+        body: &StockReasonBody,
+    ) -> crate::BoxFuture<StockReason> {
+        self.put_json(token, &format!("/stock-reasons/{id}"), body)
+    }
+
+    fn delete_stock_reason(&self, token: &str, id: &str) -> crate::BoxFuture<StockReason> {
+        Box::pin(send(self.request(
+            Method::DELETE,
+            &format!("/stock-reasons/{id}"),
+            Some(token),
+        )))
+    }
+
+    fn inventory_settings(&self, token: &str) -> crate::BoxFuture<InventorySettings> {
+        self.get(token, "/settings/inventory")
+    }
+
+    fn put_inventory_settings(
+        &self,
+        token: &str,
+        body: &InventorySettings,
+    ) -> crate::BoxFuture<InventorySettings> {
+        self.put_json(token, "/settings/inventory", body)
+    }
+
+    fn on_hand(&self, token: &str, query: &OnHandQuery) -> crate::BoxFuture<OnHandPage> {
+        self.get_query("/stock/on-hand", token, query)
+    }
+
+    fn stock_card(
+        &self,
+        token: &str,
+        variant_id: &str,
+        query: &CardQuery,
+    ) -> crate::BoxFuture<CardPage> {
+        self.get_query(&format!("/stock/card/{variant_id}"), token, query)
+    }
+
+    fn lots(&self, token: &str, query: &LotQuery) -> crate::BoxFuture<Vec<Lot>> {
+        self.get_query("/stock/lots", token, query)
+    }
+
+    fn payables(&self, token: &str, query: &PayableQuery) -> crate::BoxFuture<Vec<Payable>> {
+        self.get_query("/payables", token, query)
+    }
+
+    fn purchase_orders(
+        &self,
+        token: &str,
+        query: &StockDocQuery,
+    ) -> crate::BoxFuture<Vec<PurchaseOrder>> {
+        self.get_query("/purchase-orders", token, query)
+    }
+
+    fn purchase_order(&self, token: &str, id: &str) -> crate::BoxFuture<PurchaseOrder> {
+        self.get(token, &format!("/purchase-orders/{id}"))
+    }
+
+    fn put_purchase_order(
+        &self,
+        token: &str,
+        id: &str,
+        body: &PurchaseOrderBody,
+    ) -> crate::BoxFuture<PurchaseOrder> {
+        self.put_json(token, &format!("/purchase-orders/{id}"), body)
+    }
+
+    fn purchase_order_action(
+        &self,
+        token: &str,
+        id: &str,
+        action: OrderAction,
+        key: &str,
+    ) -> crate::BoxFuture<PurchaseOrder> {
+        self.action(
+            token,
+            &format!("/purchase-orders/{id}/{}", action.as_str()),
+            key,
+            None,
+        )
+    }
+
+    fn goods_receipts(
+        &self,
+        token: &str,
+        query: &StockDocQuery,
+    ) -> crate::BoxFuture<Vec<GoodsReceipt>> {
+        self.get_query("/goods-receipts", token, query)
+    }
+
+    fn goods_receipt(&self, token: &str, id: &str) -> crate::BoxFuture<GoodsReceipt> {
+        self.get(token, &format!("/goods-receipts/{id}"))
+    }
+
+    fn put_goods_receipt(
+        &self,
+        token: &str,
+        id: &str,
+        body: &ReceiptBody,
+    ) -> crate::BoxFuture<GoodsReceipt> {
+        self.put_json(token, &format!("/goods-receipts/{id}"), body)
+    }
+
+    fn post_goods_receipt(
+        &self,
+        token: &str,
+        id: &str,
+        key: &str,
+    ) -> crate::BoxFuture<GoodsReceipt> {
+        self.action(token, &format!("/goods-receipts/{id}/post"), key, None)
+    }
+
+    fn void_goods_receipt(
+        &self,
+        token: &str,
+        id: &str,
+        key: &str,
+        override_token: Option<&str>,
+    ) -> crate::BoxFuture<GoodsReceipt> {
+        let mut request = self
+            .request(
+                Method::POST,
+                &format!("/goods-receipts/{id}/void"),
+                Some(token),
+            )
+            .header(IDEMPOTENCY_HEADER, key);
+        if let Some(t) = override_token {
+            request = request.header(OVERRIDE_HEADER, t);
+        }
+        Box::pin(send(request))
+    }
+
+    fn supplier_returns(
+        &self,
+        token: &str,
+        query: &StockDocQuery,
+    ) -> crate::BoxFuture<Vec<SupplierReturn>> {
+        self.get_query("/supplier-returns", token, query)
+    }
+
+    fn supplier_return(&self, token: &str, id: &str) -> crate::BoxFuture<SupplierReturn> {
+        self.get(token, &format!("/supplier-returns/{id}"))
+    }
+
+    fn put_supplier_return(
+        &self,
+        token: &str,
+        id: &str,
+        body: &SupplierReturnBody,
+    ) -> crate::BoxFuture<SupplierReturn> {
+        self.put_json(token, &format!("/supplier-returns/{id}"), body)
+    }
+
+    fn post_supplier_return(
+        &self,
+        token: &str,
+        id: &str,
+        key: &str,
+    ) -> crate::BoxFuture<SupplierReturn> {
+        self.action(token, &format!("/supplier-returns/{id}/post"), key, None)
+    }
+
+    fn transfers(&self, token: &str, query: &StockDocQuery) -> crate::BoxFuture<Vec<Transfer>> {
+        self.get_query("/transfers", token, query)
+    }
+
+    fn transfer(&self, token: &str, id: &str) -> crate::BoxFuture<Transfer> {
+        self.get(token, &format!("/transfers/{id}"))
+    }
+
+    fn put_transfer(
+        &self,
+        token: &str,
+        id: &str,
+        body: &TransferBody,
+    ) -> crate::BoxFuture<Transfer> {
+        self.put_json(token, &format!("/transfers/{id}"), body)
+    }
+
+    fn transfer_action(
+        &self,
+        token: &str,
+        id: &str,
+        action: TransferAction,
+        body: &MoveBody,
+        key: &str,
+    ) -> crate::BoxFuture<Transfer> {
+        self.action(
+            token,
+            &format!("/transfers/{id}/{}", action.as_str()),
+            key,
+            Some(json!(body)),
+        )
+    }
+
+    fn internal_transfers(
+        &self,
+        token: &str,
+        branch_id: Option<&str>,
+    ) -> crate::BoxFuture<Vec<InternalTransfer>> {
+        self.get_query("/internal-transfers", token, &branch_query(branch_id))
+    }
+
+    fn put_internal_transfer(
+        &self,
+        token: &str,
+        id: &str,
+        body: &InternalTransferBody,
+    ) -> crate::BoxFuture<InternalTransfer> {
+        self.put_json(token, &format!("/internal-transfers/{id}"), body)
+    }
+
+    fn adjustments(
+        &self,
+        token: &str,
+        branch_id: Option<&str>,
+    ) -> crate::BoxFuture<Vec<Adjustment>> {
+        self.get_query("/adjustments", token, &branch_query(branch_id))
+    }
+
+    fn adjustment(&self, token: &str, id: &str) -> crate::BoxFuture<Adjustment> {
+        self.get(token, &format!("/adjustments/{id}"))
+    }
+
+    fn put_adjustment(
+        &self,
+        token: &str,
+        id: &str,
+        body: &AdjustmentBody,
+    ) -> crate::BoxFuture<Adjustment> {
+        self.put_json(token, &format!("/adjustments/{id}"), body)
+    }
+
+    fn opening_stocks(
+        &self,
+        token: &str,
+        branch_id: Option<&str>,
+    ) -> crate::BoxFuture<Vec<OpeningStock>> {
+        self.get_query("/opening-stock", token, &branch_query(branch_id))
+    }
+
+    fn put_opening_stock(
+        &self,
+        token: &str,
+        id: &str,
+        body: &OpeningBody,
+    ) -> crate::BoxFuture<OpeningStock> {
+        self.put_json(token, &format!("/opening-stock/{id}"), body)
+    }
+
+    fn opnames(&self, token: &str, branch_id: Option<&str>) -> crate::BoxFuture<Vec<Opname>> {
+        self.get_query("/opnames", token, &branch_query(branch_id))
+    }
+
+    fn opname(&self, token: &str, id: &str) -> crate::BoxFuture<Opname> {
+        self.get(token, &format!("/opnames/{id}"))
+    }
+
+    fn start_opname(&self, token: &str, id: &str, body: &OpnameBody) -> crate::BoxFuture<Opname> {
+        self.put_json(token, &format!("/opnames/{id}"), body)
+    }
+
+    fn add_counts(
+        &self,
+        token: &str,
+        id: &str,
+        entries: &[CountEntry],
+        key: &str,
+    ) -> crate::BoxFuture<Opname> {
+        self.action(
+            token,
+            &format!("/opnames/{id}/counts"),
+            key,
+            Some(json!({ "entries": entries })),
+        )
+    }
+
+    fn post_opname(
+        &self,
+        token: &str,
+        id: &str,
+        uncounted: &str,
+        key: &str,
+    ) -> crate::BoxFuture<Opname> {
+        self.action(
+            token,
+            &format!("/opnames/{id}/post"),
+            key,
+            Some(json!({ "uncounted": uncounted })),
+        )
+    }
+
+    fn cancel_opname(&self, token: &str, id: &str, key: &str) -> crate::BoxFuture<Opname> {
+        self.action(token, &format!("/opnames/{id}/cancel"), key, None)
+    }
+
+    fn reorder_rules(
+        &self,
+        token: &str,
+        branch_id: Option<&str>,
+    ) -> crate::BoxFuture<Vec<ReorderRule>> {
+        self.get_query("/reorder-rules", token, &branch_query(branch_id))
+    }
+
+    fn put_reorder_rule(
+        &self,
+        token: &str,
+        branch_id: &str,
+        variant_id: &str,
+        body: &ReorderRuleBody,
+    ) -> crate::BoxFuture<ReorderRule> {
+        self.put_json(
+            token,
+            &format!("/reorder-rules/{branch_id}/{variant_id}"),
+            body,
+        )
+    }
+
+    fn reorder_suggestions(
+        &self,
+        token: &str,
+        supplier_id: &str,
+        branch_id: Option<&str>,
+    ) -> crate::BoxFuture<Vec<SuggestedLine>> {
+        let mut query = branch_query(branch_id);
+        query.push(("supplier_id", supplier_id.to_owned()));
+        self.get_query("/reorder/suggestions", token, &query)
+    }
+
+    fn low_stock(
+        &self,
+        token: &str,
+        branch_id: Option<&str>,
+    ) -> crate::BoxFuture<Vec<SuggestedLine>> {
+        self.get_query("/reorder/low-stock", token, &branch_query(branch_id))
+    }
+}
+
+/// `?branch_id=` when given.
+fn branch_query(branch_id: Option<&str>) -> Vec<(&'static str, String)> {
+    branch_id
+        .map(|b| ("branch_id", b.to_owned()))
+        .into_iter()
+        .collect()
 }
 
 impl HttpService {
+    /// `GET {path}` with the bearer token.
+    fn get<T: DeserializeOwned + 'static>(&self, token: &str, path: &str) -> crate::BoxFuture<T> {
+        Box::pin(send(self.request(Method::GET, path, Some(token))))
+    }
+
+    /// `GET {path}?{query}` with the bearer token.
+    fn get_query<T: DeserializeOwned + 'static, Q: serde::Serialize + ?Sized>(
+        &self,
+        path: &str,
+        token: &str,
+        query: &Q,
+    ) -> crate::BoxFuture<T> {
+        Box::pin(send(
+            self.request(Method::GET, path, Some(token)).query(query),
+        ))
+    }
+
+    /// `PUT {path}` with a JSON body.
+    fn put_json<T: DeserializeOwned + 'static, B: serde::Serialize + ?Sized>(
+        &self,
+        token: &str,
+        path: &str,
+        body: &B,
+    ) -> crate::BoxFuture<T> {
+        Box::pin(send(
+            self.request(Method::PUT, path, Some(token)).json(body),
+        ))
+    }
+
     /// `DELETE {path}`, answered `204`.
     fn delete(&self, token: &str, path: &str) -> crate::BoxFuture<()> {
         let request = self.request(Method::DELETE, path, Some(token));

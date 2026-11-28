@@ -1,6 +1,6 @@
 {
   "info": {
-    "name": "Sultan POS API (2.1 Organization & access, 2.2 Catalog, 2.3 Pricing, 2.5 Customers, 2.6 Sales, 2.7 Cash)",
+    "name": "Sultan POS API (2.1 Organization & access, 2.2 Catalog, 2.3 Pricing, 2.5 Customers, 2.6 Sales, 2.7 Cash, 2.8 Inventory)",
     "description": "Main flows of /api/v1, matching GET /api/v1/openapi.json (docs/plan.md §1, docs/spec/2.1-organization-access.md, docs/spec/2.2-catalog.md, docs/spec/2.5-customers.md, docs/spec/2.6-sales.md, docs/spec/2.7-cash-management.md). Run against the dev server: see postman/README.md.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
@@ -9681,6 +9681,2233 @@
               "path": [
                 "cash-reasons",
                 "{{csReason}}"
+              ]
+            },
+            "description": ""
+          }
+        }
+      ]
+    },
+    {
+      "name": "Inventory (spec 2.8)",
+      "description": "Suppliers, purchasing, transfers, adjustments, opening stock, opname, reorder, on hand, stock card and the till's on hand (spec 2.8, phase N3).",
+      "item": [
+        {
+          "name": "177 Who am I (the owner's branch)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Fresh client-generated IDs and codes for the inventory flow (spec 2.8).",
+                  "function uuidv7() {",
+                  "    const hex = (n) => Array.from({ length: n }, () => Math.floor(Math.random() * 16).toString(16)).join('');",
+                  "    const ts = Date.now().toString(16).padStart(12, '0');",
+                  "    const variant = (8 + Math.floor(Math.random() * 4)).toString(16);",
+                  "    return `${ts.slice(0, 8)}-${ts.slice(8, 12)}-7${hex(3)}-${variant}${hex(3)}-${hex(12)}`;",
+                  "}",
+                  "[\"ivLocJkt\", \"ivLocJkt2\", \"ivLocB\", \"ivProduct\", \"ivVariant\", \"ivPcs\", \"ivBarcode\", \"ivSupplier\", \"ivPo\", \"ivReceipt\", \"ivReceipt2\", \"ivReceipt3\", \"ivReturn\", \"ivTransfer\", \"ivInternal\", \"ivAdjustment\", \"ivOpening\", \"ivOpname\", \"ivOpname2\", \"ivCount\", \"ivReason\", \"ivPostKey\", \"ivOrderKey\", \"ivShipKey\", \"ivReceiveKey\", \"ivVoidKey\", \"ivOpnamePostKey\"].forEach((k) => pm.collectionVariables.set(k, uuidv7()));",
+                  "const suffix = Date.now().toString(36).slice(-6).toUpperCase();",
+                  "pm.collectionVariables.set('ivSuffix', suffix);"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200', () => {",
+                  "    pm.response.to.have.status(200);",
+                  "    const body = pm.response.json();",
+                  "    pm.collectionVariables.set('ivBranch', body.branch_id);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/auth/me",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "me"
+              ]
+            },
+            "description": "The owner's back-office session acts at the install's first branch (JKT01)."
+          }
+        },
+        {
+          "name": "178 Second location at the owner's branch",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201', () => {",
+                  "    pm.response.to.have.status(201);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/locations/{{ivLocJkt}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "locations",
+                "{{ivLocJkt}}"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"branch_id\": \"{{ivBranch}}\",\n  \"name\": \"Rak {{ivSuffix}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "179 Third location at the owner's branch",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201', () => {",
+                  "    pm.response.to.have.status(201);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/locations/{{ivLocJkt2}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "locations",
+                "{{ivLocJkt2}}"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"branch_id\": \"{{ivBranch}}\",\n  \"name\": \"Gudang {{ivSuffix}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "180 A location at the branch of request 03",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201', () => {",
+                  "    pm.response.to.have.status(201);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/locations/{{ivLocB}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "locations",
+                "{{ivLocB}}"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"branch_id\": \"{{branchId}}\",\n  \"name\": \"Gudang {{ivSuffix}}\",\n  \"receiving_default\": true\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "181 A stock product (track_expiry off)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201', () => {",
+                  "    pm.response.to.have.status(201);",
+                  "    const body = pm.response.json();",
+                  "    pm.expect(body.track_expiry).to.eql(false);",
+                  "    pm.expect(body.expiry_warn_days).to.eql(null);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/products/{{ivProduct}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "products",
+                "{{ivProduct}}"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"code\": \"INV{{ivSuffix}}\",\n  \"name\": \"Gula {{ivSuffix}}\",\n  \"type\": \"stock\",\n  \"tax_class_id\": \"00000000-0000-7000-8000-000000000101\",\n  \"units\": [\n    {\n      \"id\": \"{{ivPcs}}\",\n      \"name\": \"pcs\",\n      \"kind\": \"integer\",\n      \"factor_thousandths\": 1000\n    }\n  ],\n  \"base_unit_id\": \"{{ivPcs}}\",\n  \"variants\": [\n    {\n      \"id\": \"{{ivVariant}}\"\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "182 Inventory settings",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200', () => {",
+                  "    pm.response.to.have.status(200);",
+                  "    const body = pm.response.json();",
+                  "    pm.expect(body.standard_ppn_rate_bp).to.eql(1100);",
+                  "    pm.expect(body.velocity_days).to.be.above(0);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/settings/inventory",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "settings",
+                "inventory"
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "183 Create a supplier (HQ, supplier.manage)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201', () => {",
+                  "    pm.response.to.have.status(201);",
+                  "    const body = pm.response.json();",
+                  "    pm.expect(body.code).to.eql(`S${pm.collectionVariables.get('ivSuffix')}`);",
+                  "    pm.expect(body.terms_days).to.eql(30);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/suppliers/{{ivSupplier}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "suppliers",
+                "{{ivSupplier}}"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"code\": \"s{{ivSuffix}}\",\n  \"name\": \"PT Pemasok {{ivSuffix}}\",\n  \"terms_days\": 30\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "184 The same PUT again (idempotent)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200', () => {",
+                  "    pm.response.to.have.status(200);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/suppliers/{{ivSupplier}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "suppliers",
+                "{{ivSupplier}}"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"code\": \"s{{ivSuffix}}\",\n  \"name\": \"PT Pemasok {{ivSuffix}}\",\n  \"terms_days\": 30\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "185 Suppliers",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200', () => {",
+                  "    pm.response.to.have.status(200);",
+                  "    const body = pm.response.json();",
+                  "    pm.expect(body.map((s) => s.id)).to.include(pm.collectionVariables.get('ivSupplier'));",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/suppliers",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "suppliers"
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "186 The supplier's item, preferred",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201', () => {",
+                  "    pm.response.to.have.status(201);",
+                  "    const body = pm.response.json();",
+                  "    pm.expect(body.supplier_code).to.eql('G-01');",
+                  "    pm.expect(body.preferred).to.eql(true);",
+                  "    pm.expect(body.last_price).to.eql(null);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/suppliers/{{ivSupplier}}/items/{{ivVariant}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "suppliers",
+                "{{ivSupplier}}",
+                "items",
+                "{{ivVariant}}"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"supplier_code\": \" G-01 \",\n  \"preferred\": true\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "187 Stock reasons (seeded)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200', () => {",
+                  "    pm.response.to.have.status(200);",
+                  "    const body = pm.response.json();",
+                  "    pm.expect(body.map((r) => r.id)).to.include('00000000-0000-7000-8000-000000000501');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/stock-reasons",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "stock-reasons"
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "188 Purchase order draft",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201', () => {",
+                  "    pm.response.to.have.status(201);",
+                  "    const body = pm.response.json();",
+                  "    pm.expect(body.status).to.eql('draft');",
+                  "    pm.expect(body.lines[0].price).to.eql(1000);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/purchase-orders/{{ivPo}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "purchase-orders",
+                "{{ivPo}}"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"supplier_id\": \"{{ivSupplier}}\",\n  \"location_id\": \"{{ivLocJkt}}\",\n  \"lines\": [\n    {\n      \"variant_id\": \"{{ivVariant}}\",\n      \"unit_id\": \"{{ivPcs}}\",\n      \"qty_thousandths\": 10000,\n      \"price\": 1000\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "189 Order it (Idempotency-Key)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200', () => {",
+                  "    pm.response.to.have.status(200);",
+                  "    const body = pm.response.json();",
+                  "    pm.expect(body.status).to.eql('ordered');",
+                  "    pm.expect(body.number).to.match(/-PO-\\d{6}-\\d{2}$/);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{ivOrderKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/purchase-orders/{{ivPo}}/order",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "purchase-orders",
+                "{{ivPo}}",
+                "order"
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "190 Goods receipt draft against the PO",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201', () => {",
+                  "    pm.response.to.have.status(201);",
+                  "    const body = pm.response.json();",
+                  "    pm.expect(body.status).to.eql('draft');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/goods-receipts/{{ivReceipt}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "goods-receipts",
+                "{{ivReceipt}}"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"supplier_id\": \"{{ivSupplier}}\",\n  \"location_id\": \"{{ivLocJkt}}\",\n  \"invoice_no\": \"INV-{{ivSuffix}}\",\n  \"invoice_date\": \"2026-11-20\",\n  \"lines\": [\n    {\n      \"variant_id\": \"{{ivVariant}}\",\n      \"unit_id\": \"{{ivPcs}}\",\n      \"qty_thousandths\": 10000,\n      \"price\": 1000,\n      \"order_id\": \"{{ivPo}}\",\n      \"order_line_no\": 1\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "191 Post the receipt (Idempotency-Key)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200', () => {",
+                  "    pm.response.to.have.status(200);",
+                  "    const body = pm.response.json();",
+                  "    pm.expect(body.status).to.eql('posted');",
+                  "    pm.expect(body.number).to.match(/-GR-\\d{6}-\\d{2}$/);",
+                  "    pm.expect(body.total).to.eql(10000);",
+                  "    pm.expect(body.landed).to.eql(10000);",
+                  "    pm.expect(body.due_date).to.eql('2026-12-20');",
+                  "    pm.expect(body.movements[0].kind).to.eql('receipt');",
+                  "    pm.collectionVariables.set('ivReceiptNumber', body.number);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{ivPostKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/goods-receipts/{{ivReceipt}}/post",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "goods-receipts",
+                "{{ivReceipt}}",
+                "post"
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "192 The retry replays the posting",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 replayed', () => {",
+                  "    pm.response.to.have.status(200);",
+                  "    pm.expect(pm.response.headers.get('Idempotency-Replayed')).to.eql('true');",
+                  "    pm.expect(pm.response.json().number).to.eql(pm.collectionVariables.get('ivReceiptNumber'));",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{ivPostKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/goods-receipts/{{ivReceipt}}/post",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "goods-receipts",
+                "{{ivReceipt}}",
+                "post"
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "193 The PO closed by itself",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200', () => {",
+                  "    pm.response.to.have.status(200);",
+                  "    const body = pm.response.json();",
+                  "    pm.expect(body.status).to.eql('closed');",
+                  "    pm.expect(body.lines[0].received_qty_thousandths).to.eql(10000);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/purchase-orders/{{ivPo}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "purchase-orders",
+                "{{ivPo}}"
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "194 A second receipt with the same invoice number",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201', () => {",
+                  "    pm.response.to.have.status(201);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/goods-receipts/{{ivReceipt2}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "goods-receipts",
+                "{{ivReceipt2}}"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"supplier_id\": \"{{ivSupplier}}\",\n  \"location_id\": \"{{ivLocJkt}}\",\n  \"invoice_no\": \"INV-{{ivSuffix}}\",\n  \"invoice_date\": \"2026-11-21\",\n  \"lines\": [\n    {\n      \"variant_id\": \"{{ivVariant}}\",\n      \"unit_id\": \"{{ivPcs}}\",\n      \"qty_thousandths\": 1000,\n      \"price\": 1000\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "195 Posting it is a conflict",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('409 conflict', () => {",
+                  "    pm.response.to.have.status(409);",
+                  "    pm.expect(pm.response.json().code).to.eql('conflict');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/goods-receipts/{{ivReceipt2}}/post",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "goods-receipts",
+                "{{ivReceipt2}}",
+                "post"
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "196 A receipt to void (5 @ 1 200)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201', () => {",
+                  "    pm.response.to.have.status(201);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/goods-receipts/{{ivReceipt3}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "goods-receipts",
+                "{{ivReceipt3}}"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"supplier_id\": \"{{ivSupplier}}\",\n  \"location_id\": \"{{ivLocJkt}}\",\n  \"invoice_no\": \"INV-{{ivSuffix}}-B\",\n  \"invoice_date\": \"2026-11-21\",\n  \"lines\": [\n    {\n      \"variant_id\": \"{{ivVariant}}\",\n      \"unit_id\": \"{{ivPcs}}\",\n      \"qty_thousandths\": 5000,\n      \"price\": 1200\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "197 Post it",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200', () => {",
+                  "    pm.response.to.have.status(200);",
+                  "    const body = pm.response.json();",
+                  "    pm.expect(body.status).to.eql('posted');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/goods-receipts/{{ivReceipt3}}/post",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "goods-receipts",
+                "{{ivReceipt3}}",
+                "post"
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "198 Void it before its stock is used (manager, Idempotency-Key)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200', () => {",
+                  "    pm.response.to.have.status(200);",
+                  "    const body = pm.response.json();",
+                  "    pm.expect(body.status).to.eql('voided');",
+                  "    pm.expect(body.movements.map((m) => m.kind)).to.include('receipt_void');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{ivVoidKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/goods-receipts/{{ivReceipt3}}/void",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "goods-receipts",
+                "{{ivReceipt3}}",
+                "void"
+              ]
+            },
+            "description": "Spec 2.8 §6: purchase.receive and a manager (the owner holds stock.adjust; a Stock clerk at a register sends X-Override)."
+          }
+        },
+        {
+          "name": "199 Supplier return draft from the receipt line",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201', () => {",
+                  "    pm.response.to.have.status(201);",
+                  "    const body = pm.response.json();",
+                  "    pm.expect(body.status).to.eql('draft');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/supplier-returns/{{ivReturn}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "supplier-returns",
+                "{{ivReturn}}"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"supplier_id\": \"{{ivSupplier}}\",\n  \"location_id\": \"{{ivLocJkt}}\",\n  \"lines\": [\n    {\n      \"variant_id\": \"{{ivVariant}}\",\n      \"unit_id\": \"{{ivPcs}}\",\n      \"qty_thousandths\": 2000,\n      \"price\": 1000,\n      \"receipt_id\": \"{{ivReceipt}}\",\n      \"receipt_line_no\": 1\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "200 Post the supplier return",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200', () => {",
+                  "    pm.response.to.have.status(200);",
+                  "    const body = pm.response.json();",
+                  "    pm.expect(body.number).to.match(/-RS-/);",
+                  "    pm.expect(body.credit).to.eql(2000);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/supplier-returns/{{ivReturn}}/post",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "supplier-returns",
+                "{{ivReturn}}",
+                "post"
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "201 The supplier item's last price (the last posted receipt, 1 200)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200', () => {",
+                  "    pm.response.to.have.status(200);",
+                  "    const body = pm.response.json();",
+                  "    pm.expect(body.last_price).to.eql(1200);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/suppliers/{{ivSupplier}}/items/{{ivVariant}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "suppliers",
+                "{{ivSupplier}}",
+                "items",
+                "{{ivVariant}}"
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "202 Transfer request to the branch of request 03",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201', () => {",
+                  "    pm.response.to.have.status(201);",
+                  "    const body = pm.response.json();",
+                  "    pm.expect(body.status).to.eql('requested');",
+                  "    pm.expect(body.number).to.match(/-TR-/);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/transfers/{{ivTransfer}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "transfers",
+                "{{ivTransfer}}"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"from_branch_id\": \"{{ivBranch}}\",\n  \"to_branch_id\": \"{{branchId}}\",\n  \"to_location_id\": \"{{ivLocB}}\",\n  \"lines\": [\n    {\n      \"variant_id\": \"{{ivVariant}}\",\n      \"unit_id\": \"{{ivPcs}}\",\n      \"qty_thousandths\": 3000\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "203 Ship it (Idempotency-Key)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200', () => {",
+                  "    pm.response.to.have.status(200);",
+                  "    const body = pm.response.json();",
+                  "    pm.expect(body.status).to.eql('shipped');",
+                  "    pm.expect(body.lines[0].shipped_qty_thousandths).to.eql(3000);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{ivShipKey}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/transfers/{{ivTransfer}}/ship",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "transfers",
+                "{{ivTransfer}}",
+                "ship"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"location_id\": \"{{ivLocJkt}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "204 A shipped transfer cannot be cancelled",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('409 conflict', () => {",
+                  "    pm.response.to.have.status(409);",
+                  "    pm.expect(pm.response.json().code).to.eql('conflict');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/transfers/{{ivTransfer}}/cancel",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "transfers",
+                "{{ivTransfer}}",
+                "cancel"
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "205 Receive 2 of 3 (transit loss 1 at the sender)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200', () => {",
+                  "    pm.response.to.have.status(200);",
+                  "    const body = pm.response.json();",
+                  "    pm.expect(body.status).to.eql('received');",
+                  "    pm.expect(body.lines[0].lost_qty_thousandths).to.eql(1000);",
+                  "    pm.expect(body.movements.map((m) => m.kind)).to.include('transit_loss');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{ivReceiveKey}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/transfers/{{ivTransfer}}/receive",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "transfers",
+                "{{ivTransfer}}",
+                "receive"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"lines\": [\n    {\n      \"line_no\": 1,\n      \"qty_thousandths\": 2000\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "206 Internal transfer to the other location (posts at once)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201', () => {",
+                  "    pm.response.to.have.status(201);",
+                  "    const body = pm.response.json();",
+                  "    pm.expect(body.number).to.match(/-IT-/);",
+                  "    pm.expect(body.movements.length).to.eql(2);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/internal-transfers/{{ivInternal}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "internal-transfers",
+                "{{ivInternal}}"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"from_location_id\": \"{{ivLocJkt}}\",\n  \"to_location_id\": \"{{ivLocJkt2}}\",\n  \"lines\": [\n    {\n      \"variant_id\": \"{{ivVariant}}\",\n      \"unit_id\": \"{{ivPcs}}\",\n      \"qty_thousandths\": 1000\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "207 Adjustment: 1 damaged",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201', () => {",
+                  "    pm.response.to.have.status(201);",
+                  "    const body = pm.response.json();",
+                  "    pm.expect(body.number).to.match(/-ADJ-/);",
+                  "    pm.expect(body.lines[0].value).to.eql(-1000);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/adjustments/{{ivAdjustment}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "adjustments",
+                "{{ivAdjustment}}"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"location_id\": \"{{ivLocJkt}}\",\n  \"lines\": [\n    {\n      \"variant_id\": \"{{ivVariant}}\",\n      \"unit_id\": \"{{ivPcs}}\",\n      \"qty_thousandths\": -1000,\n      \"reason_id\": \"00000000-0000-7000-8000-000000000501\"\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "208 Opening stock: 5 @ 900",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201', () => {",
+                  "    pm.response.to.have.status(201);",
+                  "    const body = pm.response.json();",
+                  "    pm.expect(body.number).to.match(/-OS-/);",
+                  "    pm.expect(body.lines[0].value).to.eql(4500);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/opening-stock/{{ivOpening}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "opening-stock",
+                "{{ivOpening}}"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"location_id\": \"{{ivLocJkt}}\",\n  \"lines\": [\n    {\n      \"variant_id\": \"{{ivVariant}}\",\n      \"unit_id\": \"{{ivPcs}}\",\n      \"qty_thousandths\": 5000,\n      \"unit_cost\": 900\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "209 Start a cycle count",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201', () => {",
+                  "    pm.response.to.have.status(201);",
+                  "    const body = pm.response.json();",
+                  "    pm.expect(body.number).to.match(/-OP-/);",
+                  "    pm.expect(body.lines[0].snapshot_thousandths).to.eql(8000);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/opnames/{{ivOpname}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "opnames",
+                "{{ivOpname}}"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"location_id\": \"{{ivLocJkt}}\",\n  \"scope\": \"cycle\",\n  \"variant_ids\": [\n    \"{{ivVariant}}\"\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "210 A second open count of the item is refused",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('409 opname_open', () => {",
+                  "    pm.response.to.have.status(409);",
+                  "    pm.expect(pm.response.json().code).to.eql('opname_open');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/opnames/{{ivOpname2}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "opnames",
+                "{{ivOpname2}}"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"location_id\": \"{{ivLocJkt}}\",\n  \"scope\": \"cycle\",\n  \"variant_ids\": [\n    \"{{ivVariant}}\"\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "211 Count 7",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200', () => {",
+                  "    pm.response.to.have.status(200);",
+                  "    const body = pm.response.json();",
+                  "    pm.expect(body.lines[0].counted_thousandths).to.eql(7000);",
+                  "    pm.expect(body.lines[0].variance_thousandths).to.eql(-1000);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/opnames/{{ivOpname}}/counts",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "opnames",
+                "{{ivOpname}}",
+                "counts"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"entries\": [\n    {\n      \"id\": \"{{ivCount}}\",\n      \"variant_id\": \"{{ivVariant}}\",\n      \"unit_id\": \"{{ivPcs}}\",\n      \"qty_thousandths\": 7000,\n      \"replace\": true\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "212 Post the count (Idempotency-Key)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200', () => {",
+                  "    pm.response.to.have.status(200);",
+                  "    const body = pm.response.json();",
+                  "    pm.expect(body.status).to.eql('posted');",
+                  "    pm.expect(body.movements[0].kind).to.eql('count');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{ivOpnamePostKey}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/opnames/{{ivOpname}}/post",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "opnames",
+                "{{ivOpname}}",
+                "post"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"uncounted\": \"leave\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "213 Reorder rule min 10 / max 30",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201', () => {",
+                  "    pm.response.to.have.status(201);",
+                  "    const body = pm.response.json();",
+                  "    pm.expect(body.max_thousandths).to.eql(30000);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/reorder-rules/{{ivBranch}}/{{ivVariant}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "reorder-rules",
+                "{{ivBranch}}",
+                "{{ivVariant}}"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"min_thousandths\": 10000,\n  \"max_thousandths\": 30000\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "214 Suggested PO for the supplier",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200', () => {",
+                  "    pm.response.to.have.status(200);",
+                  "    const body = pm.response.json();",
+                  "    const l = body.find((x) => x.variant_id === pm.collectionVariables.get('ivVariant'));",
+                  "    pm.expect(l.base_qty_thousandths).to.eql(22000);",
+                  "    pm.expect(l.price).to.eql(1200);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/reorder/suggestions?supplier_id={{ivSupplier}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "reorder",
+                "suggestions"
+              ],
+              "query": [
+                {
+                  "key": "supplier_id",
+                  "value": "{{ivSupplier}}"
+                }
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "215 Low stock",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200', () => {",
+                  "    pm.response.to.have.status(200);",
+                  "    const body = pm.response.json();",
+                  "    pm.expect(body.map((l) => l.variant_id)).to.include(pm.collectionVariables.get('ivVariant'));",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/reorder/low-stock",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "reorder",
+                "low-stock"
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "216 On hand of the item",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200', () => {",
+                  "    pm.response.to.have.status(200);",
+                  "    const body = pm.response.json();",
+                  "    const total = body.rows.reduce((a, r) => a + r.qty_thousandths, 0);",
+                  "    pm.expect(total).to.eql(8000);",
+                  "    pm.expect(body.rows[0].min_thousandths).to.eql(10000);",
+                  "    pm.expect(body.rows[0]).to.have.property('unit_cost');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/stock/on-hand?variant_id={{ivVariant}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "stock",
+                "on-hand"
+              ],
+              "query": [
+                {
+                  "key": "variant_id",
+                  "value": "{{ivVariant}}"
+                }
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "217 On hand: low filter and text search",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200', () => {",
+                  "    pm.response.to.have.status(200);",
+                  "    const body = pm.response.json();",
+                  "    pm.expect(body.rows.map((r) => r.variant_id)).to.include(pm.collectionVariables.get('ivVariant'));",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/stock/on-hand?filter=low&q=gula",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "stock",
+                "on-hand"
+              ],
+              "query": [
+                {
+                  "key": "filter",
+                  "value": "low"
+                },
+                {
+                  "key": "q",
+                  "value": "gula"
+                }
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "218 Stock card",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200', () => {",
+                  "    pm.response.to.have.status(200);",
+                  "    const body = pm.response.json();",
+                  "    const kinds = body.rows.map((r) => r.movement.kind);",
+                  "    pm.expect(kinds).to.include.members(['receipt', 'receipt_void', 'supplier_return', 'transfer_out', 'transit_loss', 'internal_out', 'adjust', 'opening', 'count']);",
+                  "    pm.expect(body.rows[body.rows.length - 1].balance_thousandths).to.eql(7000);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/stock/card/{{ivVariant}}?location_id={{ivLocJkt}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "stock",
+                "card",
+                "{{ivVariant}}"
+              ],
+              "query": [
+                {
+                  "key": "location_id",
+                  "value": "{{ivLocJkt}}"
+                }
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "219 Lots",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200', () => {",
+                  "    pm.response.to.have.status(200);",
+                  "    const body = pm.response.json();",
+                  "    pm.expect(body).to.be.an('array');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/stock/lots?variant_id={{ivVariant}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "stock",
+                "lots"
+              ],
+              "query": [
+                {
+                  "key": "variant_id",
+                  "value": "{{ivVariant}}"
+                }
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "220 Open payables",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200', () => {",
+                  "    pm.response.to.have.status(200);",
+                  "    const body = pm.response.json();",
+                  "    pm.expect(body.length).to.eql(1);",
+                  "    pm.expect(body[0].amount).to.eql(10000);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/payables?supplier_id={{ivSupplier}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "payables"
+              ],
+              "query": [
+                {
+                  "key": "supplier_id",
+                  "value": "{{ivSupplier}}"
+                }
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "221 The till's on hand (device token, no cost)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200', () => {",
+                  "    pm.response.to.have.status(200);",
+                  "    const body = pm.response.json();",
+                  "    pm.expect(body.qty_thousandths).to.eql(2000);",
+                  "    pm.expect(body).to.not.have.property('unit_cost');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Register-Token",
+                "value": "{{deviceToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/registers/me/stock/{{ivVariant}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "registers",
+                "me",
+                "stock",
+                "{{ivVariant}}"
+              ]
+            },
+            "description": "Spec 2.8 I18: the register's branch (request 03's) received 2 by the transfer."
+          }
+        },
+        {
+          "name": "222 Create a stock reason (HQ, stock.adjust)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201', () => {",
+                  "    pm.response.to.have.status(201);",
+                  "    const body = pm.response.json();",
+                  "    pm.expect(body.direction).to.eql('in');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/stock-reasons/{{ivReason}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "stock-reasons",
+                "{{ivReason}}"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Bonus pemasok\",\n  \"direction\": \"in\",\n  \"sort\": 20\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "223 Archive it",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200', () => {",
+                  "    pm.response.to.have.status(200);",
+                  "    const body = pm.response.json();",
+                  "    pm.expect(body.archived).to.eql(true);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/stock-reasons/{{ivReason}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "stock-reasons",
+                "{{ivReason}}"
               ]
             },
             "description": ""

@@ -172,6 +172,31 @@ impl Default for Catalog {
 }
 
 impl Catalog {
+    /// Adds a back-office user (the stock clerk of `stock`).
+    pub(super) fn add_user(&mut self, user: BackOfficeUser) {
+        if self.users.iter().all(|u| u.id != user.id) {
+            self.users.push(user);
+        }
+    }
+
+    /// The stored product with this variant.
+    pub(super) fn product_of_variant(&self, variant: &str) -> Option<&Product> {
+        self.products
+            .values()
+            .map(|s| &s.product)
+            .find(|p| p.variants.iter().any(|v| v.id == variant))
+    }
+
+    /// Every stored product.
+    pub(super) fn all_products(&self) -> impl Iterator<Item = &Product> {
+        self.products.values().map(|s| &s.product)
+    }
+
+    /// Queues an event, delivered after the call like the catalog's.
+    pub(super) fn push_event(&mut self, event: ServerEvent) {
+        self.events.push(event);
+    }
+
     pub(super) fn has_token(&self, token: &str) -> bool {
         self.tokens.contains_key(token)
     }
@@ -1008,7 +1033,7 @@ impl FakeService {
 }
 
 /// Finishes a catalog call: drops the lock, then sends the events the call produced.
-fn finish<T: Send + 'static>(
+pub(super) fn finish<T: Send + 'static>(
     mut s: std::sync::MutexGuard<'_, State>,
     result: Result<T, ClientError>,
 ) -> crate::BoxFuture<T> {
@@ -1665,5 +1690,374 @@ impl BackOffice for FakeService {
         key: &str,
     ) -> crate::BoxFuture<crate::CloseReport> {
         self.force_close_call(token, session_id, body, key)
+    }
+
+    fn suppliers(
+        &self,
+        token: &str,
+        include_archived: bool,
+    ) -> crate::BoxFuture<Vec<crate::Supplier>> {
+        self.st_suppliers_call(token, include_archived)
+    }
+
+    fn put_supplier(
+        &self,
+        token: &str,
+        id: &str,
+        body: &crate::SupplierBody,
+    ) -> crate::BoxFuture<crate::Supplier> {
+        self.st_put_supplier_call(token, id, body)
+    }
+
+    fn delete_supplier(&self, token: &str, id: &str) -> crate::BoxFuture<crate::Supplier> {
+        self.st_delete_supplier_call(token, id)
+    }
+
+    fn supplier_items(
+        &self,
+        token: &str,
+        supplier_id: &str,
+    ) -> crate::BoxFuture<Vec<crate::SupplierItem>> {
+        self.st_items_call(token, supplier_id)
+    }
+
+    fn put_supplier_item(
+        &self,
+        token: &str,
+        supplier_id: &str,
+        variant_id: &str,
+        body: &crate::SupplierItemBody,
+    ) -> crate::BoxFuture<crate::SupplierItem> {
+        self.st_put_item_call(token, supplier_id, variant_id, body)
+    }
+
+    fn stock_reasons(
+        &self,
+        token: &str,
+        include_archived: bool,
+    ) -> crate::BoxFuture<Vec<crate::StockReason>> {
+        self.st_reasons_call(token, include_archived)
+    }
+
+    fn put_stock_reason(
+        &self,
+        token: &str,
+        id: &str,
+        body: &crate::StockReasonBody,
+    ) -> crate::BoxFuture<crate::StockReason> {
+        self.st_put_reason_call(token, id, body)
+    }
+
+    fn delete_stock_reason(&self, token: &str, id: &str) -> crate::BoxFuture<crate::StockReason> {
+        self.st_delete_reason_call(token, id)
+    }
+
+    fn inventory_settings(&self, token: &str) -> crate::BoxFuture<crate::InventorySettings> {
+        self.st_settings_call(token)
+    }
+
+    fn put_inventory_settings(
+        &self,
+        token: &str,
+        body: &crate::InventorySettings,
+    ) -> crate::BoxFuture<crate::InventorySettings> {
+        self.st_put_settings_call(token, body)
+    }
+
+    fn on_hand(
+        &self,
+        token: &str,
+        query: &crate::OnHandQuery,
+    ) -> crate::BoxFuture<crate::OnHandPage> {
+        self.st_on_hand_call(token, query)
+    }
+
+    fn stock_card(
+        &self,
+        token: &str,
+        variant_id: &str,
+        query: &crate::CardQuery,
+    ) -> crate::BoxFuture<crate::CardPage> {
+        self.st_card_call(token, variant_id, query)
+    }
+
+    fn lots(&self, token: &str, query: &crate::LotQuery) -> crate::BoxFuture<Vec<crate::Lot>> {
+        self.st_lots_call(token, query)
+    }
+
+    fn payables(
+        &self,
+        token: &str,
+        query: &crate::PayableQuery,
+    ) -> crate::BoxFuture<Vec<crate::Payable>> {
+        self.st_payables_call(token, query)
+    }
+
+    fn purchase_orders(
+        &self,
+        token: &str,
+        query: &crate::StockDocQuery,
+    ) -> crate::BoxFuture<Vec<crate::PurchaseOrder>> {
+        self.st_orders_call(token, query)
+    }
+
+    fn purchase_order(&self, token: &str, id: &str) -> crate::BoxFuture<crate::PurchaseOrder> {
+        self.st_order_call(token, id)
+    }
+
+    fn put_purchase_order(
+        &self,
+        token: &str,
+        id: &str,
+        body: &crate::PurchaseOrderBody,
+    ) -> crate::BoxFuture<crate::PurchaseOrder> {
+        self.st_put_order_call(token, id, body)
+    }
+
+    fn purchase_order_action(
+        &self,
+        token: &str,
+        id: &str,
+        action: crate::OrderAction,
+        _key: &str,
+    ) -> crate::BoxFuture<crate::PurchaseOrder> {
+        self.st_order_action_call(token, id, action)
+    }
+
+    fn goods_receipts(
+        &self,
+        token: &str,
+        query: &crate::StockDocQuery,
+    ) -> crate::BoxFuture<Vec<crate::GoodsReceipt>> {
+        self.st_receipts_call(token, query)
+    }
+
+    fn goods_receipt(&self, token: &str, id: &str) -> crate::BoxFuture<crate::GoodsReceipt> {
+        self.st_receipt_call(token, id)
+    }
+
+    fn put_goods_receipt(
+        &self,
+        token: &str,
+        id: &str,
+        body: &crate::ReceiptBody,
+    ) -> crate::BoxFuture<crate::GoodsReceipt> {
+        self.st_put_receipt_call(token, id, body)
+    }
+
+    fn post_goods_receipt(
+        &self,
+        token: &str,
+        id: &str,
+        _key: &str,
+    ) -> crate::BoxFuture<crate::GoodsReceipt> {
+        self.st_post_receipt_call(token, id)
+    }
+
+    fn void_goods_receipt(
+        &self,
+        token: &str,
+        id: &str,
+        _key: &str,
+        override_token: Option<&str>,
+    ) -> crate::BoxFuture<crate::GoodsReceipt> {
+        self.st_void_receipt_call(token, id, override_token)
+    }
+
+    fn supplier_returns(
+        &self,
+        token: &str,
+        query: &crate::StockDocQuery,
+    ) -> crate::BoxFuture<Vec<crate::SupplierReturn>> {
+        self.st_returns_call(token, query)
+    }
+
+    fn supplier_return(&self, token: &str, id: &str) -> crate::BoxFuture<crate::SupplierReturn> {
+        self.st_return_call(token, id)
+    }
+
+    fn put_supplier_return(
+        &self,
+        token: &str,
+        id: &str,
+        body: &crate::SupplierReturnBody,
+    ) -> crate::BoxFuture<crate::SupplierReturn> {
+        self.st_put_return_call(token, id, body)
+    }
+
+    fn post_supplier_return(
+        &self,
+        token: &str,
+        id: &str,
+        _key: &str,
+    ) -> crate::BoxFuture<crate::SupplierReturn> {
+        self.st_post_return_call(token, id)
+    }
+
+    fn transfers(
+        &self,
+        token: &str,
+        query: &crate::StockDocQuery,
+    ) -> crate::BoxFuture<Vec<crate::Transfer>> {
+        self.st_transfers_call(token, query)
+    }
+
+    fn transfer(&self, token: &str, id: &str) -> crate::BoxFuture<crate::Transfer> {
+        self.st_transfer_call(token, id)
+    }
+
+    fn put_transfer(
+        &self,
+        token: &str,
+        id: &str,
+        body: &crate::TransferBody,
+    ) -> crate::BoxFuture<crate::Transfer> {
+        self.st_put_transfer_call(token, id, body)
+    }
+
+    fn transfer_action(
+        &self,
+        token: &str,
+        id: &str,
+        action: crate::TransferAction,
+        body: &crate::MoveBody,
+        _key: &str,
+    ) -> crate::BoxFuture<crate::Transfer> {
+        self.st_transfer_action_call(token, id, action, body)
+    }
+
+    fn internal_transfers(
+        &self,
+        token: &str,
+        branch_id: Option<&str>,
+    ) -> crate::BoxFuture<Vec<crate::InternalTransfer>> {
+        self.st_internals_call(token, branch_id)
+    }
+
+    fn put_internal_transfer(
+        &self,
+        token: &str,
+        id: &str,
+        body: &crate::InternalTransferBody,
+    ) -> crate::BoxFuture<crate::InternalTransfer> {
+        self.st_put_internal_call(token, id, body)
+    }
+
+    fn adjustments(
+        &self,
+        token: &str,
+        branch_id: Option<&str>,
+    ) -> crate::BoxFuture<Vec<crate::Adjustment>> {
+        self.st_adjustments_call(token, branch_id)
+    }
+
+    fn adjustment(&self, token: &str, id: &str) -> crate::BoxFuture<crate::Adjustment> {
+        self.st_adjustment_call(token, id)
+    }
+
+    fn put_adjustment(
+        &self,
+        token: &str,
+        id: &str,
+        body: &crate::AdjustmentBody,
+    ) -> crate::BoxFuture<crate::Adjustment> {
+        self.st_put_adjustment_call(token, id, body)
+    }
+
+    fn opening_stocks(
+        &self,
+        token: &str,
+        branch_id: Option<&str>,
+    ) -> crate::BoxFuture<Vec<crate::OpeningStock>> {
+        self.st_openings_call(token, branch_id)
+    }
+
+    fn put_opening_stock(
+        &self,
+        token: &str,
+        id: &str,
+        body: &crate::OpeningBody,
+    ) -> crate::BoxFuture<crate::OpeningStock> {
+        self.st_put_opening_call(token, id, body)
+    }
+
+    fn opnames(
+        &self,
+        token: &str,
+        branch_id: Option<&str>,
+    ) -> crate::BoxFuture<Vec<crate::Opname>> {
+        self.st_opnames_call(token, branch_id)
+    }
+
+    fn opname(&self, token: &str, id: &str) -> crate::BoxFuture<crate::Opname> {
+        self.st_opname_call(token, id)
+    }
+
+    fn start_opname(
+        &self,
+        token: &str,
+        id: &str,
+        body: &crate::OpnameBody,
+    ) -> crate::BoxFuture<crate::Opname> {
+        self.st_start_opname_call(token, id, body)
+    }
+
+    fn add_counts(
+        &self,
+        token: &str,
+        id: &str,
+        entries: &[crate::CountEntry],
+        _key: &str,
+    ) -> crate::BoxFuture<crate::Opname> {
+        self.st_add_counts_call(token, id, entries)
+    }
+
+    fn post_opname(
+        &self,
+        token: &str,
+        id: &str,
+        uncounted: &str,
+        _key: &str,
+    ) -> crate::BoxFuture<crate::Opname> {
+        self.st_post_opname_call(token, id, uncounted)
+    }
+
+    fn cancel_opname(&self, token: &str, id: &str, _key: &str) -> crate::BoxFuture<crate::Opname> {
+        self.st_cancel_opname_call(token, id)
+    }
+
+    fn reorder_rules(
+        &self,
+        token: &str,
+        branch_id: Option<&str>,
+    ) -> crate::BoxFuture<Vec<crate::ReorderRule>> {
+        self.st_rules_call(token, branch_id)
+    }
+
+    fn put_reorder_rule(
+        &self,
+        token: &str,
+        branch_id: &str,
+        variant_id: &str,
+        body: &crate::ReorderRuleBody,
+    ) -> crate::BoxFuture<crate::ReorderRule> {
+        self.st_put_rule_call(token, branch_id, variant_id, body)
+    }
+
+    fn reorder_suggestions(
+        &self,
+        token: &str,
+        supplier_id: &str,
+        branch_id: Option<&str>,
+    ) -> crate::BoxFuture<Vec<crate::SuggestedLine>> {
+        self.st_suggestions_call(token, supplier_id, branch_id)
+    }
+
+    fn low_stock(
+        &self,
+        token: &str,
+        branch_id: Option<&str>,
+    ) -> crate::BoxFuture<Vec<crate::SuggestedLine>> {
+        self.st_low_stock_call(token, branch_id)
     }
 }

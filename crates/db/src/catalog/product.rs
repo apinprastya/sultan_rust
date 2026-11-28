@@ -1256,7 +1256,7 @@ pub(super) fn clamp_limit(limit: u32, max: u32) -> u32 {
 
 /// Escapes `LIKE` wildcards with `!` (used with `ESCAPE '!'`, which reads the same on both
 /// backends; a backslash would need doubling on `MySQL` only).
-pub(super) fn escape_like(text: &str) -> String {
+pub(crate) fn escape_like(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     for c in text.chars() {
         if matches!(c, '!' | '%' | '_') {

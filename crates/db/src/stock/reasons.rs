@@ -8,7 +8,8 @@ use sultan_core::stock::{ReasonDirection, SEED_REASONS, StockReason, check_reaso
 use sultan_core::time::Timestamp;
 use uuid::Uuid;
 
-use super::{StockDbError, StockResult, Written};
+use super::json::{Change, reason_json, record};
+use super::{Actor, StockDbError, StockResult, Written};
 use crate::conn::{Conn, Tx};
 use crate::error::{DbError, Result};
 use crate::sql::{self, Row, args};
@@ -134,6 +135,7 @@ async fn used(tx: &mut Tx, id: StockReasonId) -> Result<bool> {
 pub async fn put_stock_reason(
     tx: &mut Tx,
     r: &StockReasonRecord,
+    actor: &Actor,
     now: Timestamp,
 ) -> StockResult<(Written, StockReasonRecord)> {
     let name = check_reason_name(&r.name)?;
@@ -172,6 +174,19 @@ pub async fn put_stock_reason(
         now,
     )
     .await?;
+    record(
+        tx,
+        actor,
+        now,
+        Change {
+            action: "stock_reason.put",
+            target: format!("stock_reason:{}", after.id),
+            before: before.as_ref().map(reason_json),
+            after: reason_json(&after),
+            event: "stock_reason.changed",
+        },
+    )
+    .await?;
     Ok((
         match saved {
             crate::Saved::Created => Written::Created,
@@ -188,6 +203,7 @@ pub async fn put_stock_reason(
 pub async fn archive_stock_reason(
     tx: &mut Tx,
     id: StockReasonId,
+    actor: &Actor,
     now: Timestamp,
 ) -> StockResult<(Written, StockReasonRecord)> {
     let before = get_stock_reason(Conn::Tx(&mut *tx), id)
@@ -202,11 +218,22 @@ pub async fn archive_stock_reason(
         args![now, now, id],
     )
     .await?;
-    Ok((
-        Written::Updated,
-        StockReasonRecord {
-            archived_at: Some(now),
-            ..before
+    let after = StockReasonRecord {
+        archived_at: Some(now),
+        ..before.clone()
+    };
+    record(
+        tx,
+        actor,
+        now,
+        Change {
+            action: "stock_reason.archive",
+            target: format!("stock_reason:{id}"),
+            before: Some(reason_json(&before)),
+            after: reason_json(&after),
+            event: "stock_reason.changed",
         },
-    ))
+    )
+    .await?;
+    Ok((Written::Updated, after))
 }

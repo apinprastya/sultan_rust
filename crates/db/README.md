@@ -116,14 +116,29 @@ Persistence for Sultan POS: sqlx migrations and repositories for SQLite and MySQ
   sale line's value (into its lots), a write-off at the average.
 - **Numbers:** `<BRANCH>-<PREFIX>-<YYMMDD>-<NN>` per branch, prefix and branch-local day, as
   `MAX(seq) + 1` under `UNIQUE (branch_id, local_day, seq)` per document table.
-- **Audit and outbox** are the caller's (the N3 server appends them in the same transaction), so
-  these repositories only store the documents and the ledger.
+- **Audit and outbox** (N3, like `cash` and `sales`): every write function appends its audit row
+  and outbox event in the caller's transaction (`src/stock/json.rs`). HQ data and reorder rules
+  take the caller's `Actor` and record the stored record (`supplier.changed`,
+  `supplier_item.changed`, `stock_reason.changed`, `inventory_settings.put`,
+  `reorder_rule.changed`, `product_expiry.changed`); branch documents record the document with
+  its lines and the ledger rows it wrote (`movements`) under the document's user at its branch
+  (`purchase_order.changed`, `goods_receipt.saved` / `.posted` / `.voided`,
+  `supplier_return.saved` / `.posted`, `transfer.changed`, `internal_transfer.posted`,
+  `adjustment.posted`, `opening_stock.posted`, `opname.changed`). An unchanged replay (the same
+  draft, a second post) records nothing.
+- **On hand** (`list_on_hand`, N3): one row per (branch, location, variant) with the catalog
+  names, the branch's unit cost, on order, in transit and reorder rule, filtered by location,
+  variant, category, brand, text (search key, or exactly the code, SKU or a barcode), negative,
+  low (negative, or a rule with branch on hand + on order ≤ min) and expiring (a lot within its
+  product's warn days of a day, else the company's: a `CASE` per warn-days value in use, since
+  days cannot be added to a `YYYYMMDD` key in portable SQL); keyset paging. `list_expiring_lots`
+  is the Expiring list. Variants that never moved have no balance row and are not listed.
 - **Grants:** the migration gives Manager `supplier.manage`, `purchase.order`,
   `purchase.receive`, `stock.transfer`, `stock.count`, gives Stock clerk the last three and takes
   its `stock.adjust` away (spec 2.8 §12; nothing used it before); `seed_defaults` does the same
   on a fresh install.
 - **Tests:** `tests/db/stock.rs` and `tests/db/stock_docs.rs` (spec 2.8 §17 cases 13–21 at the db
-  level) check after each scenario that every cache equals the ledger (`assert_balanced`), and the
+  level, and the audit and outbox rows of the writes) check after each scenario that every cache equals the ledger (`assert_balanced`), and the
   upgrade from a 2.7 database (`*_upgrade_builds_the_balance`).
 
 ## Tests

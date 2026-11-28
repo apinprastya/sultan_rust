@@ -45,6 +45,14 @@
 //! (`/cash-movements/{id}/photos/{photo_id}`, [`routes::cash_photos`]), stored as files in the
 //! node's data directory ([`attachments`]), and `nota_flag_above` in `/settings/sales`.
 //!
+//! Phase N3 (spec 2.8) adds inventory: `/stock/on-hand`, `/stock/card/{variant_id}`,
+//! `/stock/lots`, `/settings/inventory`, `/suppliers` with their items, `/stock-reasons`,
+//! `/purchase-orders`, `/goods-receipts`, `/supplier-returns`, `/transfers`,
+//! `/internal-transfers`, `/adjustments`, `/opening-stock`, `/opnames`, `/reorder-rules`,
+//! `/reorder/suggestions`, `/reorder/low-stock`, `/payables` and the till's
+//! `/registers/me/stock/{variant_id}`, with `stock.changed` and `transfer.changed` events
+//! ([`routes::stock`]).
+//!
 //! Phase 7 adds request logging to [`router`]: one `tracing` span per request with the method and
 //! the path only, and the status and latency when it finishes. Header values (`Authorization`,
 //! `X-Register-Token`, `X-Override`), query strings and bodies are never logged.
@@ -76,8 +84,8 @@ use routes::{
     audit, auth, branches, cash_movements, cash_photos, cash_reasons, cash_reports,
     cashier_sessions, catalog, customer_balance, customer_groups, customers, drawer, held_carts,
     locations, overrides as override_routes, permissions, pricing, pricing_quote, product_images,
-    products, registers, returns, roles, sales, sales_settings, taxonomy, tender_types, users,
-    z_reports,
+    products, purchasing, registers, returns, roles, sales, sales_settings, stock, stock_docs,
+    suppliers, taxonomy, tender_types, users, z_reports,
 };
 
 pub use error::ApiError;
@@ -112,6 +120,7 @@ pub fn routes(state: &AppState) -> Router<AppState> {
         .merge(pricing_actions())
         .merge(sales_actions())
         .route("/z-reports", post(z_reports::post))
+        .merge(stock_actions())
         .route_layer(from_fn_with_state(state.clone(), idempotency::middleware));
     let api = Router::new()
         .route("/openapi.json", get(openapi::openapi_json))
@@ -168,6 +177,7 @@ pub fn routes(state: &AppState) -> Router<AppState> {
         .merge(pricing_routes())
         .merge(sales_routes())
         .merge(cash_routes())
+        .merge(stock_routes())
         .merge(idempotent)
         .method_not_allowed_fallback(async || ApiError::method_not_allowed());
     Router::new()
@@ -227,6 +237,101 @@ fn catalog_routes() -> Router<AppState> {
         .route(
             "/settings/catalog",
             get(catalog::get_settings).put(catalog::put_settings),
+        )
+}
+
+/// The inventory action `POST`s (spec 2.8 §16); they get the `Idempotency-Key` middleware.
+fn stock_actions() -> Router<AppState> {
+    Router::new()
+        .route("/purchase-orders/{id}/order", post(purchasing::order))
+        .route("/purchase-orders/{id}/close", post(purchasing::close))
+        .route("/purchase-orders/{id}/cancel", post(purchasing::cancel))
+        .route("/goods-receipts/{id}/post", post(purchasing::post_receipt))
+        .route("/goods-receipts/{id}/void", post(purchasing::void_receipt))
+        .route("/supplier-returns/{id}/post", post(purchasing::post_return))
+        .route("/transfers/{id}/ship", post(stock_docs::ship))
+        .route("/transfers/{id}/receive", post(stock_docs::receive))
+        .route("/transfers/{id}/cancel", post(stock_docs::cancel_transfer))
+        .route("/opnames/{id}/counts", post(stock_docs::counts))
+        .route("/opnames/{id}/post", post(stock_docs::post_opname))
+        .route("/opnames/{id}/cancel", post(stock_docs::cancel_opname))
+}
+
+/// The inventory resources (spec 2.8 §16).
+fn stock_routes() -> Router<AppState> {
+    Router::new()
+        .route("/stock/on-hand", get(stock::on_hand))
+        .route("/stock/card/{variant_id}", get(stock::card))
+        .route("/stock/lots", get(stock::lots))
+        .route(
+            "/settings/inventory",
+            get(stock::get_settings).put(stock::put_settings),
+        )
+        .route("/payables", get(stock::payables))
+        .route("/registers/me/stock/{variant_id}", get(stock::till_stock))
+        .route("/suppliers", get(suppliers::list))
+        .route(
+            "/suppliers/{id}",
+            get(suppliers::get)
+                .put(suppliers::put)
+                .delete(suppliers::delete),
+        )
+        .route("/suppliers/{id}/items", get(suppliers::list_items))
+        .route(
+            "/suppliers/{id}/items/{variant_id}",
+            get(suppliers::get_item).put(suppliers::put_item),
+        )
+        .route("/stock-reasons", get(suppliers::list_reasons))
+        .route(
+            "/stock-reasons/{id}",
+            put(suppliers::put_reason).delete(suppliers::delete_reason),
+        )
+        .route("/purchase-orders", get(purchasing::list_orders))
+        .route(
+            "/purchase-orders/{id}",
+            get(purchasing::get_order).put(purchasing::put_order),
+        )
+        .route("/goods-receipts", get(purchasing::list_receipts))
+        .route(
+            "/goods-receipts/{id}",
+            get(purchasing::get_receipt).put(purchasing::put_receipt),
+        )
+        .route("/supplier-returns", get(purchasing::list_returns))
+        .route(
+            "/supplier-returns/{id}",
+            get(purchasing::get_return).put(purchasing::put_return),
+        )
+        .route("/reorder-rules", get(purchasing::list_rules))
+        .route(
+            "/reorder-rules/{branch_id}/{variant_id}",
+            put(purchasing::put_rule),
+        )
+        .route("/reorder/suggestions", get(purchasing::suggestions))
+        .route("/reorder/low-stock", get(purchasing::low_stock))
+        .route("/transfers", get(stock_docs::list_transfers))
+        .route(
+            "/transfers/{id}",
+            get(stock_docs::get_transfer).put(stock_docs::put_transfer),
+        )
+        .route("/internal-transfers", get(stock_docs::list_internal))
+        .route(
+            "/internal-transfers/{id}",
+            get(stock_docs::get_internal).put(stock_docs::put_internal),
+        )
+        .route("/adjustments", get(stock_docs::list_adjustments))
+        .route(
+            "/adjustments/{id}",
+            get(stock_docs::get_adjustment).put(stock_docs::put_adjustment),
+        )
+        .route("/opening-stock", get(stock_docs::list_opening))
+        .route(
+            "/opening-stock/{id}",
+            get(stock_docs::get_opening).put(stock_docs::put_opening),
+        )
+        .route("/opnames", get(stock_docs::list_opnames))
+        .route(
+            "/opnames/{id}",
+            get(stock_docs::get_opname).put(stock_docs::put_opname),
         )
 }
 

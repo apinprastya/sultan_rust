@@ -49,6 +49,15 @@
 //!   bytes of a photo of a cash movement and [`Service::cash_photo`] reads the stored JPEG; the
 //!   threshold of the "missing nota" flag is [`SalesSettings::nota_flag_above`].
 //!
+//! - Inventory (phase N3, spec 2.8; types in [`stock`]): the till reads this branch's on hand
+//!   with [`Service::till_stock`] (`GET /registers/me/stock/{variant_id}`, no cost); the back
+//!   office's calls are on [`BackOffice`]: suppliers and their items, stock reasons and the
+//!   inventory settings (HQ data), on hand with its filters, stock cards, lots, payables, purchase
+//!   orders, goods receipts (the void takes an `X-Override` token), supplier returns, transfers
+//!   between branches and inside one, adjustments, opening stock, opnames and reorder. Action
+//!   `POST`s take an `Idempotency-Key`. Cost fields are [`Cost`]: left out without
+//!   `report.profit`.
+//!
 //! Amounts are minor units (`i64`, Rupiah minor unit = 1, `docs/plan.md` §1); times are unix ms.
 
 pub mod cash;
@@ -59,6 +68,7 @@ pub mod fake;
 pub mod http;
 pub mod pricing;
 pub mod sales;
+pub mod stock;
 pub mod types;
 
 use std::future::Future;
@@ -93,6 +103,18 @@ pub use sales::{
     ReturnLine, ReturnLineRequest, ReturnPage, ReturnRequest, ReturnSummary, Sale, SaleLine,
     SaleLineRequest, SalePage, SaleRequest, SaleReturn, SaleSummary, SaleTender, SaleTotals,
     SaleVoid, SalesSettings, TenderRequest, TenderType, TenderTypeBody, VoidRequest, VoidedLine,
+};
+pub use stock::{
+    Adjustment, AdjustmentBody, AdjustmentLine, AdjustmentLineBody, CardPage, CardQuery, CardRow,
+    Cost, CountEntry, GoodsReceipt, InternalLine, InternalTransfer, InternalTransferBody,
+    InventorySettings, LineQty, Lot, LotQuery, MoveBody, Movement, NegativeStock, OnHandPage,
+    OnHandQuery, OnHandRow, OpeningBody, OpeningLine, OpeningLineBody, OpeningStock, Opname,
+    OpnameBody, OpnameLine, OrderAction, OrderLineRef, Payable, PayableQuery, PurchaseOrder,
+    PurchaseOrderBody, PurchaseOrderLine, PurchaseOrderLineBody, QtyLine, ReceiptBody, ReceiptLine,
+    ReceiptLineBody, ReorderRule, ReorderRuleBody, StockDocQuery, StockReason, StockReasonBody,
+    SuggestedLine, Supplier, SupplierBody, SupplierItem, SupplierItemBody, SupplierReturn,
+    SupplierReturnBody, SupplierReturnLine, SupplierReturnLineBody, TillStock, Transfer,
+    TransferAction, TransferBody, TransferLine, TravelLot,
 };
 pub use types::{
     Branch, CashierSession, CloseReport, CloseRequest, Count, LockUser, Login, OverrideGrant,
@@ -401,6 +423,10 @@ pub trait Service: Send + Sync {
     ) -> BoxFuture<NotaPhoto>;
     /// `GET /cash-movements/{id}/photos/{photo_id}`: the stored JPEG.
     fn cash_photo(&self, token: &str, movement_id: &str, photo_id: &str) -> BoxFuture<Vec<u8>>;
+
+    /// `GET /registers/me/stock/{variant_id}`: this branch's on hand of a variant (spec 2.8
+    /// I18), no cost.
+    fn till_stock(&self, token: &str, variant_id: &str) -> BoxFuture<TillStock>;
 }
 
 /// What the back office needs from the server (phase C4, spec 2.2 §12). `token` is the password
@@ -663,4 +689,188 @@ pub trait BackOffice: Service {
         body: &CloseRequest,
         key: &str,
     ) -> BoxFuture<CloseReport>;
+
+    /// `GET /suppliers[?archived=true]` (spec 2.8 §3).
+    fn suppliers(&self, token: &str, include_archived: bool) -> BoxFuture<Vec<Supplier>>;
+    /// `PUT /suppliers/{id}` (HQ, `supplier.manage`).
+    fn put_supplier(&self, token: &str, id: &str, body: &SupplierBody) -> BoxFuture<Supplier>;
+    /// `DELETE /suppliers/{id}`: archive.
+    fn delete_supplier(&self, token: &str, id: &str) -> BoxFuture<Supplier>;
+    /// `GET /suppliers/{id}/items`.
+    fn supplier_items(&self, token: &str, supplier_id: &str) -> BoxFuture<Vec<SupplierItem>>;
+    /// `PUT /suppliers/{id}/items/{variant_id}`.
+    fn put_supplier_item(
+        &self,
+        token: &str,
+        supplier_id: &str,
+        variant_id: &str,
+        body: &SupplierItemBody,
+    ) -> BoxFuture<SupplierItem>;
+    /// `GET /stock-reasons[?archived=true]` (§7).
+    fn stock_reasons(&self, token: &str, include_archived: bool) -> BoxFuture<Vec<StockReason>>;
+    /// `PUT /stock-reasons/{id}` (HQ, `stock.adjust`).
+    fn put_stock_reason(
+        &self,
+        token: &str,
+        id: &str,
+        body: &StockReasonBody,
+    ) -> BoxFuture<StockReason>;
+    /// `DELETE /stock-reasons/{id}`: archive.
+    fn delete_stock_reason(&self, token: &str, id: &str) -> BoxFuture<StockReason>;
+    /// `GET /settings/inventory` (§13).
+    fn inventory_settings(&self, token: &str) -> BoxFuture<InventorySettings>;
+    /// `PUT /settings/inventory` (HQ, `stock.adjust`).
+    fn put_inventory_settings(
+        &self,
+        token: &str,
+        body: &InventorySettings,
+    ) -> BoxFuture<InventorySettings>;
+    /// `GET /stock/on-hand` (§4, §14).
+    fn on_hand(&self, token: &str, query: &OnHandQuery) -> BoxFuture<OnHandPage>;
+    /// `GET /stock/card/{variant_id}`.
+    fn stock_card(&self, token: &str, variant_id: &str, query: &CardQuery) -> BoxFuture<CardPage>;
+    /// `GET /stock/lots` (§9).
+    fn lots(&self, token: &str, query: &LotQuery) -> BoxFuture<Vec<Lot>>;
+    /// `GET /payables`.
+    fn payables(&self, token: &str, query: &PayableQuery) -> BoxFuture<Vec<Payable>>;
+    /// `GET /purchase-orders` (§6).
+    fn purchase_orders(&self, token: &str, query: &StockDocQuery) -> BoxFuture<Vec<PurchaseOrder>>;
+    /// `GET /purchase-orders/{id}`.
+    fn purchase_order(&self, token: &str, id: &str) -> BoxFuture<PurchaseOrder>;
+    /// `PUT /purchase-orders/{id}`: a draft (`purchase.order`).
+    fn put_purchase_order(
+        &self,
+        token: &str,
+        id: &str,
+        body: &PurchaseOrderBody,
+    ) -> BoxFuture<PurchaseOrder>;
+    /// `POST /purchase-orders/{id}/{order|close|cancel}`.
+    fn purchase_order_action(
+        &self,
+        token: &str,
+        id: &str,
+        action: OrderAction,
+        key: &str,
+    ) -> BoxFuture<PurchaseOrder>;
+    /// `GET /goods-receipts`.
+    fn goods_receipts(&self, token: &str, query: &StockDocQuery) -> BoxFuture<Vec<GoodsReceipt>>;
+    /// `GET /goods-receipts/{id}` with its movements.
+    fn goods_receipt(&self, token: &str, id: &str) -> BoxFuture<GoodsReceipt>;
+    /// `PUT /goods-receipts/{id}`: a draft (`purchase.receive`).
+    fn put_goods_receipt(
+        &self,
+        token: &str,
+        id: &str,
+        body: &ReceiptBody,
+    ) -> BoxFuture<GoodsReceipt>;
+    /// `POST /goods-receipts/{id}/post`.
+    fn post_goods_receipt(&self, token: &str, id: &str, key: &str) -> BoxFuture<GoodsReceipt>;
+    /// `POST /goods-receipts/{id}/void`; `override_token` is a manager's `stock.adjust` override
+    /// with the receipt ID as context.
+    fn void_goods_receipt(
+        &self,
+        token: &str,
+        id: &str,
+        key: &str,
+        override_token: Option<&str>,
+    ) -> BoxFuture<GoodsReceipt>;
+    /// `GET /supplier-returns`.
+    fn supplier_returns(
+        &self,
+        token: &str,
+        query: &StockDocQuery,
+    ) -> BoxFuture<Vec<SupplierReturn>>;
+    /// `GET /supplier-returns/{id}`.
+    fn supplier_return(&self, token: &str, id: &str) -> BoxFuture<SupplierReturn>;
+    /// `PUT /supplier-returns/{id}`: a draft.
+    fn put_supplier_return(
+        &self,
+        token: &str,
+        id: &str,
+        body: &SupplierReturnBody,
+    ) -> BoxFuture<SupplierReturn>;
+    /// `POST /supplier-returns/{id}/post`.
+    fn post_supplier_return(&self, token: &str, id: &str, key: &str) -> BoxFuture<SupplierReturn>;
+    /// `GET /transfers` (§8).
+    fn transfers(&self, token: &str, query: &StockDocQuery) -> BoxFuture<Vec<Transfer>>;
+    /// `GET /transfers/{id}`.
+    fn transfer(&self, token: &str, id: &str) -> BoxFuture<Transfer>;
+    /// `PUT /transfers/{id}`: a request, or shipped at once.
+    fn put_transfer(&self, token: &str, id: &str, body: &TransferBody) -> BoxFuture<Transfer>;
+    /// `POST /transfers/{id}/{ship|receive|cancel}`.
+    fn transfer_action(
+        &self,
+        token: &str,
+        id: &str,
+        action: TransferAction,
+        body: &MoveBody,
+        key: &str,
+    ) -> BoxFuture<Transfer>;
+    /// `GET /internal-transfers?branch_id`.
+    fn internal_transfers(
+        &self,
+        token: &str,
+        branch_id: Option<&str>,
+    ) -> BoxFuture<Vec<InternalTransfer>>;
+    /// `PUT /internal-transfers/{id}` (posts at once).
+    fn put_internal_transfer(
+        &self,
+        token: &str,
+        id: &str,
+        body: &InternalTransferBody,
+    ) -> BoxFuture<InternalTransfer>;
+    /// `GET /adjustments?branch_id` (§7).
+    fn adjustments(&self, token: &str, branch_id: Option<&str>) -> BoxFuture<Vec<Adjustment>>;
+    /// `GET /adjustments/{id}`.
+    fn adjustment(&self, token: &str, id: &str) -> BoxFuture<Adjustment>;
+    /// `PUT /adjustments/{id}` (posts at once, `stock.adjust`).
+    fn put_adjustment(&self, token: &str, id: &str, body: &AdjustmentBody)
+    -> BoxFuture<Adjustment>;
+    /// `GET /opening-stock?branch_id`.
+    fn opening_stocks(&self, token: &str, branch_id: Option<&str>) -> BoxFuture<Vec<OpeningStock>>;
+    /// `PUT /opening-stock/{id}` (posts at once, `stock.adjust`).
+    fn put_opening_stock(
+        &self,
+        token: &str,
+        id: &str,
+        body: &OpeningBody,
+    ) -> BoxFuture<OpeningStock>;
+    /// `GET /opnames?branch_id` (§11).
+    fn opnames(&self, token: &str, branch_id: Option<&str>) -> BoxFuture<Vec<Opname>>;
+    /// `GET /opnames/{id}` with the live variance.
+    fn opname(&self, token: &str, id: &str) -> BoxFuture<Opname>;
+    /// `PUT /opnames/{id}`: start (`stock.count`).
+    fn start_opname(&self, token: &str, id: &str, body: &OpnameBody) -> BoxFuture<Opname>;
+    /// `POST /opnames/{id}/counts`.
+    fn add_counts(
+        &self,
+        token: &str,
+        id: &str,
+        entries: &[CountEntry],
+        key: &str,
+    ) -> BoxFuture<Opname>;
+    /// `POST /opnames/{id}/post` with `uncounted` = `set_zero` or `leave` (`stock.count` and
+    /// `stock.adjust`).
+    fn post_opname(&self, token: &str, id: &str, uncounted: &str, key: &str) -> BoxFuture<Opname>;
+    /// `POST /opnames/{id}/cancel`.
+    fn cancel_opname(&self, token: &str, id: &str, key: &str) -> BoxFuture<Opname>;
+    /// `GET /reorder-rules?branch_id` (§10).
+    fn reorder_rules(&self, token: &str, branch_id: Option<&str>) -> BoxFuture<Vec<ReorderRule>>;
+    /// `PUT /reorder-rules/{branch_id}/{variant_id}` (`purchase.order`).
+    fn put_reorder_rule(
+        &self,
+        token: &str,
+        branch_id: &str,
+        variant_id: &str,
+        body: &ReorderRuleBody,
+    ) -> BoxFuture<ReorderRule>;
+    /// `GET /reorder/suggestions?supplier_id&branch_id`.
+    fn reorder_suggestions(
+        &self,
+        token: &str,
+        supplier_id: &str,
+        branch_id: Option<&str>,
+    ) -> BoxFuture<Vec<SuggestedLine>>;
+    /// `GET /reorder/low-stock?branch_id`.
+    fn low_stock(&self, token: &str, branch_id: Option<&str>) -> BoxFuture<Vec<SuggestedLine>>;
 }

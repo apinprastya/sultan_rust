@@ -40,6 +40,7 @@ pub use lookup::{
     DbCatalogIndex, LookupItem, MAX_SEARCH_LIMIT, SearchHit, VariantLabel, load_index, lookup,
     search, search_page, variant_labels,
 };
+pub(crate) use product::escape_like;
 pub use product::{
     MAX_LIST_LIMIT, ProductDoc, ProductFilter, ProductRecord, ProductSummary, archive_product,
     delete_product, get_product, list_products, mark_used, put_product, unarchive_product,

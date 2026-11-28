@@ -7,10 +7,11 @@ use sultan_core::money::Money;
 use sultan_core::stock::{ReorderInput, check_rule, is_low, net_sold, suggest};
 use sultan_core::time::Timestamp;
 
+use super::json::{Change, record, rule_json};
 use super::ledger::branch_on_hand;
 use super::purchase::on_order;
 use super::suppliers::{get_supplier, list_supplier_items};
-use super::{StockDbError, StockResult, Written, get_inventory_settings};
+use super::{Actor, StockDbError, StockResult, Written, get_inventory_settings};
 use crate::conn::{Conn, Tx};
 use crate::error::{DbError, Result};
 use crate::sql::{self, Row, args};
@@ -81,17 +82,53 @@ pub async fn list_reorder_rules<'c>(
 /// `purchase.order`): `0 ≤ min ≤ max`.
 ///
 /// # Errors
-/// [`StockDbError::Rule`] (`min`, `max`); the database error.
+/// [`StockDbError::Rule`] (`min`, `max`); [`StockDbError::NotFound`] (`branch`, `variant`);
+/// the database error.
 pub async fn put_reorder_rule(
     tx: &mut Tx,
     rule: &ReorderRule,
+    actor: &Actor,
     now: Timestamp,
 ) -> StockResult<Written> {
     check_rule(rule.min, rule.max)?;
+    // The table has no foreign keys: refuse a rule for a branch or variant that does not exist.
+    let branch = sql::fetch_optional(
+        Conn::Tx(&mut *tx),
+        "SELECT 1 AS x FROM branch WHERE id = ?",
+        args![rule.branch],
+        |_| Ok(()),
+    )
+    .await?;
+    if branch.is_none() {
+        return Err(StockDbError::NotFound("branch"));
+    }
+    let variant = sql::fetch_optional(
+        Conn::Tx(&mut *tx),
+        "SELECT 1 AS x FROM variant WHERE id = ?",
+        args![rule.variant],
+        |_| Ok(()),
+    )
+    .await?;
+    if variant.is_none() {
+        return Err(StockDbError::NotFound("variant"));
+    }
     let before = get_reorder_rule(Conn::Tx(&mut *tx), rule.branch, rule.variant).await?;
     if before.as_ref() == Some(rule) {
         return Ok(Written::Unchanged);
     }
+    record(
+        tx,
+        actor,
+        now,
+        Change {
+            action: "reorder_rule.put",
+            target: format!("reorder_rule:{}:{}", rule.branch, rule.variant),
+            before: before.as_ref().map(rule_json),
+            after: rule_json(rule),
+            event: "reorder_rule.changed",
+        },
+    )
+    .await?;
     if before.is_some() {
         sql::execute(
             Conn::Tx(&mut *tx),
@@ -122,14 +159,36 @@ pub async fn delete_reorder_rule(
     tx: &mut Tx,
     branch: BranchId,
     variant: VariantId,
+    actor: &Actor,
+    now: Timestamp,
 ) -> Result<bool> {
-    Ok(sql::execute(
+    let Some(before) = get_reorder_rule(Conn::Tx(&mut *tx), branch, variant).await? else {
+        return Ok(false);
+    };
+    sql::execute(
         Conn::Tx(&mut *tx),
         "DELETE FROM reorder_rule WHERE branch_id = ? AND variant_id = ?",
         args![branch, variant],
     )
-    .await?
-        > 0)
+    .await?;
+    record(
+        tx,
+        actor,
+        now,
+        Change {
+            action: "reorder_rule.delete",
+            target: format!("reorder_rule:{branch}:{variant}"),
+            before: Some(rule_json(&before)),
+            after: serde_json::json!({
+                "branch_id": branch.to_string(),
+                "variant_id": variant.to_string(),
+                "deleted": true,
+            }),
+            event: "reorder_rule.changed",
+        },
+    )
+    .await?;
+    Ok(true)
 }
 
 /// A line of the low-stock list or a suggested purchase order.

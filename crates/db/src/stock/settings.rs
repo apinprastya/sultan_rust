@@ -6,7 +6,8 @@ use sultan_core::ids::ProductId;
 use sultan_core::stock::InventorySettings;
 use sultan_core::time::Timestamp;
 
-use super::{StockDbError, StockResult, Written};
+use super::json::{Change, record, settings_json};
+use super::{Actor, StockDbError, StockResult, Written};
 use crate::conn::{Conn, Tx};
 use crate::error::{DbError, Result};
 use crate::sql::{self, Row, args};
@@ -50,10 +51,12 @@ pub async fn get_inventory_settings<'c>(conn: impl Into<Conn<'c>>) -> Result<Inv
 pub async fn put_inventory_settings(
     tx: &mut Tx,
     s: &InventorySettings,
+    actor: &Actor,
     now: Timestamp,
 ) -> StockResult<Written> {
     s.check()?;
-    if get_inventory_settings(Conn::Tx(&mut *tx)).await? == *s {
+    let before = get_inventory_settings(Conn::Tx(&mut *tx)).await?;
+    if before == *s {
         return Ok(Written::Unchanged);
     }
     sql::execute(
@@ -68,6 +71,19 @@ pub async fn put_inventory_settings(
             i64::from(s.cover_days),
             now,
         ],
+    )
+    .await?;
+    record(
+        tx,
+        actor,
+        now,
+        Change {
+            action: "inventory_settings.put",
+            target: "inventory_settings".to_owned(),
+            before: Some(settings_json(&before)),
+            after: settings_json(s),
+            event: "inventory_settings.put",
+        },
     )
     .await?;
     Ok(Written::Updated)
@@ -121,6 +137,7 @@ pub async fn set_product_expiry(
     tx: &mut Tx,
     product: ProductId,
     e: ProductExpiry,
+    actor: &Actor,
     now: Timestamp,
 ) -> StockResult<Written> {
     if e.expiry_warn_days.is_some_and(|d| d > 365) {
@@ -141,6 +158,26 @@ pub async fn set_product_expiry(
             now,
             product
         ],
+    )
+    .await?;
+    let json = |x: ProductExpiry| {
+        serde_json::json!({
+            "product_id": product.to_string(),
+            "track_expiry": x.track_expiry,
+            "expiry_warn_days": x.expiry_warn_days,
+        })
+    };
+    record(
+        tx,
+        actor,
+        now,
+        Change {
+            action: "product.expiry",
+            target: format!("product:{product}"),
+            before: Some(json(before)),
+            after: json(e),
+            event: "product_expiry.changed",
+        },
     )
     .await?;
     Ok(Written::Updated)

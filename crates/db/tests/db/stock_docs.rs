@@ -34,6 +34,7 @@ db_tests!(
     transfer_request_ship_receive,
     opname_counts_and_posts,
     reorder_rules_and_suggestions,
+    writes_record_audit_and_outbox,
 );
 
 fn po_line(v: VariantId, u: UnitId, qty: i64, price: i64) -> NewPurchaseOrderLine {
@@ -251,7 +252,7 @@ async fn receipt_posts_stock_cost_lots_and_payable(db: &Db) {
         pkp: true,
         ..stock::get_inventory_settings(&mut tx).await.unwrap()
     };
-    stock::put_inventory_settings(&mut tx, &pkp, t(1))
+    stock::put_inventory_settings(&mut tx, &pkp, &stock::Actor::default(), t(1))
         .await
         .unwrap();
     tx.commit().await.unwrap();
@@ -1257,6 +1258,7 @@ async fn reorder_rules_and_suggestions(db: &Db) {
             last_unit: Some(pcs),
             preferred: true,
         },
+        &stock::Actor::default(),
         t(NOV16),
     )
     .await
@@ -1280,11 +1282,15 @@ async fn reorder_rules_and_suggestions(db: &Db) {
     };
     let mut tx = db.begin().await.unwrap();
     assert_eq!(
-        stock::put_reorder_rule(&mut tx, &rule, t(1)).await.unwrap(),
+        stock::put_reorder_rule(&mut tx, &rule, &stock::Actor::default(), t(1))
+            .await
+            .unwrap(),
         Written::Created
     );
     assert_eq!(
-        stock::put_reorder_rule(&mut tx, &rule, t(2)).await.unwrap(),
+        stock::put_reorder_rule(&mut tx, &rule, &stock::Actor::default(), t(2))
+            .await
+            .unwrap(),
         Written::Unchanged
     );
     let bad = ReorderRule {
@@ -1293,12 +1299,30 @@ async fn reorder_rules_and_suggestions(db: &Db) {
         ..rule
     };
     assert_eq!(
-        stock::put_reorder_rule(&mut tx, &bad, t(3))
+        stock::put_reorder_rule(&mut tx, &bad, &stock::Actor::default(), t(3))
             .await
             .unwrap_err()
             .code(),
         Some("invalid_field")
     );
+    for orphan in [
+        ReorderRule {
+            branch: BranchId::generate(),
+            ..rule
+        },
+        ReorderRule {
+            variant: VariantId::generate(),
+            ..rule
+        },
+    ] {
+        assert_eq!(
+            stock::put_reorder_rule(&mut tx, &orphan, &stock::Actor::default(), t(3))
+                .await
+                .unwrap_err()
+                .code(),
+            Some("not_found")
+        );
+    }
     tx.commit().await.unwrap();
     let lines = stock::suggest_purchase_order(db, s.supplier.id, jkt, t(NOV16))
         .await
@@ -1326,7 +1350,7 @@ async fn reorder_rules_and_suggestions(db: &Db) {
     let mut tx = db.begin().await.unwrap();
     let raised = ReorderRule { min: q(10), ..rule };
     assert_eq!(
-        stock::put_reorder_rule(&mut tx, &raised, t(4))
+        stock::put_reorder_rule(&mut tx, &raised, &stock::Actor::default(), t(4))
             .await
             .unwrap(),
         Written::Updated
@@ -1341,8 +1365,16 @@ async fn reorder_rules_and_suggestions(db: &Db) {
     assert!(!low.contains(&tea));
     assert_eq!(stock::list_reorder_rules(db, jkt).await.unwrap().len(), 1);
     let mut tx = db.begin().await.unwrap();
-    assert!(stock::delete_reorder_rule(&mut tx, jkt, tea).await.unwrap());
-    assert!(!stock::delete_reorder_rule(&mut tx, jkt, tea).await.unwrap());
+    assert!(
+        stock::delete_reorder_rule(&mut tx, jkt, tea, &stock::Actor::default(), t(9))
+            .await
+            .unwrap()
+    );
+    assert!(
+        !stock::delete_reorder_rule(&mut tx, jkt, tea, &stock::Actor::default(), t(9))
+            .await
+            .unwrap()
+    );
     tx.commit().await.unwrap();
     assert!(
         stock::get_reorder_rule(db, jkt, tea)
@@ -1357,4 +1389,90 @@ async fn reorder_rules_and_suggestions(db: &Db) {
             .code(),
         Some("not_found")
     );
+}
+
+/// The audit row and outbox event (spec §15) of each write, in the write's transaction: HQ data
+/// under the caller's actor, documents under their user at their branch with the ledger rows
+/// they wrote; an unchanged replay records nothing.
+async fn writes_record_audit_and_outbox(db: &Db) {
+    let s = shop(db).await;
+    let kinds = || async {
+        sultan_db::outbox::list_unsynced(db, u32::MAX)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|e| (e.kind, e.payload))
+            .collect::<Vec<_>>()
+    };
+    let before = kinds().await.len();
+    let tea = Shop::v(&s.tea);
+    let r = receipt(
+        &s,
+        "INV-A1",
+        vec![gr_line(tea, Shop::base(&s.tea), 10, 1_000)],
+    );
+    post_receipt(db, &r, 30).await.unwrap();
+    // Replaying the post records nothing more.
+    let mut tx = db.begin().await.unwrap();
+    let (w, _) = stock::post_goods_receipt(&mut tx, r.id, r.user, t(31))
+        .await
+        .unwrap();
+    assert_eq!(w, Written::Unchanged);
+    tx.commit().await.unwrap();
+    let events = kinds().await;
+    let new: Vec<&str> = events[before..].iter().map(|(k, _)| k.as_str()).collect();
+    assert_eq!(new, ["goods_receipt.saved", "goods_receipt.posted"]);
+    let posted = &events.last().unwrap().1;
+    assert_eq!(posted["status"], "posted");
+    assert_eq!(posted["movements"][0]["kind"], "receipt");
+    assert_eq!(posted["movements"][0]["value"], 10_000);
+    let filter = sultan_db::audit::AuditFilter {
+        action: Some("goods_receipt.post".into()),
+        ..Default::default()
+    };
+    let audit = sultan_db::audit::query(db, &filter).await.unwrap();
+    assert_eq!(audit.len(), 1);
+    assert_eq!(audit[0].user, Some(s.till.o.manager.id));
+    assert_eq!(audit[0].branch, Some(s.till.o.jkt.id));
+    assert_eq!(audit[0].target, Some(format!("goods_receipt:{}", r.id)));
+
+    // HQ data under the caller's actor.
+    let actor = stock::Actor::user(s.till.o.manager.id);
+    let mut tx = db.begin().await.unwrap();
+    let mut renamed = s.supplier.clone();
+    renamed.name = "Renamed".into();
+    stock::put_supplier(&mut tx, &renamed, &actor, t(32))
+        .await
+        .unwrap();
+    stock::archive_stock_reason(&mut tx, stock::SEED_REASON_IDS[3], &actor, t(33))
+        .await
+        .unwrap();
+    let mut settings = stock::get_inventory_settings(&mut tx).await.unwrap();
+    settings.cover_days = 21;
+    stock::put_inventory_settings(&mut tx, &settings, &actor, t(34))
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+    let events = kinds().await;
+    let tail: Vec<&str> = events[events.len() - 3..]
+        .iter()
+        .map(|(k, _)| k.as_str())
+        .collect();
+    assert_eq!(
+        tail,
+        [
+            "supplier.changed",
+            "stock_reason.changed",
+            "inventory_settings.put"
+        ]
+    );
+    assert_eq!(events[events.len() - 3].1["name"], "Renamed");
+    assert_eq!(events[events.len() - 1].1["cover_days"], 21);
+    let filter = sultan_db::audit::AuditFilter {
+        action: Some("supplier.put".into()),
+        ..Default::default()
+    };
+    let audit = sultan_db::audit::query(db, &filter).await.unwrap();
+    assert_eq!(audit[0].user, Some(s.till.o.manager.id));
+    assert_eq!(audit[0].before.as_ref().unwrap()["name"], s.supplier.name);
 }
