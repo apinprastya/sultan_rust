@@ -226,6 +226,18 @@ Every setting is taken from, in order: **command-line flag > environment variabl
   yet; slips and reports are text on screen until 2.11 prints them. The register offers
   the Z to a cashier without checking for other open sessions (a cashier may not list the days
   still to close); the run then names them.
+- Inventory (spec 2.8) is in the API (phase N3) and the client, not yet on screen (N4–N6):
+  suppliers and their items, stock reasons and the inventory settings (HQ data), purchase orders,
+  goods receipts with the supplier's invoice, landed cost and a payable (a void needs a manager:
+  `stock.adjust`, or `X-Override` at a register), supplier returns, transfers between branches on
+  one database (request, ship, receive with a transit loss; `other_node` for a branch this node
+  does not hold), internal transfers, adjustments, opening stock, opnames (several counters, one
+  open count per location and item), reorder rules and suggested purchase orders, the on-hand
+  list (filters negative, low, expiring, category, brand, text), the stock card, lots, payables
+  and the till's on hand (`GET /registers/me/stock/{variant_id}`, device token, no cost); see
+  `postman/README.md`. Without `report.profit`, cost and value fields are left out of the
+  answers. Negative stock never blocks: postings answer `negative_after`. Payments to suppliers
+  are 2.9.
 - The register sells (spec 2.6 S4): scan, type or search (F2) items into the cart (a rescan adds
   to the line; weighed items, scale labels, open-price and manually priced lines always get a
   line of their own), change quantities and units, set manual prices and line or cart

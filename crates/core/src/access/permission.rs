@@ -222,7 +222,10 @@ impl Permission {
     /// their own login. A safe drop and the Z (`cash.drop`, `day.close`) are approved at the till
     /// too (spec 2.7 §2, §6), and so is `session.view_expected` for the X report of the cashier's
     /// own session (spec 2.7 K11, §5); where it only shows a figure (the blind close of spec 2.1
-    /// §5) the server checks that it is held, without an override.
+    /// §5) the server checks that it is held, without an override. `stock.adjust` is the manager
+    /// override of a goods receipt void (spec 2.8 §6, §12, N3): the only place it is
+    /// authorized through an override; adjustments, opening stock and posting an opname check
+    /// that it is held.
     #[must_use]
     pub const fn is_overridable(self) -> bool {
         matches!(
@@ -242,6 +245,7 @@ impl Permission {
                 | Self::CashDrop
                 | Self::DayClose
                 | Self::SessionViewExpected
+                | Self::StockAdjust
         )
     }
 }
@@ -428,6 +432,11 @@ mod tests {
         assert!(!Permission::SessionForceClose.is_overridable());
         assert!(!Permission::CatalogManage.is_overridable());
         assert!(!Permission::CatalogViewArchived.is_overridable());
+        assert!(
+            Permission::StockAdjust.is_overridable(),
+            "a receipt void, spec 2.8 §6"
+        );
+        assert!(!Permission::PurchaseReceive.is_overridable());
     }
 
     #[test]
@@ -504,7 +513,8 @@ mod tests {
 
     #[test]
     fn inventory_keys_are_stable_unlimited_and_not_overridable() {
-        // Spec 2.8 §12: back-office work done under one's own login.
+        // Spec 2.8 §12: back-office work done under one's own login; `stock.adjust` is also the
+        // manager override of a receipt void (§6, spec 2.8 §21 reading 1).
         for (p, key) in [
             (Permission::SupplierManage, "supplier.manage"),
             (Permission::PurchaseOrder, "purchase.order"),
@@ -516,7 +526,7 @@ mod tests {
             assert_eq!(p.as_str(), key);
             assert_eq!(key.parse::<Permission>(), Ok(p));
             assert_eq!(p.limit_kind(), None, "{key}");
-            assert!(!p.is_overridable(), "{key}");
+            assert_eq!(p.is_overridable(), p == Permission::StockAdjust, "{key}");
         }
     }
 

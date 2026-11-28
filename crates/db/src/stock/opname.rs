@@ -21,6 +21,7 @@ use sultan_core::stock::{
 use sultan_core::time::Timestamp;
 use uuid::Uuid;
 
+use super::json::{doc_actor, opname_json, record_doc};
 use super::ledger::{
     DocRef, LotRule, Move, Valuation, location_on_hand, movements_since, post_moves, total_value,
 };
@@ -484,12 +485,30 @@ pub async fn start_opname(
         let snapshot = balances.get(&v).copied().unwrap_or_default();
         add_line(tx, &o, v, snapshot).await?;
     }
-    Ok((
-        Written::Created,
-        get_opname(Conn::Tx(&mut *tx), n.id)
-            .await?
-            .ok_or(DbError::NotFound("opname"))?,
-    ))
+    let stored = get_opname(Conn::Tx(&mut *tx), n.id)
+        .await?
+        .ok_or(DbError::NotFound("opname"))?;
+    recorded(tx, n.user, "opname.start", &stored, at).await?;
+    Ok((Written::Created, stored))
+}
+
+/// Records `action` on the opname (`opname.changed`) by `user` at its branch.
+async fn recorded(
+    tx: &mut Tx,
+    user: UserId,
+    action: &str,
+    o: &Opname,
+    at: Timestamp,
+) -> Result<()> {
+    record_doc(
+        tx,
+        &doc_actor(user, o.branch),
+        at,
+        (action, "opname.changed"),
+        *o.id.as_uuid(),
+        opname_json(o),
+    )
+    .await
 }
 
 async fn load_counting(tx: &mut Tx, id: OpnameId) -> StockResult<Option<Head>> {
@@ -529,6 +548,7 @@ pub async fn add_counts(
         });
     };
     let o = &h.opname;
+    let mut added = 0_usize;
     for e in entries {
         let exists = sql::fetch_optional(
             Conn::Tx(&mut *tx),
@@ -540,6 +560,7 @@ pub async fn add_counts(
         if exists.is_some() {
             continue;
         }
+        added += 1;
         let info = variant_info(tx, e.variant, e.unit).await?;
         let base = to_base(e.qty, info.factor)?;
         let has_line = sql::fetch_optional(
@@ -604,9 +625,13 @@ pub async fn add_counts(
         )
         .await?;
     }
-    Ok(get_opname(Conn::Tx(&mut *tx), id)
+    let stored = get_opname(Conn::Tx(&mut *tx), id)
         .await?
-        .ok_or(DbError::NotFound("opname"))?)
+        .ok_or(DbError::NotFound("opname"))?;
+    if added > 0 {
+        recorded(tx, user, "opname.count", &stored, at).await?;
+    }
+    Ok(stored)
 }
 
 async fn release(tx: &mut Tx, id: OpnameId) -> Result<()> {
@@ -714,12 +739,11 @@ pub async fn post_opname(
     )
     .await?;
     release(tx, id).await?;
-    Ok((
-        Written::Updated,
-        get_opname(Conn::Tx(&mut *tx), id)
-            .await?
-            .ok_or(DbError::NotFound("opname"))?,
-    ))
+    let stored = get_opname(Conn::Tx(&mut *tx), id)
+        .await?
+        .ok_or(DbError::NotFound("opname"))?;
+    recorded(tx, user, "opname.post", &stored, at).await?;
+    Ok((Written::Updated, stored))
 }
 
 /// Cancels an opname that is still counting (`POST /opnames/{id}/cancel`) and frees its
@@ -751,10 +775,9 @@ pub async fn cancel_opname(
     )
     .await?;
     release(tx, id).await?;
-    Ok((
-        Written::Updated,
-        get_opname(Conn::Tx(&mut *tx), id)
-            .await?
-            .ok_or(DbError::NotFound("opname"))?,
-    ))
+    let stored = get_opname(Conn::Tx(&mut *tx), id)
+        .await?
+        .ok_or(DbError::NotFound("opname"))?;
+    recorded(tx, user, "opname.cancel", &stored, at).await?;
+    Ok((Written::Updated, stored))
 }

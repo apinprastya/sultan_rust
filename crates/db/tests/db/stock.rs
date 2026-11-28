@@ -120,11 +120,14 @@ pub async fn shop(db: &Db) -> Shop {
             track_expiry: true,
             expiry_warn_days: Some(10),
         },
+        &stock::Actor::default(),
         t(20),
     )
     .await
     .unwrap();
-    let (_, supplier) = stock::put_supplier(&mut tx, &s, t(20)).await.unwrap();
+    let (_, supplier) = stock::put_supplier(&mut tx, &s, &stock::Actor::default(), t(20))
+        .await
+        .unwrap();
     tx.commit().await.unwrap();
     Shop {
         till,
@@ -628,7 +631,7 @@ async fn adjustments_value_and_need_a_cost(db: &Db) {
         .unwrap();
     koreksi.direction = ReasonDirection::Both;
     let mut tx = db.begin().await.unwrap();
-    let err = stock::put_stock_reason(&mut tx, &koreksi, t(NOV16))
+    let err = stock::put_stock_reason(&mut tx, &koreksi, &stock::Actor::default(), t(NOV16))
         .await
         .unwrap_err();
     assert!(err.to_string().contains("direction"));
@@ -739,20 +742,22 @@ async fn suppliers_and_items(db: &Db) {
     assert_eq!(s.supplier.code, "SUP1");
     assert_eq!(s.supplier.phone.as_deref(), Some("0812"));
     let mut tx = db.begin().await.unwrap();
-    let (w, _) = stock::put_supplier(&mut tx, &s.supplier, t(30))
+    let (w, _) = stock::put_supplier(&mut tx, &s.supplier, &stock::Actor::default(), t(30))
         .await
         .unwrap();
     assert_eq!(w, Written::Unchanged);
     let mut renamed = s.supplier.clone();
     renamed.name = "PT Baru".into();
-    let (w, _) = stock::put_supplier(&mut tx, &renamed, t(31)).await.unwrap();
+    let (w, _) = stock::put_supplier(&mut tx, &renamed, &stock::Actor::default(), t(31))
+        .await
+        .unwrap();
     assert_eq!(w, Written::Updated);
     let dup = Supplier {
         id: SupplierId::generate(),
         ..supplier("SUP1")
     };
     assert!(
-        stock::put_supplier(&mut tx, &dup, t(32))
+        stock::put_supplier(&mut tx, &dup, &stock::Actor::default(), t(32))
             .await
             .unwrap_err()
             .is_retryable()
@@ -761,7 +766,9 @@ async fn suppliers_and_items(db: &Db) {
     let other = supplier("sup2");
     let tea = Shop::v(&s.tea);
     let mut tx = db.begin().await.unwrap();
-    stock::put_supplier(&mut tx, &other, t(33)).await.unwrap();
+    stock::put_supplier(&mut tx, &other, &stock::Actor::default(), t(33))
+        .await
+        .unwrap();
     let item = |sup, preferred| SupplierItem {
         supplier: sup,
         variant: tea,
@@ -770,20 +777,35 @@ async fn suppliers_and_items(db: &Db) {
         last_unit: None,
         preferred,
     };
-    let (w, i) = stock::put_supplier_item(&mut tx, &item(s.supplier.id, true), t(34))
-        .await
-        .unwrap();
+    let (w, i) = stock::put_supplier_item(
+        &mut tx,
+        &item(s.supplier.id, true),
+        &stock::Actor::default(),
+        t(34),
+    )
+    .await
+    .unwrap();
     assert_eq!(
         (w, i.supplier_code.as_deref()),
         (Written::Created, Some("T-01"))
     );
-    let (w, _) = stock::put_supplier_item(&mut tx, &item(other.id, true), t(35))
-        .await
-        .unwrap();
+    let (w, _) = stock::put_supplier_item(
+        &mut tx,
+        &item(other.id, true),
+        &stock::Actor::default(),
+        t(35),
+    )
+    .await
+    .unwrap();
     assert_eq!(w, Written::Created);
-    let (w, _) = stock::put_supplier_item(&mut tx, &item(other.id, true), t(36))
-        .await
-        .unwrap();
+    let (w, _) = stock::put_supplier_item(
+        &mut tx,
+        &item(other.id, true),
+        &stock::Actor::default(),
+        t(36),
+    )
+    .await
+    .unwrap();
     assert_eq!(w, Written::Unchanged);
     tx.commit().await.unwrap();
     let items = stock::list_supplier_items(db, None, Some(tea))
@@ -802,20 +824,21 @@ async fn suppliers_and_items(db: &Db) {
             supplier: SupplierId::generate(),
             ..item(other.id, false)
         },
+        &stock::Actor::default(),
         t(37),
     )
     .await
     .unwrap_err();
     assert_eq!(err.code(), Some("not_found"));
-    let (w, archived) = stock::archive_supplier(&mut tx, other.id, t(38))
+    let (w, archived) = stock::archive_supplier(&mut tx, other.id, &stock::Actor::default(), t(38))
         .await
         .unwrap();
     assert_eq!((w, archived.active), (Written::Updated, false));
-    let (w, _) = stock::archive_supplier(&mut tx, other.id, t(39))
+    let (w, _) = stock::archive_supplier(&mut tx, other.id, &stock::Actor::default(), t(39))
         .await
         .unwrap();
     assert_eq!(w, Written::Unchanged);
-    let err = stock::put_supplier(&mut tx, &other, t(40))
+    let err = stock::put_supplier(&mut tx, &other, &stock::Actor::default(), t(40))
         .await
         .unwrap_err();
     assert_eq!(err.code(), Some("archived"));
@@ -857,12 +880,14 @@ async fn stock_reasons_seed_put_archive(db: &Db) {
         archived_at: None,
     };
     let mut tx = db.begin().await.unwrap();
-    let (w, stored) = stock::put_stock_reason(&mut tx, &r, t(1)).await.unwrap();
+    let (w, stored) = stock::put_stock_reason(&mut tx, &r, &stock::Actor::default(), t(1))
+        .await
+        .unwrap();
     assert_eq!(
         (w, stored.name.as_str()),
         (Written::Created, "Bonus supplier")
     );
-    let (w, _) = stock::put_stock_reason(&mut tx, &stored, t(2))
+    let (w, _) = stock::put_stock_reason(&mut tx, &stored, &stock::Actor::default(), t(2))
         .await
         .unwrap();
     assert_eq!(w, Written::Unchanged);
@@ -870,7 +895,7 @@ async fn stock_reasons_seed_put_archive(db: &Db) {
         direction: ReasonDirection::Out,
         ..stored.clone()
     };
-    let (w, _) = stock::put_stock_reason(&mut tx, &flipped, t(3))
+    let (w, _) = stock::put_stock_reason(&mut tx, &flipped, &stock::Actor::default(), t(3))
         .await
         .unwrap();
     assert_eq!(w, Written::Updated, "an unused reason may change direction");
@@ -880,32 +905,38 @@ async fn stock_reasons_seed_put_archive(db: &Db) {
             name: " ".into(),
             ..stored.clone()
         },
+        &stock::Actor::default(),
         t(4),
     )
     .await
     .unwrap_err();
     assert_eq!(err.code(), Some("invalid_field"));
-    let (w, gone) = stock::archive_stock_reason(&mut tx, r.id, t(5))
+    let (w, gone) = stock::archive_stock_reason(&mut tx, r.id, &stock::Actor::default(), t(5))
         .await
         .unwrap();
     assert!(gone.archived_at.is_some() && !gone.for_rules().active);
     assert_eq!(w, Written::Updated);
-    let (w, _) = stock::archive_stock_reason(&mut tx, r.id, t(6))
+    let (w, _) = stock::archive_stock_reason(&mut tx, r.id, &stock::Actor::default(), t(6))
         .await
         .unwrap();
     assert_eq!(w, Written::Unchanged);
     assert_eq!(
-        stock::put_stock_reason(&mut tx, &stored, t(7))
+        stock::put_stock_reason(&mut tx, &stored, &stock::Actor::default(), t(7))
             .await
             .unwrap_err()
             .code(),
         Some("archived")
     );
     assert_eq!(
-        stock::archive_stock_reason(&mut tx, StockReasonId::generate(), t(8))
-            .await
-            .unwrap_err()
-            .code(),
+        stock::archive_stock_reason(
+            &mut tx,
+            StockReasonId::generate(),
+            &stock::Actor::default(),
+            t(8)
+        )
+        .await
+        .unwrap_err()
+        .code(),
         Some("not_found")
     );
     tx.commit().await.unwrap();
@@ -919,7 +950,7 @@ async fn inventory_settings_and_product_expiry(db: &Db) {
     assert_eq!(d, InventorySettings::default());
     let mut tx = db.begin().await.unwrap();
     assert_eq!(
-        stock::put_inventory_settings(&mut tx, &d, t(1))
+        stock::put_inventory_settings(&mut tx, &d, &stock::Actor::default(), t(1))
             .await
             .unwrap(),
         Written::Unchanged
@@ -930,7 +961,7 @@ async fn inventory_settings_and_product_expiry(db: &Db) {
         ..d
     };
     assert_eq!(
-        stock::put_inventory_settings(&mut tx, &pkp, t(2))
+        stock::put_inventory_settings(&mut tx, &pkp, &stock::Actor::default(), t(2))
             .await
             .unwrap(),
         Written::Updated
@@ -940,7 +971,7 @@ async fn inventory_settings_and_product_expiry(db: &Db) {
         ..d
     };
     assert_eq!(
-        stock::put_inventory_settings(&mut tx, &bad, t(3))
+        stock::put_inventory_settings(&mut tx, &bad, &stock::Actor::default(), t(3))
             .await
             .unwrap_err()
             .code(),
@@ -958,7 +989,7 @@ async fn inventory_settings_and_product_expiry(db: &Db) {
         }
     );
     assert_eq!(
-        stock::set_product_expiry(&mut tx, s.milk.draft.id, e, t(4))
+        stock::set_product_expiry(&mut tx, s.milk.draft.id, e, &stock::Actor::default(), t(4))
             .await
             .unwrap(),
         Written::Unchanged
@@ -971,6 +1002,7 @@ async fn inventory_settings_and_product_expiry(db: &Db) {
                 track_expiry: true,
                 expiry_warn_days: Some(366)
             },
+            &stock::Actor::default(),
             t(5)
         )
         .await
@@ -979,10 +1011,16 @@ async fn inventory_settings_and_product_expiry(db: &Db) {
         Some("invalid_field")
     );
     assert_eq!(
-        stock::set_product_expiry(&mut tx, sultan_core::ids::ProductId::generate(), e, t(6))
-            .await
-            .unwrap_err()
-            .code(),
+        stock::set_product_expiry(
+            &mut tx,
+            sultan_core::ids::ProductId::generate(),
+            e,
+            &stock::Actor::default(),
+            t(6)
+        )
+        .await
+        .unwrap_err()
+        .code(),
         Some("not_found")
     );
     tx.commit().await.unwrap();

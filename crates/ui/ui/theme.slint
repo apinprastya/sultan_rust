@@ -296,6 +296,15 @@ export global Strings {
         if (code == "already_reversed") {
             return @tr("This cash movement was reversed already.");
         }
+        if (code == "receipt_in_use") {
+            return @tr("This receipt's stock or payable was used since, so it cannot be voided. Post a supplier return instead.");
+        }
+        if (code == "opname_open") {
+            return @tr("Another opname still counts this item at this location: {}. Post or cancel it first.", arg);
+        }
+        if (code == "other_node") {
+            return @tr("The other branch is on another server.");
+        }
         if (code == "photo_limit") {
             return @tr("A cash movement has at most 3 nota photos.");
         }

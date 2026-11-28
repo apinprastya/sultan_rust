@@ -10,8 +10,15 @@
 //! can:
 //!
 //! - **One transaction per write.** Every function that writes takes a [`Tx`] supplied by the
-//!   caller, which also appends the audit row and the outbox event (spec 2.8 §15) in the same
-//!   transaction (the N3 server, like the routes of 2.1–2.3).
+//!   caller and appends its audit row and its outbox event (spec 2.8 §12, §15) in that
+//!   transaction, like `cash` and `sales`: HQ data and reorder rules record the stored record
+//!   (`supplier.changed`, `supplier_item.changed`, `stock_reason.changed`,
+//!   `inventory_settings.put`, `reorder_rule.changed`) under the caller's [`Actor`]; branch
+//!   documents record the document with its lines and the ledger rows it wrote
+//!   (`purchase_order.changed`, `goods_receipt.saved` / `.posted` / `.voided`,
+//!   `supplier_return.saved` / `.posted`, `transfer.changed`, `internal_transfer.posted`,
+//!   `adjustment.posted`, `opening_stock.posted`, `opname.changed`) under the document's user
+//!   at its branch. A replay that changes nothing records nothing.
 //! - **The ledger** ([`post_moves`], [`Move`]): a posting appends its `stock_movement` rows and
 //!   updates `stock_balance` (on hand per location), `stock_cost` (the moving average per branch,
 //!   [`sultan_core::stock::CostState`]) and `stock_lot` in the same transaction, so the balance
@@ -34,6 +41,7 @@
 //! Readings of the spec made while building N2 are listed in spec 2.8 §20.
 
 mod adjust;
+mod json;
 mod ledger;
 mod numbers;
 mod opname;
@@ -53,7 +61,7 @@ use crate::conn::{Conn, Tx};
 use crate::error::{DbError, Result};
 use crate::sql::{self, Row, args};
 
-pub use crate::catalog::Written;
+pub use crate::catalog::{Actor, Written};
 pub use adjust::{
     Adjustment, AdjustmentLine, NewAdjustment, NewAdjustmentLine, NewOpeningLine, NewOpeningStock,
     OpeningLine, OpeningStock, get_adjustment, get_opening_stock, list_adjustments,
@@ -61,8 +69,8 @@ pub use adjust::{
 };
 pub use ledger::{
     CardRow, DocRef, LotRecord, LotRule, Move, MovementRecord, NO_LOCATION, OnHandFilter,
-    OnHandRow, Posted, Valuation, branch_on_hand, cost_state, document_movements, list_lots,
-    list_on_hand, location_on_hand, post_moves, stock_card,
+    OnHandRow, Posted, Valuation, branch_on_hand, cost_state, document_movements,
+    list_expiring_lots, list_lots, list_on_hand, location_on_hand, post_moves, stock_card,
 };
 pub use opname::{
     CountInput, NewOpname, Opname, OpnameLineView, OpnameScope, add_counts, cancel_opname,

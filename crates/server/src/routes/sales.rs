@@ -509,6 +509,7 @@ pub async fn put(
         return Ok((StatusCode::OK, Json(SaleDto::from(&stored))));
     }
     state.events.publish(posted_event(&stored));
+    super::stock::publish_doc_stock(&state, *stored.header.id.as_uuid()).await;
     Ok((StatusCode::CREATED, Json(SaleDto::from(&stored))))
 }
 
@@ -1229,6 +1230,7 @@ pub async fn void(
         stored.header.branch,
         json!({ "sale_id": stored.header.id.to_string(), "number": stored.header.number }),
     ));
+    super::stock::publish_doc_stock(state, *stored.header.id.as_uuid()).await;
     Ok(Json(SaleDto::from(&stored)))
 }
 

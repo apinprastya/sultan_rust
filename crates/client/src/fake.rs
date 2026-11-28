@@ -20,6 +20,12 @@
 //! [`Service::quote`] prices carts with the fake's price lists (phase R3, `backoffice::pricing`),
 //! and lookups answer the store price; [`FakeService::seed_pricing_demo`] seeds priced products.
 //!
+//! Inventory (spec 2.8, phase N3) lives in `stock`: suppliers, reasons, settings, the ledger with
+//! the moving average and FEFO lots, the purchasing and stock documents, on hand, cards, lots
+//! and the till's on hand ([`crate::Service::till_stock`]). [`FakeService::add_stock_clerk`]
+//! adds a Stock clerk (`gudang` / `gudang-pass-1`); locations are [`LOC_MAIN`] and [`LOC_BACK`]
+//! at [`BRANCH_ID`] and [`LOC_OTHER`] at the other branch.
+//!
 //! The fake also implements [`crate::BackOffice`] with an in-memory catalog ([`backoffice`]):
 //! password users `owner` / `owner-pass-1` (all permissions) and `budi` / `budi-pass-1`
 //! (read-only in the catalog), the core catalog rules and the server's error shapes.
@@ -28,6 +34,7 @@ mod backoffice;
 mod cash;
 mod customers;
 mod sales;
+mod stock;
 
 use std::collections::HashMap;
 use std::sync::{Mutex, MutexGuard, PoisonError};
@@ -46,6 +53,7 @@ pub use backoffice::{PriceCustomer, PricingDemo};
 pub use cash::SEED_REASONS;
 pub use customers::{ERASED_NAME, SEED_BUDI, SEED_GOLD, SEED_GROUP, SEED_SILVER, SEED_SITI};
 pub use sales::{SalesDemo, TENDER_BALANCE, TENDER_CARD, TENDER_CASH, TENDER_QRIS};
+pub use stock::{LOC_BACK, LOC_MAIN, LOC_OTHER, STOCK_CLERK};
 
 /// Failures before a lockout (spec 2.1 §4).
 pub const MAX_FAILURES: u32 = 5;
@@ -122,6 +130,7 @@ struct State {
     customers: customers::Customers,
     sales: sales::Sales,
     cash: cash::Cash,
+    stock: stock::Stock,
 }
 
 /// The fake service; see the module docs.
@@ -1009,6 +1018,10 @@ impl Service for FakeService {
         photo_id: &str,
     ) -> crate::BoxFuture<Vec<u8>> {
         self.cash_photo_call(token, movement_id, photo_id)
+    }
+
+    fn till_stock(&self, token: &str, variant_id: &str) -> crate::BoxFuture<crate::TillStock> {
+        self.till_stock_call(token, variant_id)
     }
 }
 

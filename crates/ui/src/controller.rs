@@ -175,8 +175,11 @@ pub fn value_text(action: &str, value: Option<i64>) -> String {
     }
 }
 
-/// API codes shown with a message of the same code (spec 2.6: the sale's rules; spec 2.7: cash).
-const PLAIN_CODES: [&str; 16] = [
+/// API codes shown with a message of the same code (spec 2.6: the sale's rules; spec 2.7: cash;
+/// spec 2.8: inventory).
+const PLAIN_CODES: [&str; 18] = [
+    "receipt_in_use",
+    "other_node",
     "nothing_to_close",
     "already_reversed",
     "photo_limit",
@@ -240,6 +243,16 @@ pub fn notice_for(error: &ClientError) -> Notice {
             Tone::Bad,
         ),
         "sessions_open" => Notice::new("sessions_open", problem.sessions().join(", "), Tone::Bad),
+        "opname_open" => Notice::new(
+            "opname_open",
+            problem
+                .extra
+                .get("opname")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default()
+                .to_owned(),
+            Tone::Bad,
+        ),
         code if PLAIN_CODES.contains(&code) => Notice::bad(
             PLAIN_CODES
                 .iter()
@@ -2054,6 +2067,10 @@ mod tests {
             (api(p(409, "nothing_to_close")), "nothing_to_close", ""),
             (api(p(409, "already_reversed")), "already_reversed", ""),
             (api(p(409, "photo_limit")), "photo_limit", ""),
+            (api(p(409, "receipt_in_use")), "receipt_in_use", ""),
+            (api(p(409, "other_node")), "other_node", ""),
+            (api(p(409, "opname_open").with("opname", "JKT01-OP-261127-01")), "opname_open",
+                "JKT01-OP-261127-01"),
             (api(p(500, "internal")), "error", "internal"),
         ];
         for (error, code, arg) in cases {

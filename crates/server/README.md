@@ -19,6 +19,17 @@ and `docs/spec/2.1-organization-access.md`.
   data directory (`AppState::with_data_dir`; `<dir>/attachments/<2 hex>/<sha256>.jpg`, `0600`).
   A state without a data directory answers photo calls with `500 internal`. Back the
   `attachments/` directory up with the database.
+- Inventory (spec 2.8, phase N3): `routes/stock.rs` (what the inventory routes share: the retry
+  loop, the permission checks of §12, `CostView` which leaves cost and value fields out without
+  `report.profit`, `negative_after`, the `stock.changed` events; and the reads `/stock/on-hand`
+  with its filters, `/stock/card/{variant_id}`, `/stock/lots`, `/settings/inventory`,
+  `/payables`, the till's `/registers/me/stock/{variant_id}`), `routes/suppliers.rs`
+  (`/suppliers` with their items, `/stock-reasons`: HQ data), `routes/purchasing.rs`
+  (`/purchase-orders`, `/goods-receipts` with the void's manager override, `/supplier-returns`,
+  `/reorder-rules`, `/reorder/suggestions`, `/reorder/low-stock`) and `routes/stock_docs.rs`
+  (`/transfers` with `transfer.changed` to both branches, `/internal-transfers`, `/adjustments`,
+  `/opening-stock`, `/opnames`). The product `PUT` carries `track_expiry` and
+  `expiry_warn_days`. Sales, post-voids and returns publish `stock.changed` too.
 - `src/routes/`: one module per resource (spec 2.1 §8); pricing (spec 2.3) is
   `routes/pricing.rs` (price lists, entries, tax rates, settings, `price.changed`) and
   `routes/pricing_quote.rs` (`POST /pricing/quote` and the lookup's `unit_price`).

@@ -14,6 +14,7 @@ use sultan_core::stock::{
 };
 use sultan_core::time::Timestamp;
 
+use super::json::{adjustment_json, doc_actor, opening_json, record_doc};
 use super::ledger::{DocRef, LotRule, Move, Valuation, post_moves, total_value};
 use super::numbers::allocate;
 use super::{
@@ -217,6 +218,7 @@ fn abs(q: Qty) -> StockResult<Qty> {
 /// # Errors
 /// [`StockDbError::Rule`] (`qty`, `reason`, `note`, `unit_cost`); [`StockDbError::NotFound`]
 /// (`reason`, `location`, `variant`).
+#[allow(clippy::too_many_lines)] // one posting: checks, the number, then each line
 pub async fn post_adjustment(
     tx: &mut Tx,
     a: &NewAdjustment,
@@ -310,12 +312,19 @@ pub async fn post_adjustment(
         )
         .await?;
     }
-    Ok((
-        Written::Created,
-        get_adjustment(Conn::Tx(&mut *tx), a.id)
-            .await?
-            .ok_or(DbError::NotFound("adjustment"))?,
-    ))
+    let stored = get_adjustment(Conn::Tx(&mut *tx), a.id)
+        .await?
+        .ok_or(DbError::NotFound("adjustment"))?;
+    record_doc(
+        tx,
+        &doc_actor(a.user, a.branch),
+        at,
+        ("adjustment.post", "adjustment.posted"),
+        *a.id.as_uuid(),
+        adjustment_json(&stored),
+    )
+    .await?;
+    Ok((Written::Created, stored))
 }
 
 /// An opening stock line to post.
@@ -573,10 +582,17 @@ pub async fn post_opening_stock(
         )
         .await?;
     }
-    Ok((
-        Written::Created,
-        get_opening_stock(Conn::Tx(&mut *tx), o.id)
-            .await?
-            .ok_or(DbError::NotFound("opening stock"))?,
-    ))
+    let stored = get_opening_stock(Conn::Tx(&mut *tx), o.id)
+        .await?
+        .ok_or(DbError::NotFound("opening stock"))?;
+    record_doc(
+        tx,
+        &doc_actor(o.user, o.branch),
+        at,
+        ("opening_stock.post", "opening_stock.posted"),
+        *o.id.as_uuid(),
+        opening_json(&stored),
+    )
+    .await?;
+    Ok((Written::Created, stored))
 }

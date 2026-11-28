@@ -336,6 +336,12 @@ pub struct Product {
     /// Answer only: last changed (unix ms).
     #[serde(default, skip_serializing)]
     pub updated_at: i64,
+    /// Receipts and opening stock record batch and expiry lots (spec 2.8 §9).
+    #[serde(default)]
+    pub track_expiry: bool,
+    /// Days before expiry a lot is listed as expiring; `None` = the company setting.
+    #[serde(default)]
+    pub expiry_warn_days: Option<u32>,
 }
 
 fn parse<T: FromStr>(value: &str, field: &str) -> Result<T, Problem> {

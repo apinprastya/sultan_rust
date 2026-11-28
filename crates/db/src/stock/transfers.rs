@@ -22,6 +22,7 @@ use sultan_core::stock::{
 };
 use sultan_core::time::Timestamp;
 
+use super::json::{doc_actor, internal_transfer_json, record_doc, transfer_json};
 use super::ledger::{DocRef, LotRule, Move, Posted, Valuation, post_moves, total_value};
 use super::numbers::allocate;
 use super::{
@@ -57,7 +58,9 @@ impl TransferStatus {
         }
     }
 
-    fn from_key(key: &str) -> Option<Self> {
+    /// The value of a stored name.
+    #[must_use]
+    pub fn from_key(key: &str) -> Option<Self> {
         [
             Self::Requested,
             Self::Shipped,
@@ -404,10 +407,32 @@ pub async fn create_transfer(
         )
         .await?;
     }
+    let created = load(tx, t.id).await?;
+    recorded(tx, t.user, t.to_branch, "transfer.create", &created, at).await?;
     if let Some(from) = t.ship_from {
         ship_transfer(tx, t.id, Some(from), &[], t.user, at).await?;
     }
     Ok((Written::Created, load(tx, t.id).await?))
+}
+
+/// Records `action` on the transfer (`transfer.changed`) by `user` at `branch`.
+async fn recorded(
+    tx: &mut Tx,
+    user: UserId,
+    branch: BranchId,
+    action: &str,
+    t: &Transfer,
+    at: Timestamp,
+) -> Result<()> {
+    record_doc(
+        tx,
+        &doc_actor(user, branch),
+        at,
+        (action, "transfer.changed"),
+        *t.id.as_uuid(),
+        transfer_json(t),
+    )
+    .await
 }
 
 async fn lot_key(tx: &mut Tx, lot: LotId) -> Result<(String, LocalDay)> {
@@ -512,7 +537,9 @@ pub async fn ship_transfer(
         args![location, at, user, at, id],
     )
     .await?;
-    Ok((Written::Updated, load(tx, id).await?))
+    let shipped = load(tx, id).await?;
+    recorded(tx, user, shipped.from_branch, "transfer.ship", &shipped, at).await?;
+    Ok((Written::Updated, shipped))
 }
 
 /// Receives a shipped transfer in one step (`POST /transfers/{id}/receive`, `stock.transfer` at
@@ -665,7 +692,17 @@ pub async fn receive_transfer(
         args![location, at, user, at, id],
     )
     .await?;
-    Ok((Written::Updated, load(tx, id).await?))
+    let received = load(tx, id).await?;
+    recorded(
+        tx,
+        user,
+        received.to_branch,
+        "transfer.receive",
+        &received,
+        at,
+    )
+    .await?;
+    Ok((Written::Updated, received))
 }
 
 /// Cancels a requested transfer (`POST /transfers/{id}/cancel`). A shipped one cannot be
@@ -692,7 +729,17 @@ pub async fn cancel_transfer(
         args![at, user, at, id],
     )
     .await?;
-    Ok((Written::Updated, load(tx, id).await?))
+    let cancelled = load(tx, id).await?;
+    recorded(
+        tx,
+        user,
+        cancelled.to_branch,
+        "transfer.cancel",
+        &cancelled,
+        at,
+    )
+    .await?;
+    Ok((Written::Updated, cancelled))
 }
 
 /// An internal transfer to post (`PUT /internal-transfers/{id}`, posts at once).
@@ -950,12 +997,19 @@ pub async fn post_internal_transfer(
         )
         .await?;
     }
-    Ok((
-        Written::Created,
-        get_internal_transfer(Conn::Tx(&mut *tx), t.id)
-            .await?
-            .ok_or(DbError::NotFound("internal transfer"))?,
-    ))
+    let stored = get_internal_transfer(Conn::Tx(&mut *tx), t.id)
+        .await?
+        .ok_or(DbError::NotFound("internal transfer"))?;
+    record_doc(
+        tx,
+        &doc_actor(t.user, t.branch),
+        at,
+        ("internal_transfer.post", "internal_transfer.posted"),
+        *t.id.as_uuid(),
+        internal_transfer_json(&stored),
+    )
+    .await?;
+    Ok((Written::Created, stored))
 }
 
 #[cfg(test)]

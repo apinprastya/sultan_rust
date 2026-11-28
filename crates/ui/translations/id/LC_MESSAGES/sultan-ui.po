@@ -2652,6 +2652,15 @@ msgstr "Mutasi kas ini sudah dibatalkan."
 msgid "A cash movement has at most 3 nota photos."
 msgstr "Satu mutasi kas paling banyak 3 foto nota."
 
+msgid "This receipt's stock or payable was used since, so it cannot be voided. Post a supplier return instead."
+msgstr "Stok atau utang dari penerimaan ini sudah terpakai, jadi tidak bisa dibatalkan. Buat retur ke pemasok."
+
+msgid "Another opname still counts this item at this location: {}. Post or cancel it first."
+msgstr "Stok opname lain masih menghitung barang ini di lokasi ini: {}. Posting atau batalkan dulu."
+
+msgid "The other branch is on another server."
+msgstr "Cabang tujuan ada di server lain."
+
 msgid "More than what can still be returned."
 msgstr "Melebihi jumlah yang masih bisa diretur."
 

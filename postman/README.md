@@ -3,11 +3,11 @@
 `sultan-api.postman_collection.json` tests the main flows of spec 2.1 (`docs/spec/2.1-organization-access.md`),
 of the catalog, spec 2.2 (`docs/spec/2.2-catalog.md`), of pricing, spec 2.3
 (`docs/spec/2.3-pricing.md`), of customers, spec 2.5 (`docs/spec/2.5-customers.md`), of sales, spec 2.6
-(`docs/spec/2.6-sales.md`), and of cash management, spec 2.7 (`docs/spec/2.7-cash-management.md`),
-against a running node. Requests and bodies follow the OpenAPI document served at
+(`docs/spec/2.6-sales.md`), of cash management, spec 2.7 (`docs/spec/2.7-cash-management.md`), and
+of inventory, spec 2.8 (`docs/spec/2.8-inventory.md`), against a running node. Requests and bodies follow the OpenAPI document served at
 `GET /api/v1/openapi.json` (import that URL into Postman to browse every endpoint).
 
-Flow (194 requests, each with test scripts). Spec 2.1 (requests 01–35):
+Flow (242 requests, each with test scripts). Spec 2.1 (requests 01–35):
 password login → OpenAPI document → create branch (`PUT`, client UUIDv7, time zone
 `Asia/Makassar`) → replay the same `PUT` (idempotent) → a time zone that is not IANA (`WIB`) is
 rejected (`invalid_field`) → create register → issue pairing code → pair (the answer names the branch: `branch_code`,
@@ -120,6 +120,33 @@ every permission, so no override is asked for; the overrides, a cashier's limits
 session blocking the Z and the supplementary Z are covered by the server's tests
 (`crates/server/tests/api/cash.rs`, `cash_z.rs`).
 
+**Inventory (folder "Inventory (spec 2.8)", requests 177–223, phase N3):** the owner's branch
+(`GET /auth/me`) → two more locations there and one at the branch of request 03 → a stock product
+(`track_expiry` off) → the inventory settings (PPN 11%) → create a supplier (code cleaned to upper
+case) → replay the `PUT` (`200`) → the suppliers → the supplier's item, preferred (`last_price`
+`null`: never received) → the seeded stock reasons → a purchase order draft → order it
+(`Idempotency-Key`, `…-PO-…`) → a goods receipt draft against the PO line → post it
+(`Idempotency-Key`: `…-GR-…`, total and landed cost 10 000, due on the invoice date + 30 days, a
+`receipt` movement) → the retry replays it (`Idempotency-Replayed`) → the PO closed by itself → a
+second receipt with the same invoice number is `409 conflict` when posted → a receipt of 5 @ 1 200,
+posted and voided before its stock was used (`receipt_void`; the owner holds `stock.adjust`) → a
+supplier return of 2 from the first receipt's line (`…-RS-…`, credit 2 000) → the supplier item's
+last price (1 200, from the last posted receipt) → a transfer request to the branch of request 03
+→ ship it (`Idempotency-Key`) → a shipped transfer cannot be cancelled (`409 conflict`) → receive
+2 of 3 (a `transit_loss` of 1 at the sender) → an internal transfer (`…-IT-…`, two movements) →
+an adjustment of 1 damaged (`…-ADJ-…`, value −1 000 at the average) → opening stock 5 @ 900
+(`…-OS-…`) → start a cycle count (`…-OP-…`, snapshot 8) → a second open count of the item is
+`409 opname_open` → count 7 (variance −1) → post it (`Idempotency-Key`, a `count` movement) → a
+reorder rule min 10 / max 30 → the supplier's suggested PO (22 at 1 200) → low stock → the on
+hand of the item (8 over two locations, with the rule and the unit cost) → the `low` filter with
+a text search → the stock card (every movement kind of the flow, balance 7) → lots → the
+supplier's open payables (one: the voided receipt's payable is gone) → the till's on hand with the
+device token (2, no cost) → create a stock reason (HQ, `stock.adjust`) → archive it. The owner
+holds every permission; the Stock clerk's limits, the cost fields left out without
+`report.profit`, the receipt void's override at a register, `receipt_in_use`, `other_node` and
+the on-hand filters by category, brand and expiry are covered by the server's tests
+(`crates/server/tests/api/stock.rs`).
+
 The uploads (the product image and the nota photo) read `postman/fixtures/product-800x400.png`,
 so pass `--working-dir postman`.
 
@@ -169,6 +196,10 @@ again the same way (187/187 requests passed).
 K6 (2026-11-25) added the nota photo requests 159a–h and ran the whole collection twice in a row
 the same way (194/194 requests passed both times; the photo is stored once, `0600`, under
 `attachments/` next to `sultan.db`).
+
+N3 (2026-11-27) added the folder "Inventory (spec 2.8)" (requests 177–223) and ran the whole
+collection twice in a row against one `sultan serve` on a fresh SQLite database (242/242 requests
+passed both times).
 
 The run needs no Postman login; it only prints a note that results are not published to the cloud.
 

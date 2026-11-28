@@ -68,6 +68,10 @@
 //! | 409 | `nothing_to_close` | no closed session of the day is left without a Z (spec 2.7 §6) |
 //! | 409 | `photo_limit` | a fourth nota photo of a cash movement (spec 2.7 §2a, `PUT /cash-movements/{id}/photos/{photo_id}`); `max` |
 //! | 409 | `conflict` / `archived` | also: a cash movement ID posted again with another body; an archived cash reason cannot be edited (spec 2.7 §11) |
+//! | 409 | `receipt_in_use` | voiding a goods receipt whose cost a later movement used, or whose payable is paid (spec 2.8 §6): post a supplier return instead |
+//! | 409 | `opname_open` | another open opname counts the variant at the location (spec 2.8 §11); `opname` names it |
+//! | 409 | `other_node` | the other branch of a transfer is on another server (spec 2.8 §8, until sync) |
+//! | 409 | `conflict` / `archived` | also: a duplicate supplier code or invoice number of a supplier, an action the document's state does not allow (editing a posted receipt, cancelling a shipped transfer); an archived supplier or stock reason (spec 2.8 §16) |
 //! | 423 | `locked_out` | too many failures; `locked_until` (unix ms) is included (§4) |
 //! | 500 | `internal` | database or other unexpected error (details are not exposed) |
 
@@ -80,12 +84,14 @@ use sultan_core::cash::CashError;
 use sultan_core::cashier_session::{OpenConflict, SessionError};
 use sultan_core::catalog::CatalogError;
 use sultan_core::customer::{CustomerCode, CustomerError, Phone};
+use sultan_core::stock::StockError;
 use sultan_db::DbError;
 use sultan_db::cash::CashDbError;
 use sultan_db::catalog::{CatalogDbError, Duplicate};
 use sultan_db::customers::CustomerDbError;
 use sultan_db::pricing::PricingDbError;
 use sultan_db::sales::SaleDbError;
+use sultan_db::stock::StockDbError;
 
 /// The media type of every error body.
 pub const PROBLEM_JSON: &str = "application/problem+json";
@@ -676,6 +682,41 @@ impl From<CashDbError> for ApiError {
     }
 }
 
+impl From<StockError> for ApiError {
+    fn from(error: StockError) -> Self {
+        let mut api = Self::new(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            error.code(),
+            error.to_string(),
+        );
+        if let Some(field) = error.field() {
+            api = api.with("field", field);
+        }
+        api
+    }
+}
+
+impl From<StockDbError> for ApiError {
+    fn from(error: StockDbError) -> Self {
+        let detail = error.to_string();
+        match error {
+            StockDbError::NotFound(what) => Self::not_found(what),
+            StockDbError::Invalid { field, message } => Self::invalid_field(field, message),
+            StockDbError::Rule(rule) => rule.into(),
+            StockDbError::State { .. } | StockDbError::DuplicateInvoice(_) => {
+                Self::new(StatusCode::CONFLICT, "conflict", detail)
+            }
+            StockDbError::Archived(_) => Self::new(StatusCode::CONFLICT, "archived", detail),
+            StockDbError::ReceiptInUse => Self::new(StatusCode::CONFLICT, "receipt_in_use", detail),
+            StockDbError::OpnameOpen(number) => {
+                Self::new(StatusCode::CONFLICT, "opname_open", detail).with("opname", number)
+            }
+            StockDbError::OtherNode => Self::new(StatusCode::CONFLICT, "other_node", detail),
+            StockDbError::Db(e) => e.into(),
+        }
+    }
+}
+
 impl From<JsonRejection> for ApiError {
     fn from(rejection: JsonRejection) -> Self {
         Self::new(rejection.status(), "invalid_body", rejection.body_text())
@@ -699,6 +740,14 @@ mod tests {
     use sultan_core::access::Permission;
     use sultan_core::catalog::CodeKind;
     use sultan_core::time::Timestamp;
+
+    fn render_field(error: &ApiError) -> Option<String> {
+        error
+            .extensions
+            .get("field")
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+    }
 
     async fn render(error: ApiError) -> (StatusCode, Option<String>, Value) {
         let response = error.into_response();
@@ -771,6 +820,62 @@ mod tests {
             assert_eq!(error.status().as_u16(), status, "{code}");
             assert_eq!(error.code(), code);
         }
+    }
+
+    #[test]
+    fn stock_errors_map_to_status_and_code() {
+        let stock: Vec<(ApiError, u16, &str)> = vec![
+            (StockDbError::NotFound("supplier").into(), 404, "not_found"),
+            (
+                StockDbError::Invalid {
+                    field: "qty",
+                    message: "x".into(),
+                }
+                .into(),
+                422,
+                "invalid_field",
+            ),
+            (
+                StockDbError::Rule(StockError::Overflow).into(),
+                422,
+                "amount_overflow",
+            ),
+            (
+                StockDbError::State {
+                    doc: "transfer",
+                    status: "shipped".into(),
+                }
+                .into(),
+                409,
+                "conflict",
+            ),
+            (
+                StockDbError::DuplicateInvoice("INV-1".into()).into(),
+                409,
+                "conflict",
+            ),
+            (StockDbError::Archived("supplier").into(), 409, "archived"),
+            (StockDbError::ReceiptInUse.into(), 409, "receipt_in_use"),
+            (
+                StockDbError::OpnameOpen("JKT01-OP-261127-01".into()).into(),
+                409,
+                "opname_open",
+            ),
+            (StockDbError::OtherNode.into(), 409, "other_node"),
+            (
+                StockDbError::Db(DbError::NotFound("x")).into(),
+                404,
+                "not_found",
+            ),
+        ];
+        for (api, status, code) in stock {
+            assert_eq!((api.status().as_u16(), api.code()), (status, code));
+        }
+        let field = ApiError::from(StockError::InvalidField {
+            field: "unit_cost",
+            reason: "needed",
+        });
+        assert_eq!(render_field(&field), Some("unit_cost".to_owned()));
     }
 
     #[test]

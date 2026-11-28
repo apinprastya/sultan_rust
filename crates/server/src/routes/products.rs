@@ -45,8 +45,10 @@ use sultan_core::catalog::{
 };
 use sultan_core::ids::{BranchId, ProductId, VariantId};
 use sultan_core::time::Timestamp;
+use sultan_db::DbError;
 use sultan_db::catalog::{
-    self, MAX_LIST_LIMIT, ProductDoc, ProductFilter, ProductRecord, ProductSummary, Written,
+    self, CatalogDbError, MAX_LIST_LIMIT, ProductDoc, ProductFilter, ProductRecord, ProductSummary,
+    Written,
 };
 use utoipa::{IntoParams, ToSchema};
 
@@ -58,6 +60,7 @@ use super::{parse_id, parse_opt_id, parse_put_id};
 use crate::error::ApiError;
 use crate::extract::{ApiJson, ApiQuery, CatalogReader, RequireHq, UserSession};
 use crate::state::AppState;
+use sultan_db::stock::ProductExpiry;
 
 const fn yes() -> bool {
     true
@@ -233,6 +236,14 @@ pub struct ProductBody {
     /// `true` archives the product (same as `POST /products/{id}/archive`).
     #[serde(default)]
     pub archived: bool,
+    /// Receipts and opening stock record batch and expiry lots; other movements take them
+    /// first-expiry-first-out (spec 2.8 §9). Default false.
+    #[serde(default)]
+    pub track_expiry: bool,
+    /// Days before expiry a lot is listed as expiring, 0–365; `null` = the company setting
+    /// (spec 2.8 §9).
+    #[serde(default)]
+    pub expiry_warn_days: Option<u32>,
 }
 
 /// A stored product document.
@@ -297,6 +308,10 @@ pub struct ProductDto {
     pub created_at: i64,
     /// Last changed (unix ms).
     pub updated_at: i64,
+    /// Tracks expiry lots (spec 2.8 §9).
+    pub track_expiry: bool,
+    /// The expiring-list days; `null` = the company setting (spec 2.8 §9).
+    pub expiry_warn_days: Option<u32>,
 }
 
 fn barcode_dto(b: &Barcode) -> BarcodeDto {
@@ -393,6 +408,8 @@ impl From<&ProductRecord> for ProductDto {
             used: r.used,
             created_at: r.created_at.unix_millis(),
             updated_at: r.updated_at.unix_millis(),
+            track_expiry: false,
+            expiry_warn_days: None,
         }
     }
 }
@@ -401,6 +418,10 @@ impl From<&ProductRecord> for ProductDto {
 /// display name, SKU and unit name of each component, for the back office).
 async fn product_answer(state: &AppState, record: &ProductRecord) -> Result<ProductDto, ApiError> {
     let mut dto = ProductDto::from(record);
+    if let Some(e) = sultan_db::stock::get_product_expiry(&state.db, record.doc.draft.id).await? {
+        dto.track_expiry = e.track_expiry;
+        dto.expiry_warn_days = e.expiry_warn_days;
+    }
     let variants: Vec<VariantId> = record
         .doc
         .draft
@@ -722,7 +743,7 @@ pub async fn get(
 /// A product write.
 #[derive(Debug, Clone, Copy)]
 enum ProductWrite<'a> {
-    Put(&'a ProductDoc),
+    Put(&'a ProductDoc, ProductExpiry),
     Archive,
     Unarchive,
 }
@@ -739,7 +760,19 @@ async fn write_product(
     let (written, record) = retrying(|| async move {
         let mut tx = state.db.begin().await?;
         let written = match op {
-            ProductWrite::Put(doc) => catalog::put_product(&mut tx, doc, actor, now).await?.0,
+            ProductWrite::Put(doc, expiry) => {
+                let written = catalog::put_product(&mut tx, doc, actor, now).await?.0;
+                let changed = sultan_db::stock::set_product_expiry(&mut tx, id, expiry, actor, now)
+                    .await
+                    .map_err(|e| match e {
+                        sultan_db::stock::StockDbError::Db(d) => CatalogDbError::Db(d),
+                        other => CatalogDbError::Db(DbError::Corrupt(other.to_string())),
+                    })?;
+                match (written, changed) {
+                    (Written::Unchanged, Written::Updated) => Written::Updated,
+                    (w, _) => w,
+                }
+            }
             ProductWrite::Archive => catalog::archive_product(&mut tx, id, actor, now).await?,
             ProductWrite::Unarchive => catalog::unarchive_product(&mut tx, id, actor, now).await?,
         };
@@ -779,8 +812,19 @@ pub async fn put(
 ) -> Result<(StatusCode, Json<ProductDto>), ApiError> {
     let id: ProductId = parse_put_id(&id)?;
     require_manage(&state, &session).await?;
+    if body.expiry_warn_days.is_some_and(|d| d > 365) {
+        return Err(ApiError::invalid_field(
+            "expiry_warn_days",
+            "`expiry_warn_days` must be 0 to 365",
+        ));
+    }
+    let expiry = ProductExpiry {
+        track_expiry: body.track_expiry,
+        expiry_warn_days: body.expiry_warn_days,
+    };
     let doc = body.into_doc(id)?;
-    let (written, record) = write_product(&state, &session, id, ProductWrite::Put(&doc)).await?;
+    let (written, record) =
+        write_product(&state, &session, id, ProductWrite::Put(&doc, expiry)).await?;
     Ok((
         written_status(written),
         Json(product_answer(&state, &record).await?),

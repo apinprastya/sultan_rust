@@ -4,7 +4,7 @@
 
 use sultan_core::catalog::Qty;
 use sultan_core::doc_number::LocalDay;
-use sultan_core::ids::{BranchId, LocationId, LotId, VariantId};
+use sultan_core::ids::{BranchId, BrandId, CategoryId, LocationId, LotId, ProductId, VariantId};
 use sultan_core::money::Money;
 use sultan_core::stock::{CostState, LotStock, MovementKind, RefCost, fefo, running_balance};
 use sultan_core::time::Timestamp;
@@ -508,19 +508,33 @@ pub async fn branch_on_hand<'c>(
 pub struct OnHandFilter {
     /// The branch.
     pub branch: Option<BranchId>,
-    /// One location (else all of the branch, summed per variant and location).
+    /// One location (else all of the branch, one row per location and variant).
     pub location: Option<LocationId>,
     /// One variant.
     pub variant: Option<VariantId>,
+    /// Products of this category (its own products, like a cycle count).
+    pub category: Option<CategoryId>,
+    /// Products of this brand.
+    pub brand: Option<BrandId>,
+    /// Text search: contained in the product's search key (name, brand, tags), or exactly its
+    /// code, the variant's SKU or one of its barcodes.
+    pub q: Option<String>,
     /// Only negative balances (I7).
     pub negative: bool,
+    /// Only "low" variants (§10): negative here, or a reorder rule with branch on hand + on
+    /// order at or below its min.
+    pub low: bool,
+    /// Only rows with a lot (qty > 0) expiring within the product's warn days (else the
+    /// company's) of this day, expired lots included (§9).
+    pub expiring: Option<LocalDay>,
     /// Rows after this (branch, location, variant) key, for keyset paging.
     pub after: Option<(BranchId, Vec<u8>, VariantId)>,
     /// At most this many (default 50, at most 500).
     pub limit: u32,
 }
 
-/// One row of the on-hand list: the balance with the branch's cost of the variant.
+/// One row of the on-hand list: the balance at a location, with the branch's figures of the
+/// variant (cost, on order, in transit, reorder rule) and its catalog names.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OnHandRow {
     /// The branch.
@@ -529,48 +543,149 @@ pub struct OnHandRow {
     pub location: Option<LocationId>,
     /// The variant.
     pub variant: VariantId,
+    /// Its product (`None` for a variant the catalog does not hold, e.g. not synced yet).
+    pub product: Option<ProductId>,
+    /// The product code.
+    pub product_code: String,
+    /// The product name.
+    pub product_name: String,
+    /// The variant's SKU.
+    pub sku: String,
     /// On hand at the location.
     pub qty: Qty,
+    /// On order at the branch (open POs, §4).
+    pub on_order: Qty,
+    /// In transit to or from the branch (§4).
+    pub in_transit: Qty,
+    /// The branch's reorder rule (min, max).
+    pub rule: Option<(Qty, Qty)>,
     /// The branch's unit cost of the variant; `None` = no cost yet. The server leaves it out
     /// without `report.profit` (§12).
     pub unit_cost: Option<Money>,
 }
 
-/// The on-hand list (spec 2.8 §14): balances by branch, location and variant, with the unit
-/// cost. Filters by category, brand or text, and "low" / "expiring", join the catalog in the
-/// server (N3) on top of this list and [`super::low_stock`] / [`list_lots`].
+/// The SQL of the on-hand rows before the filters on derived columns (`low`).
+const ON_HAND_SELECT: &str = "SELECT b.branch_id, b.location_id, b.variant_id, b.qty, \
+     c.ref_value, c.ref_qty, p.id AS product_id, COALESCE(p.code, '') AS product_code, \
+     COALESCE(p.name, '') AS product_name, COALESCE(v.sku, '') AS sku, p.category_id, p.brand_id, p.search_key, \
+     p.expiry_warn_days, r.min_qty, r.max_qty, \
+     (SELECT CAST(COALESCE(SUM(x.qty), 0) AS SIGNED) FROM stock_balance x \
+      WHERE x.branch_id = b.branch_id AND x.variant_id = b.variant_id) AS branch_qty, \
+     (SELECT CAST(COALESCE(SUM(CASE WHEN l.base_qty > l.received_qty \
+      THEN l.base_qty - l.received_qty ELSE 0 END), 0) AS SIGNED) \
+      FROM purchase_order_line l JOIN purchase_order o ON o.id = l.order_id \
+      WHERE o.branch_id = b.branch_id AND o.status = 'ordered' \
+      AND l.variant_id = b.variant_id) AS on_order, \
+     (SELECT CAST(COALESCE(SUM(tl.shipped_qty), 0) AS SIGNED) \
+      FROM stock_transfer_line tl JOIN stock_transfer t ON t.id = tl.transfer_id \
+      WHERE t.status = 'shipped' AND tl.variant_id = b.variant_id \
+      AND (t.from_branch_id = b.branch_id OR t.to_branch_id = b.branch_id)) AS in_transit \
+     FROM stock_balance b \
+     LEFT JOIN variant v ON v.id = b.variant_id \
+     LEFT JOIN product p ON p.id = v.product_id \
+     LEFT JOIN stock_cost c ON c.branch_id = b.branch_id AND c.variant_id = b.variant_id \
+     LEFT JOIN reorder_rule r ON r.branch_id = b.branch_id AND r.variant_id = b.variant_id";
+
+/// The expiry horizon of a product as SQL over `p.expiry_warn_days`: `today` + its warn days,
+/// else + the company's (§9). Days cannot be added to a `YYYYMMDD` key in portable SQL, so each
+/// warn-days value in use gets its own branch of a `CASE`.
+async fn horizon_sql(conn: &mut Conn<'_>, today: LocalDay) -> Result<(String, Vec<Arg>)> {
+    let default = super::get_inventory_settings(conn.reborrow())
+        .await?
+        .expiry_warn_days;
+    let overrides = sql::fetch_all(
+        conn.reborrow(),
+        "SELECT DISTINCT expiry_warn_days FROM product WHERE expiry_warn_days IS NOT NULL",
+        args![],
+        |row| row.i64("expiry_warn_days"),
+    )
+    .await?;
+    let by = |days: i64| today.add_days(days).map_or(99_991_231, LocalDay::key);
+    let mut text = String::from("CASE");
+    let mut a: Vec<Arg> = Vec::new();
+    for days in overrides {
+        text.push_str(" WHEN p.expiry_warn_days = ? THEN ?");
+        a.extend([Arg::from(days), Arg::from(by(days))]);
+    }
+    text.push_str(" ELSE ? END");
+    a.push(by(i64::from(default)).into());
+    Ok((text, a))
+}
+
+/// The on-hand list (spec 2.8 §4, §14): balances by branch, location and variant with the
+/// branch's unit cost, on order, in transit and reorder rule, filtered by branch, location,
+/// variant, category, brand, text, and "negative", "low" or "expiring". Variants that never
+/// moved have no balance row and are not listed (the reorder screen's [`super::low_stock`]
+/// covers rules without stock).
 ///
 /// # Errors
 /// The database error.
+#[allow(clippy::too_many_lines)] // one query built from the filters, then its rows
 pub async fn list_on_hand<'c>(
     conn: impl Into<Conn<'c>>,
     f: &OnHandFilter,
 ) -> Result<Vec<OnHandRow>> {
-    let mut sql = String::from(
-        "SELECT b.branch_id, b.location_id, b.variant_id, b.qty, c.ref_value, c.ref_qty \
-         FROM stock_balance b LEFT JOIN stock_cost c \
-         ON c.branch_id = b.branch_id AND c.variant_id = b.variant_id WHERE 1 = 1",
-    );
+    let mut conn = conn.into();
+    let mut conds: Vec<String> = Vec::new();
     let mut a: Vec<Arg> = Vec::new();
     if let Some(b) = f.branch {
-        sql.push_str(" AND b.branch_id = ?");
+        conds.push("branch_id = ?".into());
         a.push(b.into());
     }
     if let Some(l) = f.location {
-        sql.push_str(" AND b.location_id = ?");
+        conds.push("location_id = ?".into());
         a.push(l.into());
     }
     if let Some(v) = f.variant {
-        sql.push_str(" AND b.variant_id = ?");
+        conds.push("variant_id = ?".into());
         a.push(v.into());
     }
+    if let Some(c) = f.category {
+        conds.push("category_id = ?".into());
+        a.push(c.into());
+    }
+    if let Some(b) = f.brand {
+        conds.push("brand_id = ?".into());
+        a.push(b.into());
+    }
+    if let Some(q) = f.q.as_deref().map(str::trim).filter(|q| !q.is_empty()) {
+        let key = sultan_core::catalog::search_key(q);
+        let upper = q.to_uppercase();
+        conds.push(
+            "(search_key LIKE ? ESCAPE '!' OR product_code = ? OR sku = ? OR EXISTS \
+             (SELECT 1 FROM barcode bc WHERE bc.variant_id = x.variant_id AND bc.code = ? \
+             AND bc.archived = 0))"
+                .into(),
+        );
+        a.extend([
+            Arg::from(format!("%{}%", crate::catalog::escape_like(&key))),
+            Arg::from(upper.clone()),
+            Arg::from(upper),
+            Arg::from(q.to_owned()),
+        ]);
+    }
     if f.negative {
-        sql.push_str(" AND b.qty < 0");
+        conds.push("qty < 0".into());
+    }
+    if f.low {
+        conds
+            .push("(qty < 0 OR (min_qty IS NOT NULL AND branch_qty + on_order <= min_qty))".into());
+    }
+    if let Some(today) = f.expiring {
+        let (horizon, values) = horizon_sql(&mut conn, today).await?;
+        conds.push(format!(
+            "EXISTS (SELECT 1 FROM stock_lot lt JOIN variant lv ON lv.id = lt.variant_id \
+             JOIN product p ON p.id = lv.product_id WHERE lt.branch_id = x.branch_id \
+             AND lt.location_id = x.location_id AND lt.variant_id = x.variant_id \
+             AND lt.qty > 0 AND lt.expiry <= {horizon})"
+        ));
+        a.extend(values);
     }
     if let Some((b, l, v)) = &f.after {
-        sql.push_str(
-            " AND (b.branch_id > ? OR (b.branch_id = ? AND (b.location_id > ? \
-             OR (b.location_id = ? AND b.variant_id > ?))))",
+        conds.push(
+            "(branch_id > ? OR (branch_id = ? AND (location_id > ? \
+             OR (location_id = ? AND variant_id > ?))))"
+                .into(),
         );
         a.extend([
             Arg::from(*b),
@@ -580,11 +695,23 @@ pub async fn list_on_hand<'c>(
             Arg::from(*v),
         ]);
     }
-    sql.push_str(" ORDER BY b.branch_id, b.location_id, b.variant_id LIMIT ?");
+    let filter = if conds.is_empty() {
+        String::new()
+    } else {
+        format!(" WHERE {}", conds.join(" AND "))
+    };
+    let sql = format!(
+        "SELECT * FROM ({ON_HAND_SELECT}) x{filter} \
+         ORDER BY branch_id, location_id, variant_id LIMIT ?"
+    );
     a.push(clamp_limit(f.limit, 50, 500).into());
-    sql::fetch_all(conn.into(), &sql, a, |row| {
+    sql::fetch_all(conn, &sql, a, |row| {
         let location = row.bytes("location_id")?;
         let cost = map_ref(row)?;
+        let rule = match (sql::opt_qty(row, "min_qty")?, sql::opt_qty(row, "max_qty")?) {
+            (Some(min), Some(max)) => Some((min, max)),
+            _ => None,
+        };
         Ok(OnHandRow {
             branch: sql::id(row, "branch_id")?,
             location: if location == NO_LOCATION {
@@ -593,7 +720,14 @@ pub async fn list_on_hand<'c>(
                 sql::opt_id(row, "location_id")?
             },
             variant: sql::id(row, "variant_id")?,
+            product: sql::opt_id(row, "product_id")?,
+            product_code: row.text("product_code")?,
+            product_name: row.text("product_name")?,
+            sku: row.text("sku")?,
             qty: sql::qty(row, "qty")?,
+            on_order: sql::qty(row, "on_order")?,
+            in_transit: sql::qty(row, "in_transit")?,
+            rule,
             unit_cost: cost
                 .map(RefCost::unit_cost)
                 .transpose()
@@ -753,6 +887,53 @@ pub async fn list_lots<'c>(
     }
     sql.push_str(" ORDER BY expiry, created_at, id");
     sql::fetch_all(conn.into(), &sql, a, |row| {
+        Ok(LotRecord {
+            id: sql::id(row, "id")?,
+            branch: sql::id(row, "branch_id")?,
+            location: sql::id(row, "location_id")?,
+            variant: sql::id(row, "variant_id")?,
+            batch: row.text("batch")?,
+            expiry: day(row, "expiry")?,
+            qty: sql::qty(row, "qty")?,
+        })
+    })
+    .await
+}
+
+/// The Expiring list (spec 2.8 §9, I22): the lots with stock that expire within their
+/// product's warn days (else the company's) of `today`, expired ones included, by expiry.
+///
+/// # Errors
+/// The database error.
+pub async fn list_expiring_lots<'c>(
+    conn: impl Into<Conn<'c>>,
+    branch: Option<BranchId>,
+    location: Option<LocationId>,
+    variant: Option<VariantId>,
+    today: LocalDay,
+) -> Result<Vec<LotRecord>> {
+    let mut conn = conn.into();
+    let (horizon, values) = horizon_sql(&mut conn, today).await?;
+    let mut sql = format!(
+        "SELECT l.id, l.branch_id, l.location_id, l.variant_id, l.batch, l.expiry, l.qty \
+         FROM stock_lot l JOIN variant v ON v.id = l.variant_id \
+         JOIN product p ON p.id = v.product_id WHERE l.qty > 0 AND l.expiry <= {horizon}"
+    );
+    let mut a: Vec<Arg> = values;
+    if let Some(b) = branch {
+        sql.push_str(" AND l.branch_id = ?");
+        a.push(b.into());
+    }
+    if let Some(l) = location {
+        sql.push_str(" AND l.location_id = ?");
+        a.push(l.into());
+    }
+    if let Some(v) = variant {
+        sql.push_str(" AND l.variant_id = ?");
+        a.push(v.into());
+    }
+    sql.push_str(" ORDER BY l.expiry, l.created_at, l.id");
+    sql::fetch_all(conn, &sql, a, |row| {
         Ok(LotRecord {
             id: sql::id(row, "id")?,
             branch: sql::id(row, "branch_id")?,

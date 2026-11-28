@@ -9,7 +9,8 @@ use sultan_core::money::Money;
 use sultan_core::stock::{SupplierInput, check_supplier};
 use sultan_core::time::Timestamp;
 
-use super::{StockDbError, StockResult, Written};
+use super::json::{Change, record, supplier_item_json, supplier_json};
+use super::{Actor, StockDbError, StockResult, Written};
 use crate::conn::{Conn, Tx};
 use crate::error::Result;
 use crate::sql::{self, Arg, Row, args};
@@ -113,6 +114,7 @@ pub async fn list_suppliers<'c>(
 pub async fn put_supplier(
     tx: &mut Tx,
     s: &Supplier,
+    actor: &Actor,
     now: Timestamp,
 ) -> StockResult<(Written, Supplier)> {
     let (code, name) = check_supplier(&SupplierInput {
@@ -174,6 +176,19 @@ pub async fn put_supplier(
         now,
     )
     .await?;
+    record(
+        tx,
+        actor,
+        now,
+        Change {
+            action: "supplier.put",
+            target: format!("supplier:{}", after.id),
+            before: before.as_ref().map(supplier_json),
+            after: supplier_json(&after),
+            event: "supplier.changed",
+        },
+    )
+    .await?;
     Ok((
         match saved {
             crate::Saved::Created => Written::Created,
@@ -190,6 +205,7 @@ pub async fn put_supplier(
 pub async fn archive_supplier(
     tx: &mut Tx,
     id: SupplierId,
+    actor: &Actor,
     now: Timestamp,
 ) -> StockResult<(Written, Supplier)> {
     let before = get_supplier(Conn::Tx(&mut *tx), id)
@@ -204,14 +220,25 @@ pub async fn archive_supplier(
         args![now, now, id],
     )
     .await?;
-    Ok((
-        Written::Updated,
-        Supplier {
-            archived_at: Some(now),
-            active: false,
-            ..before
+    let after = Supplier {
+        archived_at: Some(now),
+        active: false,
+        ..before.clone()
+    };
+    record(
+        tx,
+        actor,
+        now,
+        Change {
+            action: "supplier.archive",
+            target: format!("supplier:{id}"),
+            before: Some(supplier_json(&before)),
+            after: supplier_json(&after),
+            event: "supplier.changed",
         },
-    ))
+    )
+    .await?;
+    Ok((Written::Updated, after))
 }
 
 /// A supplier item (§3).
@@ -291,6 +318,7 @@ pub async fn list_supplier_items<'c>(
 pub async fn put_supplier_item(
     tx: &mut Tx,
     item: &SupplierItem,
+    actor: &Actor,
     now: Timestamp,
 ) -> StockResult<(Written, SupplierItem)> {
     if get_supplier(Conn::Tx(&mut *tx), item.supplier)
@@ -349,6 +377,19 @@ pub async fn put_supplier_item(
     } else {
         insert_item(tx, &after, now).await?;
     }
+    record(
+        tx,
+        actor,
+        now,
+        Change {
+            action: "supplier_item.put",
+            target: format!("supplier_item:{}:{}", after.supplier, after.variant),
+            before: before.as_ref().map(supplier_item_json),
+            after: supplier_item_json(&after),
+            event: "supplier_item.changed",
+        },
+    )
+    .await?;
     Ok((
         if before.is_some() {
             Written::Updated

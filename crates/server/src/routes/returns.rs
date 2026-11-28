@@ -628,6 +628,10 @@ pub async fn put(
     if written == Written::Unchanged {
         return Ok((StatusCode::OK, Json(dto)));
     }
+    super::stock::publish_doc_stock(&state, *stored.header.id.as_uuid()).await;
+    if let Some(exchange) = stored.header.exchange_sale {
+        super::stock::publish_doc_stock(&state, *exchange.as_uuid()).await;
+    }
     if let Some(sale) = &dto.exchange_sale {
         state.events.publish(Event::for_branch(
             "sale.posted",

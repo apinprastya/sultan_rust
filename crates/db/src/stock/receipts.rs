@@ -24,6 +24,7 @@ use sultan_core::stock::{
 use sultan_core::time::Timestamp;
 use uuid::Uuid;
 
+use super::json::{doc_actor, receipt_json, record_doc, supplier_return_json};
 use super::ledger::{DocRef, LotRule, Move, Valuation, post_moves, total_value};
 use super::numbers::allocate;
 use super::purchase::{check_supplier_live, receive_into, unreceive};
@@ -61,7 +62,9 @@ impl ReceiptStatus {
         }
     }
 
-    fn from_key(key: &str) -> Option<Self> {
+    /// The value of a stored name.
+    #[must_use]
+    pub fn from_key(key: &str) -> Option<Self> {
         [Self::Draft, Self::Posted, Self::Voided]
             .into_iter()
             .find(|s| s.as_str() == key)
@@ -87,7 +90,9 @@ impl PaymentKind {
         }
     }
 
-    fn from_key(key: &str) -> Option<Self> {
+    /// The value of a stored name.
+    #[must_use]
+    pub fn from_key(key: &str) -> Option<Self> {
         [Self::Credit, Self::Cash]
             .into_iter()
             .find(|s| s.as_str() == key)
@@ -539,6 +544,18 @@ pub async fn put_goods_receipt(
     let stored = get_goods_receipt(Conn::Tx(&mut *tx), r.id)
         .await?
         .ok_or(DbError::NotFound("goods receipt"))?;
+    if before.as_ref() == Some(&stored) {
+        return Ok((Written::Unchanged, stored));
+    }
+    record_doc(
+        tx,
+        &doc_actor(r.user, r.branch),
+        now,
+        ("goods_receipt.put", "goods_receipt.saved"),
+        *r.id.as_uuid(),
+        receipt_json(&stored),
+    )
+    .await?;
     Ok((
         if before.is_some() {
             Written::Updated
@@ -736,10 +753,20 @@ pub async fn post_goods_receipt(
         ],
     )
     .await?;
+    let receipt = load_receipt(tx, id).await?;
+    record_doc(
+        tx,
+        &doc_actor(user, receipt.branch),
+        at,
+        ("goods_receipt.post", "goods_receipt.posted"),
+        *id.as_uuid(),
+        receipt_json(&receipt),
+    )
+    .await?;
     Ok((
         Written::Updated,
         ReceiptPosted {
-            receipt: load_receipt(tx, id).await?,
+            receipt,
             over_received,
         },
     ))
@@ -844,7 +871,17 @@ pub async fn void_goods_receipt(
         args![at, user, approved_by, at, id],
     )
     .await?;
-    Ok((Written::Updated, load_receipt(tx, id).await?))
+    let receipt = load_receipt(tx, id).await?;
+    record_doc(
+        tx,
+        &doc_actor(user, receipt.branch),
+        at,
+        ("goods_receipt.void", "goods_receipt.voided"),
+        *id.as_uuid(),
+        receipt_json(&receipt),
+    )
+    .await?;
+    Ok((Written::Updated, receipt))
 }
 
 /// A payable (§6, I3; payments are 2.9).
@@ -1213,6 +1250,18 @@ pub async fn put_supplier_return(
     let stored = get_supplier_return(Conn::Tx(&mut *tx), r.id)
         .await?
         .ok_or(DbError::NotFound("supplier return"))?;
+    if before.as_ref() == Some(&stored) {
+        return Ok((Written::Unchanged, stored));
+    }
+    record_doc(
+        tx,
+        &doc_actor(r.user, r.branch),
+        now,
+        ("supplier_return.put", "supplier_return.saved"),
+        *r.id.as_uuid(),
+        supplier_return_json(&stored),
+    )
+    .await?;
     Ok((
         if before.is_some() {
             Written::Updated
@@ -1371,12 +1420,19 @@ pub async fn post_supplier_return(
         ],
     )
     .await?;
-    Ok((
-        Written::Updated,
-        get_supplier_return(Conn::Tx(&mut *tx), id)
-            .await?
-            .ok_or(DbError::NotFound("supplier return"))?,
-    ))
+    let stored = get_supplier_return(Conn::Tx(&mut *tx), id)
+        .await?
+        .ok_or(DbError::NotFound("supplier return"))?;
+    record_doc(
+        tx,
+        &doc_actor(user, stored.branch),
+        at,
+        ("supplier_return.post", "supplier_return.posted"),
+        *id.as_uuid(),
+        supplier_return_json(&stored),
+    )
+    .await?;
+    Ok((Written::Updated, stored))
 }
 
 #[cfg(test)]

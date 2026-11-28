@@ -19,6 +19,10 @@
 //!   ([`cash_reports`]), the Z report ([`z_reports`]), sharing the figures of [`cash`].
 //! - K6 (spec 2.7 §2a): nota photos of a cash movement ([`cash_photos`]) and `nota_flag_above`
 //!   in the sales settings ([`sales_settings`]).
+//! - N3 (spec 2.8): inventory: on hand, stock cards, lots, the inventory settings, payables and
+//!   the till's on hand ([`stock`]), suppliers, supplier items and stock reasons ([`suppliers`]),
+//!   purchase orders, goods receipts, supplier returns and reorder ([`purchasing`]), transfers,
+//!   internal transfers, adjustments, opening stock and opnames ([`stock_docs`]).
 //!
 //! Master-data writes follow one pattern (`docs/plan.md` §1, spec 2.1 §1, §7):
 //! - `PUT /{resource}/{uuid}` creates (`201`) or overwrites (`200`) the record with a
@@ -50,12 +54,16 @@ pub mod pricing;
 pub mod pricing_quote;
 pub mod product_images;
 pub mod products;
+pub mod purchasing;
 pub mod registers;
 pub mod returns;
 pub mod roles;
 pub mod sale_post;
 pub mod sales;
 pub mod sales_settings;
+pub mod stock;
+pub mod stock_docs;
+pub mod suppliers;
 pub mod taxonomy;
 pub mod tender_types;
 pub mod users;
